@@ -534,6 +534,10 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 		It("should trigger deprovision job on deletion", func() {
 			vnet.Finalizers = []string{osacVirtualNetworkFinalizer}
 			vnet.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			if vnet.Annotations == nil {
+				vnet.Annotations = map[string]string{}
+			}
+			vnet.Annotations[osacImplementationStrategyAnnotation] = "cudn-net"
 
 			mockProvider.triggerDeprovisionFunc = func(ctx context.Context, resource client.Object, _ []osacv1alpha1.JobStatus) (*provisioning.DeprovisionResult, error) {
 				return &provisioning.DeprovisionResult{
