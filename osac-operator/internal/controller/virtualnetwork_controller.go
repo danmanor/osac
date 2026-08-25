@@ -59,6 +59,10 @@ type VirtualNetworkReconciler struct {
 	// two-manager model isn't configured (no gRPC connection / networking namespace),
 	// in which case the controller always uses the legacy implementation-strategy path.
 	Resolver *dispatcher.Resolver
+	// NetworkProvisioningEnabled controls whether the controller dispatches AAP
+	// provisioning jobs. When false, resources are set to Ready immediately
+	// without triggering any infrastructure provisioning.
+	NetworkProvisioningEnabled bool
 }
 
 // NewVirtualNetworkReconciler creates a new reconciler for VirtualNetwork resources.
@@ -158,9 +162,14 @@ func (r *VirtualNetworkReconciler) handleUpdate(ctx context.Context, vnet *v1alp
 		vnet.Status.Phase = v1alpha1.VirtualNetworkPhaseProgressing
 	}
 
-	// Determine implementation strategy: dispatcher path when the NetworkClass has a
-	// fabricManager registered, else the legacy implementation_strategy annotation path
-	// (populated by fulfillment-service from NetworkClass).
+	if !r.NetworkProvisioningEnabled {
+		vnet.Status.Phase = v1alpha1.VirtualNetworkPhaseReady
+		setReadyConditionTrue(&vnet.Status.Conditions)
+		return ctrl.Result{}, nil
+	}
+
+	// Determine implementation strategy from the dispatcher-resolved manager for this
+	// VirtualNetwork's NetworkClass (fabric_manager, falling back to k8s_manager).
 	implementationStrategy, err := resolveImplementationStrategy(
 		ctx, r.Resolver, "VirtualNetwork", vnet.Spec.NetworkClass, vnet.Spec.ImplementationStrategy)
 	if err != nil {

@@ -61,6 +61,13 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 			ProvisioningProvider: mockProvider,
 			StatusPollInterval:   1 * time.Second,
 			MaxJobHistory:        10,
+			Resolver: dispatcher.NewResolver(dispatcheradapter.NewNetworkClassAdapter(newListingNetworkClassClient(
+				[]*privatev1.NetworkClass{
+					{Id: "cudn-net", FabricManager: ptr.To("cudn-net")},
+					{Id: "some-class"},
+				}, &[]*privatev1.NetworkClass{},
+			)), disc),
+			NetworkProvisioningEnabled: true,
 		}
 
 		// Create VirtualNetwork fixture with ImplementationStrategy

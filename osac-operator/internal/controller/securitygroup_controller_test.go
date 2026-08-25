@@ -134,13 +134,14 @@ var _ = Describe("SecurityGroupReconciler", func() {
 
 		// Create reconciler
 		reconciler = &SecurityGroupReconciler{
-			Client:               fakeClient,
-			APIReader:            fakeClient,
-			Scheme:               testScheme,
-			NetworkingNamespace:  "test-namespace",
-			ProvisioningProvider: mockProvider,
-			StatusPollInterval:   1 * time.Second,
-			MaxJobHistory:        10,
+			Client:                     fakeClient,
+			APIReader:                  fakeClient,
+			Scheme:                     testScheme,
+			NetworkingNamespace:        "test-namespace",
+			ProvisioningProvider:       mockProvider,
+			StatusPollInterval:         1 * time.Second,
+			MaxJobHistory:              10,
+			NetworkProvisioningEnabled: true,
 		}
 	})
 
@@ -648,13 +649,14 @@ var _ = Describe("SecurityGroupReconciler", func() {
 				},
 			}
 			envReconciler := &SecurityGroupReconciler{
-				Client:               k8sClient,
-				APIReader:            k8sClient,
-				Scheme:               k8sClient.Scheme(),
-				NetworkingNamespace:  "default",
-				ProvisioningProvider: envMockProvider,
-				StatusPollInterval:   1 * time.Second,
-				MaxJobHistory:        10,
+				Client:                     k8sClient,
+				APIReader:                  k8sClient,
+				Scheme:                     k8sClient.Scheme(),
+				NetworkingNamespace:        "default",
+				ProvisioningProvider:       envMockProvider,
+				StatusPollInterval:         1 * time.Second,
+				MaxJobHistory:              10,
+				NetworkProvisioningEnabled: true,
 			}
 
 			managedThenUnmanaged := &osacv1alpha1.SecurityGroup{
@@ -743,13 +745,14 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			}
 
 			r := &SecurityGroupReconciler{
-				Client:               noSubnetClient,
-				APIReader:            noSubnetClient,
-				Scheme:               testScheme,
-				NetworkingNamespace:  "test-namespace",
-				ProvisioningProvider: mockProvider,
-				StatusPollInterval:   1 * time.Second,
-				MaxJobHistory:        10,
+				Client:                     noSubnetClient,
+				APIReader:                  noSubnetClient,
+				Scheme:                     testScheme,
+				NetworkingNamespace:        "test-namespace",
+				ProvisioningProvider:       mockProvider,
+				StatusPollInterval:         1 * time.Second,
+				MaxJobHistory:              10,
+				NetworkProvisioningEnabled: true,
 			}
 
 			key := types.NamespacedName{Name: noSubnetSG.Name, Namespace: noSubnetSG.Namespace}
@@ -811,13 +814,14 @@ var _ = Describe("SecurityGroupReconciler", func() {
 			}
 
 			r := &SecurityGroupReconciler{
-				Client:               progressingClient,
-				APIReader:            progressingClient,
-				Scheme:               testScheme,
-				NetworkingNamespace:  "test-namespace",
-				ProvisioningProvider: mockProvider,
-				StatusPollInterval:   1 * time.Second,
-				MaxJobHistory:        10,
+				Client:                     progressingClient,
+				APIReader:                  progressingClient,
+				Scheme:                     testScheme,
+				NetworkingNamespace:        "test-namespace",
+				ProvisioningProvider:       mockProvider,
+				StatusPollInterval:         1 * time.Second,
+				MaxJobHistory:              10,
+				NetworkProvisioningEnabled: true,
 			}
 
 			key := types.NamespacedName{Name: progressingSG.Name, Namespace: progressingSG.Namespace}
