@@ -661,7 +661,7 @@ def wait_for_bmi_cr(*, k8s: K8sClient, uuid: str) -> str:
     )
 
 
-def wait_for_bmi_running(*, grpc: GRPCClient, bmi_id: str) -> None:
+def wait_for_bmi_running(*, grpc: GRPCClient, bmi_id: str, retries: int = _BMI_RUNNING_RETRIES) -> None:
     def _check_state() -> str:
         state: str = grpc.get_baremetal_instance_state(bmi_id=bmi_id)
         assert "FAILED" not in state, f"BareMetalInstance {bmi_id} entered {state}"
@@ -670,7 +670,7 @@ def wait_for_bmi_running(*, grpc: GRPCClient, bmi_id: str) -> None:
     poll_until(
         fn=_check_state,
         until=lambda v: v == "BARE_METAL_INSTANCE_STATE_RUNNING",
-        retries=_BMI_RUNNING_RETRIES,
+        retries=retries,
         delay=_BMI_RUNNING_DELAY,
         description=f"{bmi_id} RUNNING",
     )

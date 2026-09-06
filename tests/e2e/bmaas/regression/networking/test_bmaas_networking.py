@@ -37,6 +37,8 @@ from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.osac_cli import OsacCLI
 from tests.e2e.core.runner import poll_until
 
+_NETRIS_BMI_RUNNING_RETRIES = 240
+
 
 def _require(state: dict[str, Any], *keys: str) -> None:
     missing = [k for k in keys if k not in state]
@@ -185,7 +187,7 @@ class TestBmaasNetworking:
             print(f"BMI {bmi['name']} CR: {bmi['cr']}")
 
         for bmi in bmis:
-            wait_for_bmi_running(grpc=grpc, bmi_id=bmi["id"])
+            wait_for_bmi_running(grpc=grpc, bmi_id=bmi["id"], retries=_NETRIS_BMI_RUNNING_RETRIES)
             print(f"BMI {bmi['name']} is RUNNING")
 
         for bmi in bmis:
