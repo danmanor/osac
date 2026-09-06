@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.bmaas.regression.networking import bmi_ssh
 from tests.e2e.core.runner import env
 
 
@@ -41,6 +42,11 @@ def bmi_template() -> str:
 @pytest.fixture(scope="session")
 def bmh_namespace() -> str:
     return env("OSAC_BMH_NAMESPACE", "host-inventory")
+
+
+@pytest.fixture(scope="session")
+def bmh_ssh_hosts() -> dict[str, str]:
+    return bmi_ssh.parse_ssh_hosts(env("OSAC_BMH_SSH_HOSTS"))
 
 
 @pytest.fixture(scope="session")

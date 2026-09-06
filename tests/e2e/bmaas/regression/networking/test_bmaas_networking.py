@@ -160,6 +160,7 @@ class TestBmaasNetworking:
         net_ssh_public_key: str,
         bmh_namespace: str,
         net_test_run_id: str,
+        bmh_ssh_hosts: dict[str, str],
     ) -> None:
         _require(self.state, "subnet_a_id", "subnet_b_id", "sg_id")
 
@@ -201,8 +202,8 @@ class TestBmaasNetworking:
 
             ext_host = k8s_hub_client.get_baremetal_instance_external_host_id(name=bmi["cr"])
             bmi["bmh"] = ext_host.split("/", 1)[1]
-            bmi["bmc_ip"] = bmi_ssh.get_bmc_ip(bmi["bmh"])
-            print(f"BMI {bmi['name']}: tenant_ip={bmi['ip']}, bmh={bmi['bmh']}, bmc_ip={bmi['bmc_ip']}")
+            bmi["ssh_host"] = bmi_ssh.get_ssh_host(bmi["bmh"], bmh_ssh_hosts)
+            print(f"BMI {bmi['name']}: tenant_ip={bmi['ip']}, bmh={bmi['bmh']}, ssh_host={bmi['ssh_host']}")
 
         for bmi in bmis:
             if bmi["subnet"] == "a":
@@ -255,7 +256,7 @@ class TestBmaasNetworking:
         bmi2 = self.state["bmi2"]
 
         poll_until(
-            fn=lambda: bmi_ssh.arping(bmi1["bmc_ip"], bmi2["ip"]),
+            fn=lambda: bmi_ssh.arping(bmi1["ssh_host"], bmi2["ip"]),
             until=lambda ok: ok,
             retries=5,
             delay=10,
@@ -268,7 +269,7 @@ class TestBmaasNetworking:
         bmi2 = self.state["bmi2"]
 
         poll_until(
-            fn=lambda: bmi_ssh.ping(bmi1["bmc_ip"], bmi2["ip"]),
+            fn=lambda: bmi_ssh.ping(bmi1["ssh_host"], bmi2["ip"]),
             until=lambda ok: ok,
             retries=5,
             delay=10,
@@ -281,7 +282,7 @@ class TestBmaasNetworking:
         bmi3 = self.state["bmi3"]
 
         poll_until(
-            fn=lambda: bmi_ssh.ping(bmi1["bmc_ip"], bmi3["ip"]),
+            fn=lambda: bmi_ssh.ping(bmi1["ssh_host"], bmi3["ip"]),
             until=lambda ok: ok,
             retries=5,
             delay=10,
@@ -293,7 +294,7 @@ class TestBmaasNetworking:
         bmi1 = self.state["bmi1"]
         bmi3 = self.state["bmi3"]
 
-        assert not bmi_ssh.arping(bmi1["bmc_ip"], bmi3["ip"]), (
+        assert not bmi_ssh.arping(bmi1["ssh_host"], bmi3["ip"]), (
             f"arping from BMI1 ({bmi1['ip']}, subnet A) to BMI3 ({bmi3['ip']}, subnet B) "
             f"succeeded unexpectedly — different subnets should be different broadcast domains"
         )
@@ -302,7 +303,7 @@ class TestBmaasNetworking:
         _require(self.state, "bmi1")
         bmi1 = self.state["bmi1"]
 
-        assert not bmi_ssh.ping(bmi1["bmc_ip"], mgmt_cluster_ip), (
+        assert not bmi_ssh.ping(bmi1["ssh_host"], mgmt_cluster_ip), (
             f"ping from BMI1 ({bmi1['ip']}) to management cluster ({mgmt_cluster_ip}) "
             f"succeeded unexpectedly — tenant isolation should prevent cross-VNet traffic"
         )
@@ -312,11 +313,11 @@ class TestBmaasNetworking:
         bmi1 = self.state["bmi1"]
 
         poll_until(
-            fn=lambda: bmi_ssh.curl_status(bmi1["bmc_ip"], "https://quay.io"),
+            fn=lambda: bmi_ssh.curl_status(bmi1["ssh_host"], "https://quay.io"),
             until=lambda status: status == 200,
             retries=5,
             delay=15,
-            description=f"NAT gateway egress curl quay.io (bmc_ip={bmi1['bmc_ip']}, tenant_ip={bmi1['ip']})",
+            description=f"NAT gateway egress curl quay.io (ssh_host={bmi1['ssh_host']}, tenant_ip={bmi1['ip']})",
         )
 
     def test_12_external_ip_ingress(self, grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str) -> None:
