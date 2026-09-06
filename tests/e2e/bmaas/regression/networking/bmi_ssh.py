@@ -58,8 +58,8 @@ def ssh_bmi_unchecked(bmc_ip: str, command: str, timeout: int = 30) -> tuple[str
     return (result.stdout.strip() + "\n" + result.stderr.strip()).strip(), result.returncode
 
 
-def arping(bmc_ip: str, target_ip: str, interface: str = "ens5", count: int = 3) -> bool:
-    _, rc = ssh_bmi_unchecked(bmc_ip, f"arping -c {count} -I {interface} {target_ip}", timeout=30)
+def arping(bmc_ip: str, target_ip: str, count: int = 3) -> bool:
+    _, rc = ssh_bmi_unchecked(bmc_ip, f"arping -c {count} {target_ip}", timeout=30)
     return rc == 0
 
 

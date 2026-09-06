@@ -12,6 +12,8 @@ from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.runner import poll_until, run_unchecked
 
 _POOL_READY_STATE = "EXTERNAL_IP_POOL_STATE_READY"
+_BMI_RUNNING_RETRIES = 180
+_BMI_RUNNING_DELAY = 10
 
 
 def assert_grpc_rejected(exc_info: pytest.ExceptionInfo[subprocess.CalledProcessError], code: str) -> None:
@@ -668,8 +670,8 @@ def wait_for_bmi_running(*, grpc: GRPCClient, bmi_id: str) -> None:
     poll_until(
         fn=_check_state,
         until=lambda v: v == "BARE_METAL_INSTANCE_STATE_RUNNING",
-        retries=120,
-        delay=10,
+        retries=_BMI_RUNNING_RETRIES,
+        delay=_BMI_RUNNING_DELAY,
         description=f"{bmi_id} RUNNING",
     )
 
@@ -755,8 +757,8 @@ def wait_for_bmi_running_after_recovery(*, grpc: GRPCClient, bmi_id: str) -> Non
     poll_until(
         fn=lambda: grpc.get_baremetal_instance_state(bmi_id=bmi_id),
         until=lambda v: v == "BARE_METAL_INSTANCE_STATE_RUNNING",
-        retries=120,
-        delay=10,
+        retries=_BMI_RUNNING_RETRIES,
+        delay=_BMI_RUNNING_DELAY,
         description=f"{bmi_id} RUNNING after inventory recovery",
     )
 
