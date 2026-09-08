@@ -1,0 +1,70 @@
+---
+name: E2E BMaaS Netris Full Install
+run-name: "E2E BMaaS Netris Full Install${{ inputs.pr-number != '' && format(' / PR #{0} @ {1}', inputs.pr-number, inputs.pr-sha) || '' }}"
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-infra-repository:
+        description: "Repository containing the test-infra reusable workflow"
+        required: false
+        default: "osac-project/osac-test-infra"
+      test-infra-ref:
+        description: "Branch or tag of test-infra; ignored when test-infra-sha is set"
+        required: false
+        default: "main"
+      test-infra-sha:
+        description: "Exact test-infra commit SHA; overrides test-infra-ref"
+        required: false
+        default: ""
+      pr-number:
+        description: "PR number being tested"
+        required: false
+        default: ""
+      pr-repository:
+        description: "Repository containing the PR head, including a fork"
+        required: false
+        default: ""
+      pr-ref:
+        description: "PR head branch/ref"
+        required: false
+        default: ""
+      pr-sha:
+        description: "Expected immutable PR head SHA"
+        required: false
+        default: ""
+      fork-pr-author-association:
+        description: "PR author association used by fork authorization"
+        required: false
+        default: ""
+      fork-pr-author:
+        description: "PR author login used by fork authorization"
+        required: false
+        default: ""
+
+concurrency:
+  group: e2e-bmaas-netris-full-install-${{ inputs.pr-repository || github.repository }}-${{ inputs.pr-number || github.run_id }}-${{ inputs.pr-sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-bmaas-netris:
+    permissions:
+      contents: read
+      id-token: write
+    uses: osac-project/osac-test-infra/.github/workflows/e2e-bmaas-netris-full-install.yml@main
+    with:
+      osac-repo: ${{ inputs.pr-repository || github.repository }}
+      osac-branch: ${{ inputs.pr-ref || github.ref_name }}
+      components: '[{"repo":"${{ inputs.pr-repository || github.repository }}","ref":"${{ inputs.pr-ref || github.ref_name }}","containerfile":"fulfillment-service/Containerfile","context":".","imageKey":"service.images.service"},{"repo":"${{ inputs.pr-repository || github.repository }}","ref":"${{ inputs.pr-ref || github.ref_name }}","containerfile":"osac-operator/Containerfile","context":".","imageKey":"operator.image.repository"},{"repo":"${{ inputs.pr-repository || github.repository }}","ref":"${{ inputs.pr-ref || github.ref_name }}","containerfile":"osac-aap/execution-environment/execution-environment.yaml","context":".","imageKey":"aap.bootstrap.image","buildType":"ansible-builder"},{"repo":"${{ inputs.pr-repository || github.repository }}","ref":"${{ inputs.pr-ref || github.ref_name }}","containerfile":"osac-aap/execution-environment/execution-environment.yaml","context":".","imageKey":"aap.configAsCode.eeImage","buildType":"ansible-builder"},{"repo":"${{ inputs.pr-repository || github.repository }}","ref":"${{ inputs.pr-ref || github.ref_name }}","containerfile":"bare-metal-fulfillment-operator/Containerfile","context":".","imageKey":"bmf.image.repository"}]'
+      test-infra-repository: ${{ inputs.test-infra-repository || 'osac-project/osac-test-infra' }}
+      test-infra-ref: ${{ inputs.test-infra-ref || 'main' }}
+      test-infra-sha: ${{ inputs.test-infra-sha || '' }}
+      pr-repository: ${{ inputs.pr-repository || '' }}
+      pr-ref: ${{ inputs.pr-ref || '' }}
+      pr-sha: ${{ inputs.pr-sha || '' }}
+      fork-pr-author-association: ${{ inputs.fork-pr-author-association || '' }}
+      fork-pr-author: ${{ inputs.fork-pr-author || '' }}
+      pr-number: ${{ inputs.pr-number || '' }}
