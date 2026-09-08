@@ -1,16 +1,25 @@
 ---
-name: Remove e2e-bmaas-netris on new push
+name: Remove BMaaS Netris trigger on new push
 
 on:
   pull_request_target:
     types: [synchronize]
 
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # Match the PR-scoped group used by the label-triggered Netris workflow so
+  # a new commit cancels its older run immediately.
+  group: e2e-bmaas-netris-full-install-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
-  remove-label:
+  reset-trigger:
+    name: Reset BMaaS Netris trigger
     if: contains(github.event.pull_request.labels.*.name, 'e2e-bmaas-netris')
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
       - name: Remove stale e2e-bmaas-netris label
         env:
