@@ -1,0 +1,24 @@
+---
+name: Remove e2e-bmaas-netris on new push
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+jobs:
+  remove-label:
+    if: contains(github.event.pull_request.labels.*.name, 'e2e-bmaas-netris')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove stale e2e-bmaas-netris label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr edit "${PR_NUMBER}" -R "${REPO}" --remove-label "e2e-bmaas-netris"
+          gh pr comment "${PR_NUMBER}" -R "${REPO}" \
+            --body "Removed \`e2e-bmaas-netris\` due to new commits. Re-add the label to run BMaaS Netris again."
