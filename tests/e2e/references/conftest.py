@@ -31,11 +31,9 @@ def ref_test_run_id() -> str:
     return uuid4().hex[:8]
 
 
-@pytest.fixture(scope="session")
-def ref_virtual_network(
-    grpc: GRPCClient, k8s_hub_client: K8sClient, ref_test_run_id: str
+def _create_ref_virtual_network(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, vn_name: str
 ) -> Generator[dict[str, str], None, None]:
-    vn_name = f"ref-vn-{ref_test_run_id}"
     vn_id: str | None = None
     vn_cr_name: str | None = None
 
@@ -54,6 +52,21 @@ def ref_virtual_network(
     finally:
         if vn_id and vn_cr_name:
             _safe_delete_vn(grpc, k8s_hub_client, vn_id=vn_id, vn_cr_name=vn_cr_name)
+
+
+@pytest.fixture(scope="session")
+def ref_virtual_network(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, ref_test_run_id: str
+) -> Generator[dict[str, str], None, None]:
+    yield from _create_ref_virtual_network(grpc, k8s_hub_client, f"ref-vn-{ref_test_run_id}")
+
+
+@pytest.fixture
+def networking_ref_virtual_network(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, ref_test_run_id: str
+) -> Generator[dict[str, str], None, None]:
+    # Keep subnet cleanup independent from the SecurityGroup used by compute references.
+    yield from _create_ref_virtual_network(grpc, k8s_hub_client, f"ref-vn-networking-{ref_test_run_id}")
 
 
 @pytest.fixture(scope="session")
