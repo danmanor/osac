@@ -154,13 +154,6 @@ func (c *runnerContext) run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func ensureUpdatable(helper reflection.ObjectHelper) error {
-	if helper.IsUpdatable() {
-		return nil
-	}
-	return fmt.Errorf("object type %q is immutable; updates are not supported", helper.FullName())
-}
-
 // annotationOperation represents a single annotation set or remove operation.
 type annotationOperation struct {
 	key    string
