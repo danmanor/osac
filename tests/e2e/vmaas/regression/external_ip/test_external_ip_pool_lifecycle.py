@@ -209,7 +209,7 @@ class TestExternalIPPoolLifecycle:
                 service=f"{PUBLIC_API}.ExternalIPs/Update",
                 data={"object": {"id": ip_id, "status": {"attached": False}}},
             )
-        assert_grpc_method_unavailable(exc_info, service=f"{PUBLIC_API}.ExternalIPs", method="Update")
+		assert_grpc_method_unavailable(exc_info, service=f"{PUBLIC_API}.ExternalIPs", method="Update")
 
         grpc.delete_external_ip_attachment(attachment_id=att_id)
         wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=att_cr_name)

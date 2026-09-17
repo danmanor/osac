@@ -257,6 +257,13 @@ func (c *runnerContext) run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ensureUpdatable(helper reflection.ObjectHelper) error {
+	if helper.IsUpdatable() {
+		return nil
+	}
+	return fmt.Errorf("object type %q is immutable; updates are not supported", helper.FullName())
+}
+
 // findEditor tries to find the name of the editor command. It will first try with the content of the `EDITOR` and
 // `VISUAL` environment variables, and if those are empty it defaults to `vi`.
 func (c *runnerContext) findEditor(ctx context.Context) string {
