@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"slices"
 
 	"google.golang.org/grpc"
@@ -52,7 +51,7 @@ type function struct {
 	logger                *slog.Logger
 	hubCache              controllers.HubCache
 	virtualNetworksClient privatev1.VirtualNetworksClient
-	hubsClient            privatev1.HubsClient
+	networkingHubResolver controllers.NetworkingHubResolver
 	maskCalculator        *masks.Calculator
 }
 
@@ -103,12 +102,22 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 		return
 	}
 
+	// Create the shared canonical networking Hub resolver:
+	networkingHubResolver, err := controllers.NewNetworkingHubResolver().
+		SetNetworkClassesClient(privatev1.NewNetworkClassesClient(b.connection)).
+		SetHubsClient(privatev1.NewHubsClient(b.connection)).
+		SetHubCache(b.hubCache).
+		Build()
+	if err != nil {
+		return nil, err
+	}
+
 	// Create and populate the object:
 	object := &function{
 		logger:                b.logger,
 		virtualNetworksClient: privatev1.NewVirtualNetworksClient(b.connection),
-		hubsClient:            privatev1.NewHubsClient(b.connection),
 		hubCache:              b.hubCache,
+		networkingHubResolver: networkingHubResolver,
 		maskCalculator:        masks.NewCalculator().Build(),
 	}
 	result = object.run
@@ -354,28 +363,18 @@ func (t *task) delete(ctx context.Context) (err error) {
 }
 
 func (t *task) selectHub(ctx context.Context) error {
-	t.hubId = t.virtualNetwork.GetStatus().GetHub()
-	if t.hubId == "" {
-		response, err := t.r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{}.Build())
-		if err != nil {
-			return err
-		}
-		if len(response.Items) == 0 {
-			return errors.New("there are no hubs")
-		}
-		t.hubId = response.Items[rand.IntN(len(response.Items))].GetId()
-	}
-	t.r.logger.DebugContext(
-		ctx,
-		"Selected hub",
-		slog.String("id", t.hubId),
-	)
-	hubEntry, err := t.r.hubCache.Get(ctx, t.hubId)
+	resolution, err := t.r.networkingHubResolver.Resolve(ctx)
 	if err != nil {
 		return err
 	}
-	t.hubNamespace = hubEntry.Namespace
-	t.hubClient = hubEntry.Client
+	t.hubId = resolution.ID
+	t.r.logger.DebugContext(
+		ctx,
+		"Resolved canonical networking hub",
+		slog.String("id", t.hubId),
+	)
+	t.hubNamespace = resolution.Namespace
+	t.hubClient = resolution.Client
 	return nil
 }
 
