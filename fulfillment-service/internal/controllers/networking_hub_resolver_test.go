@@ -194,6 +194,23 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(networkClasses.updates[0].GetObject().GetStatus().HasMessage()).To(BeFalse())
 	})
 
+	It("does not rewrite an already healthy canonical status", func() {
+		networkClass := testNetworkClass("nc-a", "hub-a", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
+		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
+		hubs := &fakeHubsListClient{items: []*privatev1.Hub{testHub("hub-b")}}
+		cache := &fakeNetworkingHubCache{entries: map[string]*HubEntry{
+			"hub-a": {Namespace: "canonical", Client: nil},
+		}}
+
+		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
+
+		result, err := resolver.Resolve(ctx)
+
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.ID).To(Equal("hub-a"))
+		Expect(networkClasses.updates).To(BeEmpty())
+	})
+
 	It("reports an invalid canonical reference without falling back", func() {
 		networkClass := testNetworkClass("nc-a", "missing", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, "")
 		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
