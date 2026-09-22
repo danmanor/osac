@@ -727,6 +727,16 @@ func (s *GenericServer[O]) UpdateWithCandidatePreparation(
 	response any,
 	prepareCandidate PrepareCandidateFunc[O],
 ) error {
+	return s.updateWithCandidatePreparation(ctx, request, response, prepareCandidate, false)
+}
+
+func (s *GenericServer[O]) updateWithCandidatePreparation(
+	ctx context.Context,
+	request any,
+	response any,
+	prepareCandidate PrepareCandidateFunc[O],
+	prepareBeforeValidation bool,
+) error {
 	// Extract the object from the request message:
 	type requestIface interface {
 		GetObject() O
@@ -825,21 +835,24 @@ func (s *GenericServer[O]) UpdateWithCandidatePreparation(
 	} else {
 		tmpObject = proto.Clone(requestObject).(O)
 	}
-	// Validate the merged object using protovalidate.
-	// This ensures all validation constraints are checked after applying the update mask,
-	// avoiding false positives from partial request objects.
-	err = s.validator.Validate(tmpObject)
-	if err != nil {
-		s.logger.DebugContext(ctx, "Object validation failed after mask merge", "error", err.Error())
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "validation failed: %s", err.Error())
-	}
 
-	// Validate the resulting metadata:
-	tmpMetadata := s.getMetadata(tmpObject)
-	if tmpMetadata != nil {
-		err = s.validateMetadata(ctx, tmpMetadata)
+	if !prepareBeforeValidation {
+		// Validate the merged object using protovalidate.
+		// This ensures all validation constraints are checked after applying the update mask,
+		// avoiding false positives from partial request objects.
+		err = s.validator.Validate(tmpObject)
 		if err != nil {
-			return err
+			s.logger.DebugContext(ctx, "Object validation failed after mask merge", "error", err.Error())
+			return grpcstatus.Errorf(grpccodes.InvalidArgument, "validation failed: %s", err.Error())
+		}
+
+		// Validate the resulting metadata:
+		tmpMetadata := s.getMetadata(tmpObject)
+		if tmpMetadata != nil {
+			err = s.validateMetadata(ctx, tmpMetadata)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -906,10 +919,10 @@ func (s *GenericServer[O]) UpdateWithValidation(
 	response any,
 	validate func(context.Context, O, O) error,
 ) error {
-	return s.UpdateWithCandidatePreparation(ctx, request, response,
+	return s.updateWithCandidatePreparation(ctx, request, response,
 		func(ctx context.Context, current, candidate O) error {
 			return validate(ctx, candidate, current)
-		})
+		}, true)
 }
 
 func (s *GenericServer[O]) translateUpdateError(ctx context.Context, requestId string, err error) error {
