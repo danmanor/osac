@@ -264,9 +264,6 @@ func findOnlyActive[T any](
 	case 0:
 		return nil, noItemsErr
 	case 1:
-		if len(active) == 0 {
-			return nil, noItemsErr
-		}
 		return active[0], nil
 	default:
 		return nil, multipleItemsErr(len(active))

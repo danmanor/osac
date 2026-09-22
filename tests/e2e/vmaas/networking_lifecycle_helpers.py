@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from tests.e2e.core.grpc_client import GRPCClient
 from tests.e2e.core.helpers import (
+    wait_for_security_group_deletion,
     wait_for_subnet_cr,
     wait_for_subnet_deletion,
     wait_for_subnet_ready,
@@ -61,6 +62,18 @@ def delete_and_wait_for_virtual_network(
             k8s=k8s_hub_client, name=virtual_network_cr_name
         ),
         list_ids=grpc.list_virtual_network_ids,
+    )
+
+
+def delete_and_wait_for_security_group(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, security_group_id: str, security_group_cr_name: str
+) -> None:
+    _delete_and_wait_for_network_resource(
+        resource_id=security_group_id,
+        resource_kind="SecurityGroup",
+        delete=lambda: grpc.delete_security_group(sg_id=security_group_id),
+        wait_for_cr_deletion=lambda: wait_for_security_group_deletion(k8s=k8s_hub_client, name=security_group_cr_name),
+        list_ids=grpc.list_security_group_ids,
     )
 
 
