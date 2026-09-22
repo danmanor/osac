@@ -254,18 +254,18 @@ var _ = Describe("IPv4-only VirtualNetwork gRPC contract", func() {
 		Expect(listResponse.GetItems()).To(ContainElement(WithTransform(
 			func(object *privatev1.VirtualNetwork) string { return object.GetId() }, Equal(id))))
 
-		updatedName := fmt.Sprintf("ipv4-vn-renamed-%s", uuid.New()[24:])
+		updatedLabels := map[string]string{"contract": "ipv4-vn"}
 		_, err = client.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
 			Object: privatev1.VirtualNetwork_builder{
 				Id:       id,
-				Metadata: privatev1.Metadata_builder{Name: updatedName}.Build(),
+				Metadata: privatev1.Metadata_builder{Labels: updatedLabels}.Build(),
 			}.Build(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		getResponse, err = client.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: id}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		Expect(getResponse.GetObject().GetMetadata().GetName()).To(Equal(updatedName))
+		Expect(getResponse.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("contract", "ipv4-vn"))
 		Expect(getResponse.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.241.0.0/16"))
 
 		_, err = client.Delete(ctx, privatev1.VirtualNetworksDeleteRequest_builder{Id: id}.Build())
@@ -370,18 +370,18 @@ var _ = Describe("IPv4-only Subnet gRPC contract", func() {
 		Expect(listResponse.GetItems()).To(ContainElement(WithTransform(
 			func(object *privatev1.Subnet) string { return object.GetId() }, Equal(id))))
 
-		updatedName := fmt.Sprintf("ipv4-subnet-renamed-%s", uuid.New()[24:])
+		updatedLabels := map[string]string{"contract": "ipv4-subnet"}
 		_, err = client.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
 			Object: privatev1.Subnet_builder{
 				Id:       id,
-				Metadata: privatev1.Metadata_builder{Name: updatedName}.Build(),
+				Metadata: privatev1.Metadata_builder{Labels: updatedLabels}.Build(),
 			}.Build(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		getResponse, err = client.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: id}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		Expect(getResponse.GetObject().GetMetadata().GetName()).To(Equal(updatedName))
+		Expect(getResponse.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("contract", "ipv4-subnet"))
 		Expect(getResponse.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.240.1.0/24"))
 
 		_, err = client.Delete(ctx, privatev1.SubnetsDeleteRequest_builder{Id: id}.Build())
@@ -480,18 +480,18 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 		Expect(getResponse.GetObject().GetSpec().GetIngress()).To(HaveLen(1))
 		Expect(getResponse.GetObject().GetSpec().GetEgress()).To(HaveLen(1))
 
-		updatedName := fmt.Sprintf("ipv4-sg-renamed-%s", uuid.New()[24:])
+		updatedLabels := map[string]string{"contract": "ipv4-security-group"}
 		_, err = client.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 			Object: privatev1.SecurityGroup_builder{
 				Id:       fixture.securityGroupID,
-				Metadata: privatev1.Metadata_builder{Name: updatedName}.Build(),
+				Metadata: privatev1.Metadata_builder{Labels: updatedLabels}.Build(),
 			}.Build(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		getResponse, err = client.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: fixture.securityGroupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		Expect(getResponse.GetObject().GetMetadata().GetName()).To(Equal(updatedName))
+		Expect(getResponse.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("contract", "ipv4-security-group"))
 		Expect(getResponse.GetObject().GetSpec().GetIngress()[0].GetIpv4Cidr()).To(Equal("0.0.0.0/0"))
 
 		_, err = client.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{Id: fixture.securityGroupID}.Build())
@@ -601,18 +601,18 @@ var _ = Describe("IPv4-only ExternalIPPool gRPC contract", func() {
 		Expect(listResponse.GetItems()).To(ContainElement(WithTransform(
 			func(object *privatev1.ExternalIPPool) string { return object.GetId() }, Equal(id))))
 
-		updatedName := fmt.Sprintf("ipv4-pool-renamed-%s", uuid.New()[24:])
+		updatedLabels := map[string]string{"contract": "ipv4-pool"}
 		_, err = client.Update(ctx, privatev1.ExternalIPPoolsUpdateRequest_builder{
 			Object: privatev1.ExternalIPPool_builder{
 				Id:       id,
-				Metadata: privatev1.Metadata_builder{Name: updatedName}.Build(),
+				Metadata: privatev1.Metadata_builder{Labels: updatedLabels}.Build(),
 			}.Build(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		getResponse, err = client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{Id: id}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		Expect(getResponse.GetObject().GetMetadata().GetName()).To(Equal(updatedName))
+		Expect(getResponse.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("contract", "ipv4-pool"))
 		Expect(getResponse.GetObject().GetSpec().GetCidrs()).To(Equal([]string{cidr}))
 	})
 
@@ -628,8 +628,8 @@ var _ = Describe("IPv4-only ExternalIPPool gRPC contract", func() {
 			expectIPv4ContractError(err, expected...)
 			expectNoExternalIPPoolNamed(ctx, client, name)
 		},
-		Entry("unspecified family", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.249.0.0/28"}}.Build(), "IP_FAMILY_IPV4"),
-		Entry("IPv6 family", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"2001:db8::/64"}, IpFamily: privatev1.IPFamily_IP_FAMILY_IPV6}.Build(), "IP_FAMILY_IPV4"),
+		Entry("unspecified family", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.249.0.0/28"}}.Build(), "spec.ip_family"),
+		Entry("IPv6 family", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"2001:db8::/64"}, IpFamily: privatev1.IPFamily_IP_FAMILY_IPV6}.Build(), "spec.ip_family"),
 		Entry("zero CIDRs", privatev1.ExternalIPPoolSpec_builder{IpFamily: privatev1.IPFamily_IP_FAMILY_IPV4}.Build(), "spec.cidrs"),
 		Entry("multiple CIDRs", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.249.1.0/28", "10.249.2.0/28"}, IpFamily: privatev1.IPFamily_IP_FAMILY_IPV4}.Build(), "spec.cidrs"),
 		Entry("malformed CIDR", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"not-a-cidr"}, IpFamily: privatev1.IPFamily_IP_FAMILY_IPV4}.Build(), "cidr"),
