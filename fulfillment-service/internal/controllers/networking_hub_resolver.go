@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
@@ -81,6 +82,7 @@ type networkingHubResolver struct {
 	hubsClient           hubsListClient
 	hubCache             HubCache
 	mu                   sync.Mutex
+	resolveGroup         singleflight.Group
 	cachedHub            *NetworkingHub
 	cachedError          error
 	errorExpiresAt       time.Time
@@ -128,30 +130,81 @@ func (b *NetworkingHubResolverBuilder) Build() (NetworkingHubResolver, error) {
 }
 
 func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if result, ok := r.cachedResolution(ctx); ok {
+		return result, nil
+	}
+	if err, ok := r.cachedFailure(); ok {
+		return NetworkingHub{}, err
+	}
 
-	if r.cachedHub != nil {
-		entry, err := r.hubCache.Get(ctx, r.cachedHub.ID)
-		if err == nil && entry != nil {
-			return NetworkingHub{ID: r.cachedHub.ID, Namespace: entry.Namespace, Client: entry.Client}, nil
+	value, err, _ := r.resolveGroup.Do("canonical-networking-hub", func() (any, error) {
+		if result, ok := r.cachedResolution(ctx); ok {
+			return result, nil
 		}
+		if err, ok := r.cachedFailure(); ok {
+			return NetworkingHub{}, err
+		}
+
+		result, err := r.resolve(ctx)
+		r.cacheResult(result, err)
+		return result, err
+	})
+	if err != nil {
+		return NetworkingHub{}, err
+	}
+	return value.(NetworkingHub), nil
+}
+
+func (r *networkingHubResolver) cachedResolution(ctx context.Context) (NetworkingHub, bool) {
+	r.mu.Lock()
+	var cached NetworkingHub
+	if r.cachedHub != nil {
+		cached = *r.cachedHub
+	}
+	r.mu.Unlock()
+	if cached.ID == "" {
+		return NetworkingHub{}, false
+	}
+
+	entry, err := r.hubCache.Get(ctx, cached.ID)
+	if err == nil && entry != nil {
+		return NetworkingHub{ID: cached.ID, Namespace: entry.Namespace, Client: entry.Client}, true
+	}
+
+	r.mu.Lock()
+	if r.cachedHub != nil && r.cachedHub.ID == cached.ID {
 		r.cachedHub = nil
 	}
-	if r.cachedError != nil && time.Now().Before(r.errorExpiresAt) {
-		return NetworkingHub{}, r.cachedError
+	r.mu.Unlock()
+	return NetworkingHub{}, false
+}
+
+func (r *networkingHubResolver) cachedFailure() (error, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cachedError == nil {
+		return nil, false
+	}
+	if time.Now().Before(r.errorExpiresAt) {
+		return r.cachedError, true
 	}
 	r.cachedError = nil
 	r.errorExpiresAt = time.Time{}
+	return nil, false
+}
 
-	result, err := r.resolve(ctx)
+func (r *networkingHubResolver) cacheResult(result NetworkingHub, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if err == nil {
 		r.cachedHub = &result
-	} else {
-		r.cachedError = err
-		r.errorExpiresAt = time.Now().Add(canonicalHubNegativeCacheTTL)
+		r.cachedError = nil
+		r.errorExpiresAt = time.Time{}
+		return
 	}
-	return result, err
+	r.cachedHub = nil
+	r.cachedError = err
+	r.errorExpiresAt = time.Now().Add(canonicalHubNegativeCacheTTL)
 }
 
 func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHub, error) {

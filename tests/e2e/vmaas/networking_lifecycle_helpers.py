@@ -9,10 +9,21 @@ from tests.e2e.core.helpers import (
     wait_for_subnet_cr,
     wait_for_subnet_deletion,
     wait_for_subnet_ready,
+    wait_for_virtual_network_cr,
     wait_for_virtual_network_deletion,
+    wait_for_virtual_network_ready,
 )
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.runner import poll_until
+
+
+def create_and_wait_for_virtual_network(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, name: str, ipv4_cidr: str
+) -> tuple[str, str]:
+    virtual_network_id = grpc.create_virtual_network(name=name, ipv4_cidr=ipv4_cidr)
+    virtual_network_cr_name = wait_for_virtual_network_cr(k8s=k8s_hub_client, uuid=virtual_network_id)
+    wait_for_virtual_network_ready(k8s=k8s_hub_client, name=virtual_network_cr_name)
+    return virtual_network_id, virtual_network_cr_name
 
 
 def create_and_wait_for_subnet(
