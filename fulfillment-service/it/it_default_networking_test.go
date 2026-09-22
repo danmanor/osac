@@ -317,7 +317,9 @@ func createDefaultNetworkClass(
 		}.Build(),
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
-	return response.GetObject().GetId()
+	id := response.GetObject().GetId()
+	waitForNetworkClassReady(ctx, client, id)
+	return id
 }
 
 var _ = Describe("Canonical networking Hub resolution", func() {

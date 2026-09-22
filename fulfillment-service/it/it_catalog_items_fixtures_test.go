@@ -205,6 +205,7 @@ func createCatalogItemNetworkClassFixture(ctx context.Context) string {
 	}.Build())
 	Expect(err).NotTo(HaveOccurred())
 	classID := class.GetObject().GetId()
+	waitForNetworkClassReady(ctx, classes, classID)
 	deferCatalogItemFixtureDeletion(func(ctx context.Context) error {
 		_, err := classes.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{Id: classID}.Build())
 		return err
