@@ -278,13 +278,13 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId := ncResp.GetObject().GetId()
-		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
 		DeferCleanup(func(ctx context.Context) {
 			_, err := networkClassesClient.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{
 				Id: networkClassId,
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 		})
+		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
 
 		virtualNetworkId := fmt.Sprintf("test-vnet-%s", uuid.New())
 		_, err = virtualNetworksClient.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{

@@ -408,13 +408,13 @@ var _ = Describe("NATGateway lifecycle", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		waitForNetworkClassReady(ctx, networkClassesClient, k8sOnlyNC.GetObject().GetId())
 		DeferCleanup(func() {
 			_, err := networkClassesClient.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{
 				Id: k8sOnlyNC.GetObject().GetId(),
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 		})
+		waitForNetworkClassReady(ctx, networkClassesClient, k8sOnlyNC.GetObject().GetId())
 
 		k8sOnlyVNId := fmt.Sprintf("test-vnet-%s", uuid.New())
 		_, err = virtualNetworksClient.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{
