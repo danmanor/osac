@@ -395,22 +395,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 
 	It("keeps a tenant resource pending when the canonical Hub is unavailable", func(ctx context.Context) {
 		unavailableHubID := fmt.Sprintf("unavailable-hub-%s", uuid.New())
-		_, err := hubsClient.Create(ctx, privatev1.HubsCreateRequest_builder{
-			Object: privatev1.Hub_builder{
-				Id: unavailableHubID,
-				Metadata: privatev1.Metadata_builder{
-					Name: unavailableHubID,
-				}.Build(),
-				Spec: privatev1.HubSpec_builder{
-					Kubeconfig: []byte("not-a-kubeconfig"),
-					Namespace:  hubNamespace,
-				}.Build(),
-			}.Build(),
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func() {
-			_, _ = hubsClient.Delete(ctx, privatev1.HubsDeleteRequest_builder{Id: unavailableHubID}.Build())
-		})
+		createTestHub(ctx, hubsClient, unavailableHubID)
 
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, unavailableHubID)
 		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
@@ -453,7 +438,10 @@ func expectVirtualNetworkWithoutHub(ctx context.Context, client privatev1.Virtua
 }
 
 func createHubCopy(ctx context.Context, hubsClient privatev1.HubsClient) {
-	id := fmt.Sprintf("additional-hub-%s", uuid.New())
+	createTestHub(ctx, hubsClient, fmt.Sprintf("additional-hub-%s", uuid.New()))
+}
+
+func createTestHub(ctx context.Context, hubsClient privatev1.HubsClient, id string) {
 	_, err := hubsClient.Create(ctx, privatev1.HubsCreateRequest_builder{
 		Object: privatev1.Hub_builder{
 			Id:       id,

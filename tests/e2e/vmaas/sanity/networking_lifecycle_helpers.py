@@ -3,7 +3,12 @@ from __future__ import annotations
 from uuid import uuid4
 
 from tests.e2e.core.grpc_client import GRPCClient
-from tests.e2e.core.helpers import wait_for_subnet_cr, wait_for_subnet_deletion, wait_for_subnet_ready
+from tests.e2e.core.helpers import (
+    wait_for_subnet_cr,
+    wait_for_subnet_deletion,
+    wait_for_subnet_ready,
+    wait_for_virtual_network_deletion,
+)
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.runner import poll_until
 
@@ -39,4 +44,18 @@ def delete_and_wait_for_subnet(
         retries=30,
         delay=5,
         description=f"Subnet {subnet_id} removal from API",
+    )
+
+
+def delete_and_wait_for_virtual_network(
+    grpc: GRPCClient, k8s_hub_client: K8sClient, virtual_network_id: str, virtual_network_cr_name: str
+) -> None:
+    grpc.delete_virtual_network(vn_id=virtual_network_id)
+    wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=virtual_network_cr_name)
+    poll_until(
+        fn=lambda: virtual_network_id not in grpc.list_virtual_network_ids(),
+        until=lambda v: v is True,
+        retries=30,
+        delay=5,
+        description=f"VirtualNetwork {virtual_network_id} removal from API",
     )

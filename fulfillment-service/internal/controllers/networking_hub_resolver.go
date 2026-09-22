@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -75,6 +76,8 @@ type networkingHubResolver struct {
 	networkClassesClient networkClassesClient
 	hubsClient           hubsListClient
 	hubCache             HubCache
+	mu                   sync.Mutex
+	cachedHub            *NetworkingHub
 }
 
 // NewNetworkingHubResolver creates a builder for a canonical networking Hub resolver.
@@ -119,6 +122,25 @@ func (b *NetworkingHubResolverBuilder) Build() (NetworkingHubResolver, error) {
 }
 
 func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.cachedHub != nil {
+		entry, err := r.hubCache.Get(ctx, r.cachedHub.ID)
+		if err == nil && entry != nil {
+			return NetworkingHub{ID: r.cachedHub.ID, Namespace: entry.Namespace, Client: entry.Client}, nil
+		}
+		r.cachedHub = nil
+	}
+
+	result, err := r.resolve(ctx)
+	if err == nil {
+		r.cachedHub = &result
+	}
+	return result, err
+}
+
+func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHub, error) {
 	networkClass, err := r.findNetworkClass(ctx)
 	if err != nil {
 		return NetworkingHub{}, err
@@ -160,21 +182,14 @@ func (r *networkingHubResolver) findNetworkClass(ctx context.Context) (*privatev
 		return nil, errors.New("network classes list returned an empty response")
 	}
 
-	active := make([]*privatev1.NetworkClass, 0, len(response.GetItems()))
-	for _, networkClass := range response.GetItems() {
-		if networkClass != nil && !networkClass.GetMetadata().HasDeletionTimestamp() {
-			active = append(active, networkClass)
-		}
-	}
-
-	switch len(active) {
-	case 0:
-		return nil, ErrNoNetworkClass
-	case 1:
-		return active[0], nil
-	default:
-		return nil, fmt.Errorf("%w: found %d", ErrMultipleNetworkClasses, len(active))
-	}
+	return findOnlyActive(
+		response.GetItems(),
+		func(networkClass *privatev1.NetworkClass) bool {
+			return networkClass.GetMetadata().HasDeletionTimestamp()
+		},
+		ErrNoNetworkClass,
+		func(count int) error { return fmt.Errorf("%w: found %d", ErrMultipleNetworkClasses, count) },
+	)
 }
 
 func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub, error) {
@@ -186,23 +201,41 @@ func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub
 		return nil, errors.New("networking hubs list returned an empty response")
 	}
 
-	active := make([]*privatev1.Hub, 0, len(response.GetItems()))
-	for _, hub := range response.GetItems() {
-		if hub != nil && !hub.GetMetadata().HasDeletionTimestamp() {
-			active = append(active, hub)
+	hub, err := findOnlyActive(
+		response.GetItems(),
+		func(hub *privatev1.Hub) bool { return hub.GetMetadata().HasDeletionTimestamp() },
+		ErrNoNetworkingHubs,
+		func(int) error { return ErrMultipleNetworkingHubs },
+	)
+	if err != nil {
+		return nil, err
+	}
+	if hub.GetId() == "" {
+		return nil, fmt.Errorf("%w: candidate Hub has no identifier", ErrCanonicalHubNotFound)
+	}
+	return hub, nil
+}
+
+func findOnlyActive[T any](
+	items []*T,
+	isDeleting func(*T) bool,
+	noItemsErr error,
+	multipleItemsErr func(int) error,
+) (*T, error) {
+	active := make([]*T, 0, len(items))
+	for _, item := range items {
+		if item != nil && !isDeleting(item) {
+			active = append(active, item)
 		}
 	}
 
 	switch len(active) {
 	case 0:
-		return nil, ErrNoNetworkingHubs
+		return nil, noItemsErr
 	case 1:
-		if active[0].GetId() == "" {
-			return nil, fmt.Errorf("%w: candidate Hub has no identifier", ErrCanonicalHubNotFound)
-		}
 		return active[0], nil
 	default:
-		return nil, ErrMultipleNetworkingHubs
+		return nil, multipleItemsErr(len(active))
 	}
 }
 
