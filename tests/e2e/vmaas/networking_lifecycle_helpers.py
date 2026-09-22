@@ -44,46 +44,63 @@ def create_and_wait_for_subnet(
         wait_for_subnet_ready(k8s=k8s_hub_client, name=subnet_cr_name)
         return subnet_id, subnet_cr_name
     except Exception:
-        grpc.delete_subnet(subnet_id=subnet_id)
-        if subnet_cr_name is not None:
-            wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
+        delete_and_wait_for_subnet(grpc, k8s_hub_client, subnet_id, subnet_cr_name)
         raise
 
 
 def delete_and_wait_for_subnet(
-    grpc: GRPCClient, k8s_hub_client: K8sClient, subnet_id: str, subnet_cr_name: str
+    grpc: GRPCClient, k8s_hub_client: K8sClient, subnet_id: str, subnet_cr_name: str | None
 ) -> None:
+    wait_for_cr_deletion: Callable[[], None] | None = None
+    if subnet_cr_name is not None:
+
+        def wait_for_subnet_cr_deletion() -> None:
+            wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
+
+        wait_for_cr_deletion = wait_for_subnet_cr_deletion
     _delete_and_wait_for_network_resource(
         resource_id=subnet_id,
         resource_kind="Subnet",
         delete=lambda: grpc.delete_subnet(subnet_id=subnet_id),
-        wait_for_cr_deletion=lambda: wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name),
+        wait_for_cr_deletion=wait_for_cr_deletion,
         list_ids=grpc.list_subnet_ids,
     )
 
 
 def delete_and_wait_for_virtual_network(
-    grpc: GRPCClient, k8s_hub_client: K8sClient, virtual_network_id: str, virtual_network_cr_name: str
+    grpc: GRPCClient, k8s_hub_client: K8sClient, virtual_network_id: str, virtual_network_cr_name: str | None
 ) -> None:
+    wait_for_cr_deletion: Callable[[], None] | None = None
+    if virtual_network_cr_name is not None:
+
+        def wait_for_virtual_network_cr_deletion() -> None:
+            wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=virtual_network_cr_name)
+
+        wait_for_cr_deletion = wait_for_virtual_network_cr_deletion
     _delete_and_wait_for_network_resource(
         resource_id=virtual_network_id,
         resource_kind="VirtualNetwork",
         delete=lambda: grpc.delete_virtual_network(vn_id=virtual_network_id),
-        wait_for_cr_deletion=lambda: wait_for_virtual_network_deletion(
-            k8s=k8s_hub_client, name=virtual_network_cr_name
-        ),
+        wait_for_cr_deletion=wait_for_cr_deletion,
         list_ids=grpc.list_virtual_network_ids,
     )
 
 
 def delete_and_wait_for_security_group(
-    grpc: GRPCClient, k8s_hub_client: K8sClient, security_group_id: str, security_group_cr_name: str
+    grpc: GRPCClient, k8s_hub_client: K8sClient, security_group_id: str, security_group_cr_name: str | None
 ) -> None:
+    wait_for_cr_deletion: Callable[[], None] | None = None
+    if security_group_cr_name is not None:
+
+        def wait_for_security_group_cr_deletion() -> None:
+            wait_for_security_group_deletion(k8s=k8s_hub_client, name=security_group_cr_name)
+
+        wait_for_cr_deletion = wait_for_security_group_cr_deletion
     _delete_and_wait_for_network_resource(
         resource_id=security_group_id,
         resource_kind="SecurityGroup",
         delete=lambda: grpc.delete_security_group(sg_id=security_group_id),
-        wait_for_cr_deletion=lambda: wait_for_security_group_deletion(k8s=k8s_hub_client, name=security_group_cr_name),
+        wait_for_cr_deletion=wait_for_cr_deletion,
         list_ids=grpc.list_security_group_ids,
     )
 
@@ -92,11 +109,12 @@ def _delete_and_wait_for_network_resource(
     resource_id: str,
     resource_kind: str,
     delete: Callable[[], None],
-    wait_for_cr_deletion: Callable[[], None],
+    wait_for_cr_deletion: Callable[[], None] | None,
     list_ids: Callable[[], list[str]],
 ) -> None:
     delete()
-    wait_for_cr_deletion()
+    if wait_for_cr_deletion is not None:
+        wait_for_cr_deletion()
     poll_until(
         fn=lambda: resource_id not in list_ids(),
         until=lambda v: v is True,

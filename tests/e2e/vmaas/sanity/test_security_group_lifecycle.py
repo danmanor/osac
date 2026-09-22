@@ -56,17 +56,8 @@ def test_security_group_lifecycle(grpc: GRPCClient, k8s_hub_client: K8sClient) -
         vn_id = None
     finally:
         if sg_id is not None:
-            if sg_cr_name is not None:
-                delete_and_wait_for_security_group(grpc, k8s_hub_client, sg_id, sg_cr_name)
-            else:
-                grpc.delete_security_group(sg_id=sg_id)
+            delete_and_wait_for_security_group(grpc, k8s_hub_client, sg_id, sg_cr_name)
         if subnet_id is not None:
-            if subnet_cr_name is not None:
-                delete_and_wait_for_subnet(grpc, k8s_hub_client, subnet_id, subnet_cr_name)
-            else:
-                grpc.delete_subnet(subnet_id=subnet_id)
+            delete_and_wait_for_subnet(grpc, k8s_hub_client, subnet_id, subnet_cr_name)
         if vn_id is not None:
-            if vn_cr_name is not None:
-                delete_and_wait_for_virtual_network(grpc, k8s_hub_client, vn_id, vn_cr_name)
-            else:
-                grpc.delete_virtual_network(vn_id=vn_id)
+            delete_and_wait_for_virtual_network(grpc, k8s_hub_client, vn_id, vn_cr_name)
