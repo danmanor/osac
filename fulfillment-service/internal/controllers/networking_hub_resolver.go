@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -37,6 +38,7 @@ var (
 )
 
 const (
+	canonicalHubNegativeCacheTTL    = time.Second
 	canonicalHubNoCandidatesMessage = "expected exactly one active networking hub, found none"
 	canonicalHubMultipleMessage     = "expected exactly one active networking hub, found multiple"
 	canonicalHubStatusMessage       = "status.hub"
@@ -78,6 +80,8 @@ type networkingHubResolver struct {
 	hubCache             HubCache
 	mu                   sync.Mutex
 	cachedHub            *NetworkingHub
+	cachedError          error
+	errorExpiresAt       time.Time
 }
 
 // NewNetworkingHubResolver creates a builder for a canonical networking Hub resolver.
@@ -132,10 +136,18 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, err
 		}
 		r.cachedHub = nil
 	}
+	if r.cachedError != nil && time.Now().Before(r.errorExpiresAt) {
+		return NetworkingHub{}, r.cachedError
+	}
+	r.cachedError = nil
+	r.errorExpiresAt = time.Time{}
 
 	result, err := r.resolve(ctx)
 	if err == nil {
 		r.cachedHub = &result
+	} else {
+		r.cachedError = err
+		r.errorExpiresAt = time.Now().Add(canonicalHubNegativeCacheTTL)
 	}
 	return result, err
 }

@@ -232,6 +232,24 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(cache.calls).To(Equal([]string{"hub-a", "hub-a"}))
 	})
 
+	It("reuses a recent resolution failure without relisting NetworkClasses", func() {
+		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
+		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
+		hubs := &fakeHubsListClient{}
+		cache := &fakeNetworkingHubCache{}
+
+		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
+
+		_, firstErr := resolver.Resolve(ctx)
+		_, secondErr := resolver.Resolve(ctx)
+
+		Expect(errors.Is(firstErr, ErrNoNetworkingHubs)).To(BeTrue())
+		Expect(errors.Is(secondErr, ErrNoNetworkingHubs)).To(BeTrue())
+		Expect(networkClasses.listCalls).To(Equal(1))
+		Expect(hubs.listCall).To(Equal(1))
+		Expect(networkClasses.updates).To(HaveLen(1))
+	})
+
 	It("reports an invalid canonical reference without falling back", func() {
 		networkClass := testNetworkClass("nc-a", "missing", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, "")
 		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}

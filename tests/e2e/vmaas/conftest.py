@@ -15,12 +15,12 @@ from tests.e2e.core.helpers import (
     wait_for_subnet_ready,
     wait_for_tenant_condition,
     wait_for_virtual_network_cr,
-    wait_for_virtual_network_deletion,
     wait_for_virtual_network_ready,
 )
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.osac_cli import OsacCLI
 from tests.e2e.core.runner import env
+from tests.e2e.vmaas.networking_lifecycle_helpers import delete_and_wait_for_virtual_network
 
 DEFAULT_IT_VCPUS: int = 2
 DEFAULT_IT_MEMORY_GIB: int = 4
@@ -102,8 +102,7 @@ def default_networking(grpc: GRPCClient, k8s_hub_client: K8sClient, test_run_id:
         if vn_id and vn_cr_name:
             try:
                 print(f"Deleting VirtualNetwork {vn_id}...")
-                grpc.delete_virtual_network(vn_id=vn_id)
-                wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=vn_cr_name)
+                delete_and_wait_for_virtual_network(grpc, k8s_hub_client, vn_id, vn_cr_name)
                 print(f"VirtualNetwork {vn_id} deleted")
             except Exception as e:
                 print(f"WARNING: Failed to delete virtual network {vn_id}: {e}")

@@ -13,11 +13,11 @@ from tests.e2e.core.helpers import (
     wait_for_subnet_deletion,
     wait_for_subnet_ready,
     wait_for_virtual_network_cr,
-    wait_for_virtual_network_deletion,
     wait_for_virtual_network_ready,
 )
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.runner import poll_until
+from tests.e2e.vmaas.networking_lifecycle_helpers import delete_and_wait_for_virtual_network
 
 pytestmark = pytest.mark.sanity
 
@@ -67,8 +67,7 @@ def test_security_group_lifecycle(grpc: GRPCClient, k8s_hub_client: K8sClient) -
         wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
         subnet_id = None
 
-        grpc.delete_virtual_network(vn_id=vn_id)
-        wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=vn_cr_name)
+        delete_and_wait_for_virtual_network(grpc, k8s_hub_client, vn_id, vn_cr_name)
         vn_id = None
     finally:
         if sg_id is not None:
@@ -80,6 +79,7 @@ def test_security_group_lifecycle(grpc: GRPCClient, k8s_hub_client: K8sClient) -
             if subnet_cr_name is not None:
                 wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
         if vn_id is not None:
-            grpc.delete_virtual_network(vn_id=vn_id)
             if vn_cr_name is not None:
-                wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=vn_cr_name)
+                delete_and_wait_for_virtual_network(grpc, k8s_hub_client, vn_id, vn_cr_name)
+            else:
+                grpc.delete_virtual_network(vn_id=vn_id)
