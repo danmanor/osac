@@ -7,7 +7,7 @@ import pytest
 from tests.e2e.core.grpc_client import GRPCClient
 from tests.e2e.core.helpers import wait_for_virtual_network_cr, wait_for_virtual_network_ready
 from tests.e2e.core.k8s_client import K8sClient
-from tests.e2e.vmaas.sanity.networking_lifecycle_helpers import (
+from tests.e2e.vmaas.networking_lifecycle_helpers import (
     create_and_wait_for_subnet,
     delete_and_wait_for_subnet,
     delete_and_wait_for_virtual_network,

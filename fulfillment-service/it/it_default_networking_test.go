@@ -81,11 +81,8 @@ var _ = Describe("Default networking provisioning", func() {
 	})
 
 	It("creates K8s CRs for default VN/Subnet/SG and transitions DefaultNetworkingReady to True", func(ctx context.Context) {
-		tenantName := fmt.Sprintf("test-defnet-%s", uuid.New())
-
-		By("Creating tenant and waiting for SYNCED")
-		tenantId := createTenant(ctx, tenantsClient, tenantName)
-		waitForTenantSynced(ctx, tenantsClient, tenantId)
+		By("Creating tenant and waiting for the default VirtualNetwork")
+		tenantId, tenantName, vnId := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		defaultLabelFilter := fmt.Sprintf(
 			"this.metadata.labels['osac.openshift.io/default'] == 'true' && this.metadata.tenant == %q",
@@ -102,17 +99,6 @@ var _ = Describe("Default networking provisioning", func() {
 			g.Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
 			g.Expect(cond.HasReason()).To(BeTrue())
 			g.Expect(cond.GetReason()).To(Equal("ResourcesPending"))
-		}, time.Minute, time.Second).Should(Succeed())
-
-		By("Waiting for default VirtualNetwork to appear in FS DB")
-		var vnId string
-		Eventually(func(g Gomega) {
-			resp, err := virtualNetworksClient.List(ctx, privatev1.VirtualNetworksListRequest_builder{
-				Filter: &defaultLabelFilter,
-			}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(resp.GetItems()).ToNot(BeEmpty())
-			vnId = resp.GetItems()[0].GetId()
 		}, time.Minute, time.Second).Should(Succeed())
 
 		// logVNState logs the current VN state from the FS DB for tracing reconciler progress.
@@ -363,9 +349,9 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 	})
 
 	It("keeps a multiple-Hub deployment pending without selecting a Hub", func(ctx context.Context) {
-		createHubCopy(ctx, hubsClient)
+		createTestHub(ctx, hubsClient, fmt.Sprintf("additional-hub-%s", uuid.New()))
 
-		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		expectNetworkClassStatus(
 			ctx,
@@ -380,7 +366,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 
 	It("keeps a tenant resource pending when the canonical reference is invalid", func(ctx context.Context) {
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, "missing-canonical-hub")
-		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		expectNetworkClassStatus(
 			ctx,
@@ -398,7 +384,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		createTestHub(ctx, hubsClient, unavailableHubID)
 
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, unavailableHubID)
-		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		expectNetworkClassStatus(
 			ctx,
@@ -435,10 +421,6 @@ func expectVirtualNetworkWithoutHub(ctx context.Context, client privatev1.Virtua
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
 	}, time.Minute, time.Second).Should(Succeed())
-}
-
-func createHubCopy(ctx context.Context, hubsClient privatev1.HubsClient) {
-	createTestHub(ctx, hubsClient, fmt.Sprintf("additional-hub-%s", uuid.New()))
 }
 
 func createTestHub(ctx context.Context, hubsClient privatev1.HubsClient, id string) {
@@ -479,7 +461,7 @@ func setNetworkClassCanonicalHub(ctx context.Context, client privatev1.NetworkCl
 func createTenantAndDefaultVirtualNetwork(
 	ctx context.Context,
 	virtualNetworksClient privatev1.VirtualNetworksClient,
-) string {
+) (string, string, string) {
 	tenantsClient := privatev1.NewTenantsClient(tool.InternalView().AdminConn())
 	tenantName := fmt.Sprintf("test-canonical-tenant-%s", uuid.New())
 	tenantID := createTenant(ctx, tenantsClient, tenantName)
@@ -492,5 +474,5 @@ func createTenantAndDefaultVirtualNetwork(
 		g.Expect(response.GetItems()).ToNot(BeEmpty())
 		virtualNetworkID = response.GetItems()[0].GetId()
 	}, time.Minute, time.Second).Should(Succeed())
-	return virtualNetworkID
+	return tenantID, tenantName, virtualNetworkID
 }
