@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import uuid4
 
 from tests.e2e.core.grpc_client import GRPCClient
@@ -14,9 +15,13 @@ from tests.e2e.core.runner import poll_until
 
 
 def create_and_wait_for_subnet(
-    grpc: GRPCClient, k8s_hub_client: K8sClient, virtual_network_id: str, ipv4_cidr: str
+    grpc: GRPCClient,
+    k8s_hub_client: K8sClient,
+    virtual_network_id: str,
+    ipv4_cidr: str,
+    name_prefix: str = "test-subnet",
 ) -> tuple[str, str]:
-    subnet_name = f"test-subnet-{uuid4().hex[:8]}"
+    subnet_name = f"{name_prefix}-{uuid4().hex[:8]}"
     subnet_id = grpc.create_subnet(name=subnet_name, virtual_network=virtual_network_id, ipv4_cidr=ipv4_cidr)
     subnet_cr_name: str | None = None
     try:
@@ -36,26 +41,42 @@ def create_and_wait_for_subnet(
 def delete_and_wait_for_subnet(
     grpc: GRPCClient, k8s_hub_client: K8sClient, subnet_id: str, subnet_cr_name: str
 ) -> None:
-    grpc.delete_subnet(subnet_id=subnet_id)
-    wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
-    poll_until(
-        fn=lambda: subnet_id not in grpc.list_subnet_ids(),
-        until=lambda v: v is True,
-        retries=30,
-        delay=5,
-        description=f"Subnet {subnet_id} removal from API",
+    _delete_and_wait_for_network_resource(
+        resource_id=subnet_id,
+        resource_kind="Subnet",
+        delete=lambda: grpc.delete_subnet(subnet_id=subnet_id),
+        wait_for_cr_deletion=lambda: wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name),
+        list_ids=grpc.list_subnet_ids,
     )
 
 
 def delete_and_wait_for_virtual_network(
     grpc: GRPCClient, k8s_hub_client: K8sClient, virtual_network_id: str, virtual_network_cr_name: str
 ) -> None:
-    grpc.delete_virtual_network(vn_id=virtual_network_id)
-    wait_for_virtual_network_deletion(k8s=k8s_hub_client, name=virtual_network_cr_name)
+    _delete_and_wait_for_network_resource(
+        resource_id=virtual_network_id,
+        resource_kind="VirtualNetwork",
+        delete=lambda: grpc.delete_virtual_network(vn_id=virtual_network_id),
+        wait_for_cr_deletion=lambda: wait_for_virtual_network_deletion(
+            k8s=k8s_hub_client, name=virtual_network_cr_name
+        ),
+        list_ids=grpc.list_virtual_network_ids,
+    )
+
+
+def _delete_and_wait_for_network_resource(
+    resource_id: str,
+    resource_kind: str,
+    delete: Callable[[], None],
+    wait_for_cr_deletion: Callable[[], None],
+    list_ids: Callable[[], list[str]],
+) -> None:
+    delete()
+    wait_for_cr_deletion()
     poll_until(
-        fn=lambda: virtual_network_id not in grpc.list_virtual_network_ids(),
+        fn=lambda: resource_id not in list_ids(),
         until=lambda v: v is True,
         retries=30,
         delay=5,
-        description=f"VirtualNetwork {virtual_network_id} removal from API",
+        description=f"{resource_kind} {resource_id} removal from API",
     )

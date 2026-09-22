@@ -10,9 +10,6 @@ import pytest
 
 from tests.e2e.core.grpc_client import GRPCClient
 from tests.e2e.core.helpers import (
-    wait_for_subnet_cr,
-    wait_for_subnet_deletion,
-    wait_for_subnet_ready,
     wait_for_tenant_condition,
     wait_for_virtual_network_cr,
     wait_for_virtual_network_ready,
@@ -20,7 +17,11 @@ from tests.e2e.core.helpers import (
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.osac_cli import OsacCLI
 from tests.e2e.core.runner import env
-from tests.e2e.vmaas.networking_lifecycle_helpers import delete_and_wait_for_virtual_network
+from tests.e2e.vmaas.networking_lifecycle_helpers import (
+    create_and_wait_for_subnet,
+    delete_and_wait_for_subnet,
+    delete_and_wait_for_virtual_network,
+)
 
 DEFAULT_IT_VCPUS: int = 2
 DEFAULT_IT_MEMORY_GIB: int = 4
@@ -75,12 +76,10 @@ def default_networking(grpc: GRPCClient, k8s_hub_client: K8sClient, test_run_id:
         print(f"VirtualNetwork {vn_cr_name} is Ready")
 
         # Create subnet with unique name
-        subnet_name = f"test-subnet-{test_run_id}"
-        print(f"Creating Subnet: {subnet_name}")
-        subnet_id = grpc.create_subnet(name=subnet_name, virtual_network=vn_id, ipv4_cidr="10.200.100.0/24")
-        subnet_cr_name = wait_for_subnet_cr(k8s=k8s_hub_client, uuid=subnet_id)
-        print(f"Waiting for Subnet {subnet_cr_name} to become Ready...")
-        wait_for_subnet_ready(k8s=k8s_hub_client, name=subnet_cr_name)
+        print("Creating Subnet")
+        subnet_id, subnet_cr_name = create_and_wait_for_subnet(
+            grpc, k8s_hub_client, vn_id, "10.200.100.0/24", name_prefix=f"test-subnet-{test_run_id}"
+        )
         print(f"Subnet {subnet_cr_name} is Ready")
 
         yield {
@@ -94,8 +93,7 @@ def default_networking(grpc: GRPCClient, k8s_hub_client: K8sClient, test_run_id:
         if subnet_id and subnet_cr_name:
             try:
                 print(f"Deleting Subnet {subnet_id}...")
-                grpc.delete_subnet(subnet_id=subnet_id)
-                wait_for_subnet_deletion(k8s=k8s_hub_client, name=subnet_cr_name)
+                delete_and_wait_for_subnet(grpc, k8s_hub_client, subnet_id, subnet_cr_name)
                 print(f"Subnet {subnet_id} deleted")
             except Exception as e:
                 print(f"WARNING: Failed to delete subnet {subnet_id}: {e}")
