@@ -138,9 +138,15 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, err
 		return NetworkingHub{}, err
 	}
 
-	updatedNetworkClass, err := r.persistCanonicalHub(ctx, networkClass, hub.GetId())
+	updatedNetworkClass, err := r.updateStatus(
+		ctx,
+		networkClass,
+		hub.GetId(),
+		privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+		"",
+	)
 	if err != nil {
-		return NetworkingHub{}, err
+		return NetworkingHub{}, fmt.Errorf("failed to persist canonical networking hub: %w", err)
 	}
 	return r.resolveCanonicalHub(ctx, updatedNetworkClass, hub.GetId())
 }
@@ -200,24 +206,6 @@ func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub
 	}
 }
 
-func (r *networkingHubResolver) persistCanonicalHub(
-	ctx context.Context,
-	networkClass *privatev1.NetworkClass,
-	hubID string,
-) (*privatev1.NetworkClass, error) {
-	updated, err := r.updateStatus(
-		ctx,
-		networkClass,
-		hubID,
-		privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
-		"",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to persist canonical networking hub: %w", err)
-	}
-	return updated, nil
-}
-
 func (r *networkingHubResolver) resolveCanonicalHub(
 	ctx context.Context,
 	networkClass *privatev1.NetworkClass,
@@ -231,27 +219,41 @@ func (r *networkingHubResolver) resolveCanonicalHub(
 			state = privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED
 			kind = ErrCanonicalHubNotFound
 		}
-		message := fmt.Sprintf("canonical networking hub %q is unavailable", hubID)
-		if errors.Is(kind, ErrCanonicalHubNotFound) {
-			message = fmt.Sprintf("canonical networking hub %q is not registered", hubID)
-		}
-		if _, statusErr := r.updateStatus(ctx, networkClass, hubID, state, message); statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(kind, err, statusErr))
-		}
-		return NetworkingHub{}, fmt.Errorf("%w: %q: %w", kind, hubID, err)
+		return r.canonicalHubFailure(ctx, networkClass, hubID, state, kind, err)
 	}
 	if entry == nil {
-		err = errors.New("hub cache returned an empty entry")
-		if _, statusErr := r.updateStatus(ctx, networkClass, hubID, privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, err.Error()); statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(ErrCanonicalHubUnavailable, err, statusErr))
-		}
-		return NetworkingHub{}, fmt.Errorf("%w: %q: %w", ErrCanonicalHubUnavailable, hubID, err)
+		return r.canonicalHubFailure(
+			ctx,
+			networkClass,
+			hubID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			ErrCanonicalHubUnavailable,
+			errors.New("hub cache returned an empty entry"),
+		)
 	}
 
 	if _, err = r.updateStatus(ctx, networkClass, hubID, privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, ""); err != nil {
 		return NetworkingHub{}, fmt.Errorf("failed to update network class status: %w", err)
 	}
 	return NetworkingHub{ID: hubID, Namespace: entry.Namespace, Client: entry.Client}, nil
+}
+
+func (r *networkingHubResolver) canonicalHubFailure(
+	ctx context.Context,
+	networkClass *privatev1.NetworkClass,
+	hubID string,
+	state privatev1.NetworkClassState,
+	kind error,
+	err error,
+) (NetworkingHub, error) {
+	message := fmt.Sprintf("canonical networking hub %q is unavailable", hubID)
+	if errors.Is(kind, ErrCanonicalHubNotFound) {
+		message = fmt.Sprintf("canonical networking hub %q is not registered", hubID)
+	}
+	if _, statusErr := r.updateStatus(ctx, networkClass, hubID, state, message); statusErr != nil {
+		return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(kind, err, statusErr))
+	}
+	return NetworkingHub{}, fmt.Errorf("%w: %q: %w", kind, hubID, err)
 }
 
 func (r *networkingHubResolver) updateStatus(

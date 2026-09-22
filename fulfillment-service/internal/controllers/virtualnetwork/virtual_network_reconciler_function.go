@@ -363,6 +363,10 @@ func (t *task) delete(ctx context.Context) (err error) {
 }
 
 func (t *task) selectHub(ctx context.Context) error {
+	if t.virtualNetwork.GetStatus().GetHub() != "" {
+		return t.getHub(ctx)
+	}
+
 	resolution, err := t.r.networkingHubResolver.Resolve(ctx)
 	if err != nil {
 		return err

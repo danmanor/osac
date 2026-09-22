@@ -20,7 +20,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2/dsl/core"
 	. "github.com/onsi/gomega"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -53,22 +52,14 @@ var _ = Describe("Default networking provisioning", func() {
 		securityGroupsClient = privatev1.NewSecurityGroupsClient(tool.InternalView().AdminConn())
 
 		// Create a default NetworkClass with defaults so ensureDefaultNetworking fires.
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("test-default-nc-%s", uuid.New())}.Build(),
-				Title:         "Test Default Network Class",
-				FabricManager: new("cudn_net"),
-				IsDefault:     new(true),
-				Spec: privatev1.NetworkClassSpec_builder{
-					Defaults: privatev1.NetworkDefaults_builder{
-						VirtualNetworkIpv4Cidr: "10.200.0.0/16",
-						SubnetIpv4Cidr:         "10.200.0.0/20",
-					}.Build(),
-				}.Build(),
-			}.Build(),
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		networkClassId = ncResp.GetObject().GetId()
+		networkClassId = createDefaultNetworkClass(
+			ctx,
+			networkClassesClient,
+			"test-default-nc",
+			"Test Default Network Class",
+			"10.200.0.0/16",
+			"10.200.0.0/20",
+		)
 		DeferCleanup(func(cleanupCtx context.Context) {
 			if networkClassId == "" {
 				return
@@ -317,6 +308,32 @@ func findTenantCondition(conditions []*privatev1.TenantCondition, condType priva
 	return nil
 }
 
+func createDefaultNetworkClass(
+	ctx context.Context,
+	client privatev1.NetworkClassesClient,
+	namePrefix string,
+	title string,
+	virtualNetworkCIDR string,
+	subnetCIDR string,
+) string {
+	response, err := client.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
+		Object: privatev1.NetworkClass_builder{
+			Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("%s-%s", namePrefix, uuid.New())}.Build(),
+			Title:         title,
+			FabricManager: new("cudn_net"),
+			IsDefault:     new(true),
+			Spec: privatev1.NetworkClassSpec_builder{
+				Defaults: privatev1.NetworkDefaults_builder{
+					VirtualNetworkIpv4Cidr: virtualNetworkCIDR,
+					SubnetIpv4Cidr:         subnetCIDR,
+				}.Build(),
+			}.Build(),
+		}.Build(),
+	}.Build())
+	Expect(err).ToNot(HaveOccurred())
+	return response.GetObject().GetId()
+}
+
 var _ = Describe("Canonical networking Hub resolution", func() {
 	var (
 		ctx                   context.Context
@@ -332,22 +349,14 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		virtualNetworksClient = privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
 		hubsClient = privatev1.NewHubsClient(tool.InternalView().AdminConn())
 
-		response, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("test-canonical-nc-%s", uuid.New())}.Build(),
-				Title:         "Test Canonical Network Class",
-				FabricManager: new("cudn_net"),
-				IsDefault:     new(true),
-				Spec: privatev1.NetworkClassSpec_builder{
-					Defaults: privatev1.NetworkDefaults_builder{
-						VirtualNetworkIpv4Cidr: "10.220.0.0/16",
-						SubnetIpv4Cidr:         "10.220.0.0/20",
-					}.Build(),
-				}.Build(),
-			}.Build(),
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		networkClassID = response.GetObject().GetId()
+		networkClassID = createDefaultNetworkClass(
+			ctx,
+			networkClassesClient,
+			"test-canonical-nc",
+			"Test Canonical Network Class",
+			"10.220.0.0/16",
+			"10.220.0.0/20",
+		)
 		DeferCleanup(func() {
 			_, _ = networkClassesClient.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{Id: networkClassID}.Build())
 		})
@@ -358,41 +367,30 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 
 		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
-		Eventually(func(g Gomega) {
-			response, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: networkClassID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
-			g.Expect(response.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
-			g.Expect(response.GetObject().GetStatus().GetMessage()).To(
-				Equal("expected exactly one active networking hub, found multiple"))
-		}, time.Minute, time.Second).Should(Succeed())
-
-		Eventually(func(g Gomega) {
-			response, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
-		}, time.Minute, time.Second).Should(Succeed())
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			"",
+			"expected exactly one active networking hub, found multiple",
+		)
+		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 
 	It("keeps a tenant resource pending when the canonical reference is invalid", func(ctx context.Context) {
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, "missing-canonical-hub")
 		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
-		Eventually(func(g Gomega) {
-			response, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: networkClassID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(Equal("missing-canonical-hub"))
-			g.Expect(response.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED))
-			g.Expect(response.GetObject().GetStatus().GetMessage()).To(ContainSubstring("not registered"))
-		}, time.Minute, time.Second).Should(Succeed())
-
-		Eventually(func(g Gomega) {
-			response, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
-		}, time.Minute, time.Second).Should(Succeed())
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED,
+			"missing-canonical-hub",
+			`canonical networking hub "missing-canonical-hub" is not registered`,
+		)
+		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 
 	It("keeps a tenant resource pending when the canonical Hub is unavailable", func(ctx context.Context) {
@@ -417,40 +415,59 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, unavailableHubID)
 		vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
-		Eventually(func(g Gomega) {
-			response, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: networkClassID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(Equal(unavailableHubID))
-			g.Expect(response.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
-			g.Expect(response.GetObject().GetStatus().GetMessage()).To(ContainSubstring("unavailable"))
-		}, time.Minute, time.Second).Should(Succeed())
-
-		Eventually(func(g Gomega) {
-			response, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnID}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
-		}, time.Minute, time.Second).Should(Succeed())
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			unavailableHubID,
+			fmt.Sprintf(`canonical networking hub %q is unavailable`, unavailableHubID),
+		)
+		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 })
 
-func createHubCopy(ctx context.Context, hubsClient privatev1.HubsClient) string {
-	localResponse, err := hubsClient.Get(ctx, privatev1.HubsGetRequest_builder{Id: hubId}.Build())
-	Expect(err).ToNot(HaveOccurred())
+func expectNetworkClassStatus(
+	ctx context.Context,
+	client privatev1.NetworkClassesClient,
+	id string,
+	state privatev1.NetworkClassState,
+	hubID string,
+	message string,
+) {
+	Eventually(func(g Gomega) {
+		response, err := client.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: id}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(response.GetObject().GetStatus().GetHub()).To(Equal(hubID))
+		g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(state))
+		g.Expect(response.GetObject().GetStatus().GetMessage()).To(Equal(message))
+	}, time.Minute, time.Second).Should(Succeed())
+}
 
+func expectVirtualNetworkWithoutHub(ctx context.Context, client privatev1.VirtualNetworksClient, id string) {
+	Eventually(func(g Gomega) {
+		response, err := client.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: id}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(response.GetObject().GetStatus().GetHub()).To(BeEmpty())
+	}, time.Minute, time.Second).Should(Succeed())
+}
+
+func createHubCopy(ctx context.Context, hubsClient privatev1.HubsClient) {
 	id := fmt.Sprintf("additional-hub-%s", uuid.New())
-	_, err = hubsClient.Create(ctx, privatev1.HubsCreateRequest_builder{
+	_, err := hubsClient.Create(ctx, privatev1.HubsCreateRequest_builder{
 		Object: privatev1.Hub_builder{
 			Id:       id,
 			Metadata: privatev1.Metadata_builder{Name: id}.Build(),
-			Spec:     proto.Clone(localResponse.GetObject().GetSpec()).(*privatev1.HubSpec),
+			Spec: privatev1.HubSpec_builder{
+				Kubeconfig: []byte("not-a-kubeconfig"),
+				Namespace:  hubNamespace,
+			}.Build(),
 		}.Build(),
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
 	DeferCleanup(func() {
 		_, _ = hubsClient.Delete(ctx, privatev1.HubsDeleteRequest_builder{Id: id}.Build())
 	})
-	return id
 }
 
 func setNetworkClassCanonicalHub(ctx context.Context, client privatev1.NetworkClassesClient, id, hubID string) {
