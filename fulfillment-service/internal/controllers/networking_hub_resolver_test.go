@@ -21,7 +21,6 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -131,15 +130,9 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(hubs.listRequests[0].GetFilter()).To(Equal(activeResourceFilter))
 		Expect(hubs.listRequests[0].GetLimit()).To(Equal(int32(activeResourceLimit)))
 		Expect(cache.calls).To(Equal([]string{"hub-a"}))
-		Expect(networkClasses.updates).To(HaveLen(2))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetHub()).To(Equal("hub-a"))
-		Expect(networkClasses.updates[0].GetUpdateMask()).To(Equal(&fieldmaskpb.FieldMask{
-			Paths: []string{"status.hub", "status.state", "status.message"},
-		}))
-		Expect(networkClasses.updates[0].GetLock()).To(BeTrue())
-		Expect(networkClasses.updates[1].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
-		Expect(networkClasses.updates[1].GetObject().GetStatus().HasMessage()).To(BeFalse())
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
+		Expect(result.Message).To(BeEmpty())
+		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
 	It("reports pending when there are no Hubs and does not call the cache", func() {
@@ -150,14 +143,12 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
 
-		_, err := resolver.Resolve(ctx)
+		result, err := resolver.Resolve(ctx)
 
 		Expect(errors.Is(err, ErrNoNetworkingHubs)).To(BeTrue())
-		Expect(networkClasses.updates).To(HaveLen(1))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetMessage()).To(
-			Equal("expected exactly one active networking hub, found none"))
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+		Expect(result.Message).To(Equal("expected exactly one active networking hub, found none"))
+		Expect(networkClasses.updates).To(BeEmpty())
 		Expect(cache.calls).To(BeEmpty())
 	})
 
@@ -169,14 +160,12 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
 
-		_, err := resolver.Resolve(ctx)
+		result, err := resolver.Resolve(ctx)
 
 		Expect(errors.Is(err, ErrMultipleNetworkingHubs)).To(BeTrue())
-		Expect(networkClasses.updates).To(HaveLen(1))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetMessage()).To(
-			Equal("expected exactly one active networking hub, found multiple"))
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+		Expect(result.Message).To(Equal("expected exactly one active networking hub, found multiple"))
+		Expect(networkClasses.updates).To(BeEmpty())
 		Expect(cache.calls).To(BeEmpty())
 	})
 
@@ -196,10 +185,9 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(result.ID).To(Equal("hub-a"))
 		Expect(result.Namespace).To(Equal("canonical"))
 		Expect(hubs.listCall).To(Equal(0))
-		Expect(networkClasses.updates).To(HaveLen(1))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().HasMessage()).To(BeFalse())
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
+		Expect(result.Message).To(BeEmpty())
+		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
 	It("does not rewrite an already healthy canonical status", func() {
@@ -216,6 +204,7 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		Expect(err).ToNot(HaveOccurred())
 		Expect(result.ID).To(Equal("hub-a"))
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
 		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
@@ -255,7 +244,7 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(errors.Is(secondErr, ErrNoNetworkingHubs)).To(BeTrue())
 		Expect(networkClasses.listCalls).To(Equal(1))
 		Expect(hubs.listCall).To(Equal(1))
-		Expect(networkClasses.updates).To(HaveLen(1))
+		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
 	It("reports an invalid canonical reference without falling back", func() {
@@ -268,15 +257,14 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
 
-		_, err := resolver.Resolve(ctx)
+		result, err := resolver.Resolve(ctx)
 
 		Expect(errors.Is(err, ErrCanonicalHubNotFound)).To(BeTrue())
 		Expect(hubs.listCall).To(Equal(0))
 		Expect(cache.calls).To(Equal([]string{"missing"}))
-		Expect(networkClasses.updates).To(HaveLen(1))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetHub()).To(Equal("missing"))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED))
+		Expect(result.HubID).To(Equal("missing"))
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED))
+		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
 	It("reports an unavailable canonical reference without falling back", func() {
@@ -289,34 +277,14 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
 
-		_, err := resolver.Resolve(ctx)
+		result, err := resolver.Resolve(ctx)
 
 		Expect(errors.Is(err, ErrCanonicalHubUnavailable)).To(BeTrue())
 		Expect(hubs.listCall).To(Equal(0))
 		Expect(cache.calls).To(Equal([]string{"hub-a"}))
-		Expect(networkClasses.updates).To(HaveLen(1))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetHub()).To(Equal("hub-a"))
-		Expect(networkClasses.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
-	})
-
-	It("returns an update error without selecting another Hub", func() {
-		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, "")
-		networkClasses := &fakeNetworkClassesClient{
-			objects:   []*privatev1.NetworkClass{networkClass},
-			updateErr: errors.New("optimistic lock failed"),
-		}
-		hubs := &fakeHubsListClient{items: []*privatev1.Hub{testHub("hub-a")}}
-		cache := &fakeNetworkingHubCache{entries: map[string]*HubEntry{
-			"hub-a": {Namespace: "networking", Client: nil},
-		}}
-
-		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
-
-		_, err := resolver.Resolve(ctx)
-
-		Expect(err).To(MatchError("failed to persist canonical networking hub: optimistic lock failed"))
-		Expect(cache.calls).To(BeEmpty())
+		Expect(result.HubID).To(Equal("hub-a"))
+		Expect(result.State).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
 	It("reports no NetworkClass when the provider singleton is absent", func() {
@@ -351,11 +319,47 @@ var _ = Describe("NetworkingHubResolver", func() {
 	})
 })
 
+var _ = Describe("NetworkingHubReader", func() {
+	It("reads the persisted NetworkClass Hub without updating NetworkClass status", func() {
+		networkClass := testNetworkClass("nc-a", "hub-a", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
+		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
+		hubs := &fakeHubsListClient{items: []*privatev1.Hub{testHub("hub-a")}}
+		cache := &fakeNetworkingHubCache{entries: map[string]*HubEntry{
+			"hub-a": {Namespace: "networking", Client: nil},
+		}}
+
+		reader := mustBuildNetworkingHubReader(networkClasses, cache)
+
+		result, err := reader.Resolve(context.Background())
+
+		Expect(err).ToNot(HaveOccurred())
+		Expect(result.ID).To(Equal("hub-a"))
+		Expect(result.Namespace).To(Equal("networking"))
+		Expect(networkClasses.updates).To(BeEmpty())
+		Expect(hubs.listCall).To(Equal(0))
+		Expect(cache.calls).To(Equal([]string{"hub-a"}))
+	})
+
+	It("does not discover or mutate a NetworkClass whose canonical Hub is not ready", func() {
+		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, "")
+		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
+		cache := &fakeNetworkingHubCache{}
+
+		reader := mustBuildNetworkingHubReader(networkClasses, cache)
+
+		_, err := reader.Resolve(context.Background())
+
+		Expect(errors.Is(err, ErrCanonicalHubNotReady)).To(BeTrue())
+		Expect(networkClasses.updates).To(BeEmpty())
+		Expect(cache.calls).To(BeEmpty())
+	})
+})
+
 func mustBuildNetworkingHubResolver(
 	networkClasses *fakeNetworkClassesClient,
 	hubs *fakeHubsListClient,
 	cache *fakeNetworkingHubCache,
-) NetworkingHubResolver {
+) NetworkClassHubResolver {
 	resolver, err := NewNetworkingHubResolver().
 		SetNetworkClassesClient(networkClasses).
 		SetHubsClient(hubs).
@@ -365,6 +369,18 @@ func mustBuildNetworkingHubResolver(
 		panic(err)
 	}
 	return resolver
+}
+
+func mustBuildNetworkingHubReader(
+	networkClasses *fakeNetworkClassesClient,
+	cache *fakeNetworkingHubCache,
+) NetworkingHubReader {
+	reader, err := NewNetworkingHubReader().
+		SetNetworkClassesClient(networkClasses).
+		SetHubCache(cache).
+		Build()
+	Expect(err).ToNot(HaveOccurred())
+	return reader
 }
 
 func testNetworkClass(id, hub string, state privatev1.NetworkClassState, message string) *privatev1.NetworkClass {

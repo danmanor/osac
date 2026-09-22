@@ -194,12 +194,14 @@ func (s *PrivateNetworkClassesServer) Create(ctx context.Context,
 		return
 	}
 
-	// Set status to READY on creation since NetworkClass has no backend provisioning.
+	// NetworkClass readiness depends on canonical Hub resolution, which is owned by the
+	// NetworkClass reconciler. Start pending and let reconciliation persist status.hub and
+	// transition the object to READY once the Hub client is available.
 	nc := request.GetObject()
 	if nc.Status == nil {
 		nc.Status = &privatev1.NetworkClassStatus{}
 	}
-	nc.Status.SetState(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY)
+	nc.Status.SetState(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING)
 
 	// Clear any caller-provided ID so the DAO always generates a UUID.
 	nc.SetId("")

@@ -184,15 +184,15 @@ func newTaskForDelete(virtualNetworkID, hubID string, hubCache controllers.HubCa
 	}
 }
 
-type fakeNetworkingHubResolver struct {
+type fakeNetworkingHubReader struct {
 	result controllers.NetworkingHub
 	err    error
 	calls  int
 }
 
-func (f *fakeNetworkingHubResolver) Resolve(context.Context) (controllers.NetworkingHub, error) {
+func (f *fakeNetworkingHubReader) Resolve(context.Context) (controllers.NetworkingHubResolution, error) {
 	f.calls++
-	return f.result, f.err
+	return controllers.NetworkingHubResolution{NetworkingHub: f.result}, f.err
 }
 
 var _ = Describe("delete", func() {
@@ -586,7 +586,7 @@ var _ = Describe("hub persistence", func() {
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		resolver := &fakeNetworkingHubResolver{result: controllers.NetworkingHub{
+		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
 			ID:        hubID,
 			Namespace: hubNamespace,
 			Client:    fakeClient,
@@ -618,7 +618,7 @@ var _ = Describe("hub persistence", func() {
 		f := &function{
 			logger:                logger,
 			virtualNetworksClient: vnClient,
-			networkingHubResolver: resolver,
+			networkingHubReader:   resolver,
 			maskCalculator:        masks.NewCalculator().Build(),
 		}
 
@@ -639,7 +639,7 @@ var _ = Describe("hub persistence", func() {
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		resolver := &fakeNetworkingHubResolver{err: errors.New("there are no hubs")}
+		resolver := &fakeNetworkingHubReader{err: errors.New("there are no hubs")}
 
 		vnClient := NewMockVirtualNetworksClient(ctrl)
 
@@ -662,7 +662,7 @@ var _ = Describe("hub persistence", func() {
 		f := &function{
 			logger:                logger,
 			virtualNetworksClient: vnClient,
-			networkingHubResolver: resolver,
+			networkingHubReader:   resolver,
 			maskCalculator:        masks.NewCalculator().Build(),
 		}
 
@@ -687,7 +687,7 @@ var _ = Describe("hub persistence", func() {
 			Client:    fakeClient,
 		}, nil)
 
-		resolver := &fakeNetworkingHubResolver{result: controllers.NetworkingHub{
+		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
 			ID:        hubID,
 			Namespace: hubNamespace,
 			Client:    fakeClient,
@@ -721,7 +721,7 @@ var _ = Describe("hub persistence", func() {
 			logger:                logger,
 			virtualNetworksClient: vnClient,
 			hubCache:              mockHubCache,
-			networkingHubResolver: resolver,
+			networkingHubReader:   resolver,
 			maskCalculator:        nil,
 		}
 
@@ -742,7 +742,7 @@ var _ = Describe("hub persistence", func() {
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		resolver := &fakeNetworkingHubResolver{result: controllers.NetworkingHub{
+		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
 			ID:        hubID,
 			Namespace: hubNamespace,
 			Client:    fakeClient,
@@ -780,7 +780,7 @@ var _ = Describe("hub persistence", func() {
 			logger:                logger,
 			virtualNetworksClient: vnClient,
 			hubCache:              mockHubCache,
-			networkingHubResolver: resolver,
+			networkingHubReader:   resolver,
 			maskCalculator:        masks.NewCalculator().Build(),
 		}
 
@@ -830,7 +830,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 			}).
 			Build()
 
-		resolver := &fakeNetworkingHubResolver{result: controllers.NetworkingHub{
+		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
 			ID:        "hub-validation",
 			Namespace: "hub-ns",
 			Client:    fakeClient,
@@ -869,7 +869,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 			logger:                logger,
 			virtualNetworksClient: vnClient,
 			hubCache:              mockHubCache,
-			networkingHubResolver: resolver,
+			networkingHubReader:   resolver,
 			maskCalculator:        nil,
 		}
 

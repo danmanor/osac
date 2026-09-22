@@ -270,6 +270,14 @@ var _ = Describe("Network classes server", func() {
 		})
 
 		Describe("Single NetworkClass invariant", func() {
+			It("starts pending until the NetworkClass reconciler resolves its canonical Hub", func() {
+				nc := createNetworkClass()
+
+				Expect(nc.GetStatus().GetState()).To(
+					Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+				Expect(nc.GetStatus().GetHub()).To(BeEmpty())
+			})
+
 			// createSecondNetworkClass attempts to Create a second NetworkClass via the private
 			// server, distinct from the object built by createNetworkClass/createDefaultNetworkClass.
 			createSecondNetworkClass := func() (*privatev1.NetworkClassesCreateResponse, error) {

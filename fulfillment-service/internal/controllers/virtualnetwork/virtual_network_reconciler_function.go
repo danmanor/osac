@@ -51,7 +51,7 @@ type function struct {
 	logger                *slog.Logger
 	hubCache              controllers.HubCache
 	virtualNetworksClient privatev1.VirtualNetworksClient
-	networkingHubResolver controllers.NetworkingHubResolver
+	networkingHubReader   controllers.NetworkingHubReader
 	maskCalculator        *masks.Calculator
 }
 
@@ -102,10 +102,10 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 		return
 	}
 
-	// Create the shared canonical networking Hub resolver:
-	networkingHubResolver, err := controllers.NewNetworkingHubResolver().
+	// Create the read-only canonical networking Hub reader. NetworkClass status is owned by the
+	// NetworkClass reconciler; VirtualNetwork reconciliation only consumes the persisted binding.
+	networkingHubReader, err := controllers.NewNetworkingHubReader().
 		SetNetworkClassesClient(privatev1.NewNetworkClassesClient(b.connection)).
-		SetHubsClient(privatev1.NewHubsClient(b.connection)).
 		SetHubCache(b.hubCache).
 		Build()
 	if err != nil {
@@ -117,7 +117,7 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 		logger:                b.logger,
 		virtualNetworksClient: privatev1.NewVirtualNetworksClient(b.connection),
 		hubCache:              b.hubCache,
-		networkingHubResolver: networkingHubResolver,
+		networkingHubReader:   networkingHubReader,
 		maskCalculator:        masks.NewCalculator().Build(),
 	}
 	result = object.run
@@ -367,7 +367,7 @@ func (t *task) selectHub(ctx context.Context) error {
 		return t.getHub(ctx)
 	}
 
-	resolution, err := t.r.networkingHubResolver.Resolve(ctx)
+	resolution, err := t.r.networkingHubReader.Resolve(ctx)
 	if err != nil {
 		return err
 	}

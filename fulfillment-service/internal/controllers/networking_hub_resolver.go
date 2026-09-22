@@ -22,8 +22,6 @@ import (
 
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	clnt "sigs.k8s.io/controller-runtime/pkg/client"
 
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -35,6 +33,7 @@ var (
 	ErrNoNetworkingHubs        = errors.New("no active networking hubs")
 	ErrMultipleNetworkingHubs  = errors.New("multiple active networking hubs")
 	ErrCanonicalHubNotFound    = errors.New("canonical networking hub not found")
+	ErrCanonicalHubNotReady    = errors.New("canonical networking hub is not ready")
 	ErrCanonicalHubUnavailable = errors.New("canonical networking hub unavailable")
 )
 
@@ -44,13 +43,14 @@ const (
 	activeResourceLimit             = 2
 	canonicalHubNoCandidatesMessage = "expected exactly one active networking hub, found none"
 	canonicalHubMultipleMessage     = "expected exactly one active networking hub, found multiple"
-	canonicalHubStatusMessage       = "status.hub"
-	canonicalHubStatusStateMessage  = "status.state"
-	canonicalHubStatusMessageField  = "status.message"
 )
 
 type networkClassesClient interface {
 	List(ctx context.Context, in *privatev1.NetworkClassesListRequest, opts ...grpc.CallOption) (*privatev1.NetworkClassesListResponse, error)
+}
+
+// NetworkClassStatusClient is the status-only client owned by the NetworkClass reconciler.
+type NetworkClassStatusClient interface {
 	Update(ctx context.Context, in *privatev1.NetworkClassesUpdateRequest, opts ...grpc.CallOption) (*privatev1.NetworkClassesUpdateResponse, error)
 }
 
@@ -58,9 +58,16 @@ type hubsListClient interface {
 	List(ctx context.Context, in *privatev1.HubsListRequest, opts ...grpc.CallOption) (*privatev1.HubsListResponse, error)
 }
 
-// NetworkingHubResolver resolves the provider-owned canonical networking Hub.
-type NetworkingHubResolver interface {
-	Resolve(ctx context.Context) (NetworkingHub, error)
+// NetworkClassHubResolver resolves the canonical networking Hub and returns the status that the
+// NetworkClass reconciler must persist. It never writes NetworkClass status itself.
+type NetworkClassHubResolver interface {
+	Resolve(ctx context.Context) (NetworkingHubResolution, error)
+}
+
+// NetworkingHubReader resolves the already-persisted canonical networking Hub for consumers.
+// Readers never mutate NetworkClass status; the NetworkClass reconciler owns that lifecycle.
+type NetworkingHubReader interface {
+	Resolve(ctx context.Context) (NetworkingHubResolution, error)
 }
 
 // NetworkingHub is the stable Hub selection and the already-resolved client.
@@ -70,10 +77,25 @@ type NetworkingHub struct {
 	Client    clnt.Client
 }
 
+// NetworkingHubResolution contains the resolved Hub and the status outcome owned by the
+// NetworkClass reconciler.
+type NetworkingHubResolution struct {
+	NetworkingHub
+	HubID   string
+	State   privatev1.NetworkClassState
+	Message string
+}
+
 // NetworkingHubResolverBuilder contains the dependencies needed to construct a canonical Hub resolver.
 type NetworkingHubResolverBuilder struct {
 	networkClassesClient networkClassesClient
 	hubsClient           hubsListClient
+	hubCache             HubCache
+}
+
+// NetworkingHubReaderBuilder contains the dependencies needed to construct a read-only canonical Hub reader.
+type NetworkingHubReaderBuilder struct {
+	networkClassesClient networkClassesClient
 	hubCache             HubCache
 }
 
@@ -86,6 +108,7 @@ type networkingHubResolver struct {
 	cachedHub            *NetworkingHub
 	cachedError          error
 	errorExpiresAt       time.Time
+	readOnly             bool
 }
 
 // NewNetworkingHubResolver creates a builder for a canonical networking Hub resolver.
@@ -112,7 +135,7 @@ func (b *NetworkingHubResolverBuilder) SetHubCache(value HubCache) *NetworkingHu
 }
 
 // Build validates the dependencies and creates a canonical networking Hub resolver.
-func (b *NetworkingHubResolverBuilder) Build() (NetworkingHubResolver, error) {
+func (b *NetworkingHubResolverBuilder) Build() (NetworkClassHubResolver, error) {
 	if b.networkClassesClient == nil {
 		return nil, errors.New("network classes client is mandatory")
 	}
@@ -129,30 +152,73 @@ func (b *NetworkingHubResolverBuilder) Build() (NetworkingHubResolver, error) {
 	}, nil
 }
 
-func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, error) {
+// NewNetworkingHubReader creates a builder for a read-only canonical networking Hub reader.
+func NewNetworkingHubReader() *NetworkingHubReaderBuilder {
+	return &NetworkingHubReaderBuilder{}
+}
+
+// SetNetworkClassesClient sets the private NetworkClass client.
+func (b *NetworkingHubReaderBuilder) SetNetworkClassesClient(value networkClassesClient) *NetworkingHubReaderBuilder {
+	b.networkClassesClient = value
+	return b
+}
+
+// SetHubCache sets the cache used to resolve a Hub's Kubernetes client.
+func (b *NetworkingHubReaderBuilder) SetHubCache(value HubCache) *NetworkingHubReaderBuilder {
+	b.hubCache = value
+	return b
+}
+
+// Build validates the dependencies and creates a read-only canonical networking Hub reader.
+func (b *NetworkingHubReaderBuilder) Build() (NetworkingHubReader, error) {
+	if b.networkClassesClient == nil {
+		return nil, errors.New("network classes client is mandatory")
+	}
+	if b.hubCache == nil {
+		return nil, errors.New("hub cache is mandatory")
+	}
+	return &networkingHubResolver{
+		networkClassesClient: b.networkClassesClient,
+		hubCache:             b.hubCache,
+		readOnly:             true,
+	}, nil
+}
+
+func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHubResolution, error) {
 	if result, ok := r.cachedResolution(ctx); ok {
-		return result, nil
+		return NetworkingHubResolution{
+			NetworkingHub: result,
+			HubID:         result.ID,
+			State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+		}, nil
 	}
 	if err, ok := r.cachedFailure(); ok {
-		return NetworkingHub{}, err
+		return NetworkingHubResolution{}, err
 	}
 
 	value, err, _ := r.resolveGroup.Do("canonical-networking-hub", func() (any, error) {
 		if result, ok := r.cachedResolution(ctx); ok {
-			return result, nil
+			return NetworkingHubResolution{
+				NetworkingHub: result,
+				HubID:         result.ID,
+				State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			}, nil
 		}
 		if err, ok := r.cachedFailure(); ok {
-			return NetworkingHub{}, err
+			return NetworkingHubResolution{}, err
 		}
 
 		result, err := r.resolve(ctx)
-		r.cacheResult(result, err)
+		r.cacheResult(result.NetworkingHub, err)
 		return result, err
 	})
 	if err != nil {
-		return NetworkingHub{}, err
+		if result, ok := value.(NetworkingHubResolution); ok {
+			return result, err
+		}
+		return NetworkingHubResolution{}, err
 	}
-	return value.(NetworkingHub), nil
+	return value.(NetworkingHubResolution), nil
 }
 
 func (r *networkingHubResolver) cachedResolution(ctx context.Context) (NetworkingHub, bool) {
@@ -207,37 +273,31 @@ func (r *networkingHubResolver) cacheResult(result NetworkingHub, err error) {
 	r.errorExpiresAt = time.Now().Add(canonicalHubNegativeCacheTTL)
 }
 
-func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHub, error) {
+func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHubResolution, error) {
 	networkClass, err := r.findNetworkClass(ctx)
 	if err != nil {
-		return NetworkingHub{}, err
+		return NetworkingHubResolution{}, err
 	}
 
 	canonicalHubID := networkClass.GetStatus().GetHub()
 	if canonicalHubID != "" {
-		return r.resolveCanonicalHub(ctx, networkClass, canonicalHubID)
+		return r.resolveCanonicalHub(ctx, canonicalHubID)
+	}
+	if r.readOnly {
+		return NetworkingHubResolution{
+			State:   privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			Message: ErrCanonicalHubNotReady.Error(),
+		}, ErrCanonicalHubNotReady
 	}
 
 	hub, err := r.findOnlyHub(ctx)
 	if err != nil {
-		_, statusErr := r.updateStatus(ctx, networkClass, "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, canonicalHubErrorMessage(err))
-		if statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(err, statusErr))
-		}
-		return NetworkingHub{}, err
+		return NetworkingHubResolution{
+			State:   privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			Message: canonicalHubErrorMessage(err),
+		}, err
 	}
-
-	updatedNetworkClass, err := r.updateStatus(
-		ctx,
-		networkClass,
-		hub.GetId(),
-		privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
-		"",
-	)
-	if err != nil {
-		return NetworkingHub{}, fmt.Errorf("failed to persist canonical networking hub: %w", err)
-	}
-	return r.resolveCanonicalHub(ctx, updatedNetworkClass, hub.GetId())
+	return r.resolveCanonicalHub(ctx, hub.GetId())
 }
 
 func (r *networkingHubResolver) findNetworkClass(ctx context.Context) (*privatev1.NetworkClass, error) {
@@ -325,9 +385,8 @@ func findOnlyActive[T any](
 
 func (r *networkingHubResolver) resolveCanonicalHub(
 	ctx context.Context,
-	networkClass *privatev1.NetworkClass,
 	hubID string,
-) (NetworkingHub, error) {
+) (NetworkingHubResolution, error) {
 	entry, err := r.hubCache.Get(ctx, hubID)
 	if err != nil {
 		state := privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING
@@ -336,12 +395,10 @@ func (r *networkingHubResolver) resolveCanonicalHub(
 			state = privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED
 			kind = ErrCanonicalHubNotFound
 		}
-		return r.canonicalHubFailure(ctx, networkClass, hubID, state, kind, err)
+		return r.canonicalHubFailure(hubID, state, kind, err)
 	}
 	if entry == nil {
 		return r.canonicalHubFailure(
-			ctx,
-			networkClass,
 			hubID,
 			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
 			ErrCanonicalHubUnavailable,
@@ -349,71 +406,24 @@ func (r *networkingHubResolver) resolveCanonicalHub(
 		)
 	}
 
-	if _, err = r.updateStatus(ctx, networkClass, hubID, privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, ""); err != nil {
-		return NetworkingHub{}, fmt.Errorf("failed to update network class status: %w", err)
-	}
-	return NetworkingHub{ID: hubID, Namespace: entry.Namespace, Client: entry.Client}, nil
+	return NetworkingHubResolution{
+		NetworkingHub: NetworkingHub{ID: hubID, Namespace: entry.Namespace, Client: entry.Client},
+		HubID:         hubID,
+		State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+	}, nil
 }
 
 func (r *networkingHubResolver) canonicalHubFailure(
-	ctx context.Context,
-	networkClass *privatev1.NetworkClass,
 	hubID string,
 	state privatev1.NetworkClassState,
 	kind error,
 	err error,
-) (NetworkingHub, error) {
+) (NetworkingHubResolution, error) {
 	message := fmt.Sprintf("canonical networking hub %q is unavailable", hubID)
 	if errors.Is(kind, ErrCanonicalHubNotFound) {
 		message = fmt.Sprintf("canonical networking hub %q is not registered", hubID)
 	}
-	if _, statusErr := r.updateStatus(ctx, networkClass, hubID, state, message); statusErr != nil {
-		return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(kind, err, statusErr))
-	}
-	return NetworkingHub{}, fmt.Errorf("%w: %q: %w", kind, hubID, err)
-}
-
-func (r *networkingHubResolver) updateStatus(
-	ctx context.Context,
-	networkClass *privatev1.NetworkClass,
-	hubID string,
-	state privatev1.NetworkClassState,
-	message string,
-) (*privatev1.NetworkClass, error) {
-	object := proto.Clone(networkClass).(*privatev1.NetworkClass)
-	if !object.HasStatus() {
-		object.SetStatus(&privatev1.NetworkClassStatus{})
-	}
-	status := object.GetStatus()
-	if hubID != "" {
-		status.SetHub(hubID)
-	}
-	status.SetState(state)
-	if message == "" {
-		status.ClearMessage()
-	} else {
-		status.SetMessage(message)
-	}
-	if networkClass.HasStatus() && proto.Equal(networkClass.GetStatus(), status) {
-		return networkClass, nil
-	}
-
-	response, err := r.networkClassesClient.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
-		Object: object,
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
-			canonicalHubStatusMessage,
-			canonicalHubStatusStateMessage,
-			canonicalHubStatusMessageField,
-		}},
-		Lock: true,
-	}.Build())
-	if err != nil {
-		return nil, err
-	}
-	if response == nil || response.GetObject() == nil {
-		return object, nil
-	}
-	return response.GetObject(), nil
+	return NetworkingHubResolution{HubID: hubID, State: state, Message: message}, fmt.Errorf("%w: %q: %w", kind, hubID, err)
 }
 
 func canonicalHubErrorMessage(err error) string {

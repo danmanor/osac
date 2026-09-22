@@ -47,6 +47,7 @@ import (
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/externalippool"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/identityprovider"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/natgateway"
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers/networkclass"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/onboarding"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/project"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/projectmembership"
@@ -494,6 +495,43 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 			r.logger.InfoContext(
 				ctx,
 				"Bare metal instance reconciler failed",
+				slog.Any("error", err),
+			)
+		}
+	}()
+
+	// Create the NetworkClass reconciler:
+	r.logger.InfoContext(ctx, "Creating NetworkClass reconciler")
+	networkClassReconcilerFunction, err := networkclass.NewFunction().
+		SetLogger(r.logger).
+		SetConnection(r.client).
+		SetHubCache(hubCache).
+		Build()
+	if err != nil {
+		return fmt.Errorf("failed to create NetworkClass reconciler function: %w", err)
+	}
+	networkClassReconciler, err := controllers.NewReconciler[*privatev1.NetworkClass]().
+		SetLogger(r.logger).
+		SetName("network_class").
+		SetClient(r.client).
+		SetFunction(networkClassReconcilerFunction).
+		SetEventFilter("has(event.network_class) || (has(event.hub) && event.type == EVENT_TYPE_OBJECT_CREATED)").
+		SetHealthReporter(healthAggregator).
+		Build()
+	if err != nil {
+		return fmt.Errorf("failed to create NetworkClass reconciler: %w", err)
+	}
+
+	// Start the NetworkClass reconciler:
+	r.logger.InfoContext(ctx, "Starting NetworkClass reconciler")
+	go func() {
+		err := networkClassReconciler.Start(ctx)
+		if err == nil || errors.Is(err, context.Canceled) {
+			r.logger.InfoContext(ctx, "NetworkClass reconciler finished")
+		} else {
+			r.logger.InfoContext(
+				ctx,
+				"NetworkClass reconciler failed",
 				slog.Any("error", err),
 			)
 		}
