@@ -133,7 +133,7 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHub, err
 	if err != nil {
 		_, statusErr := r.updateStatus(ctx, networkClass, "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, canonicalHubErrorMessage(err))
 		if statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status: %v", err, statusErr)
+			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(err, statusErr))
 		}
 		return NetworkingHub{}, err
 	}
@@ -232,20 +232,20 @@ func (r *networkingHubResolver) resolveCanonicalHub(
 			kind = ErrCanonicalHubNotFound
 		}
 		message := fmt.Sprintf("canonical networking hub %q is unavailable", hubID)
-		if kind == ErrCanonicalHubNotFound {
+		if errors.Is(kind, ErrCanonicalHubNotFound) {
 			message = fmt.Sprintf("canonical networking hub %q is not registered", hubID)
 		}
 		if _, statusErr := r.updateStatus(ctx, networkClass, hubID, state, message); statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w: %v; failed to update network class status: %v", kind, err, statusErr)
+			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(kind, err, statusErr))
 		}
-		return NetworkingHub{}, fmt.Errorf("%w: %q: %v", kind, hubID, err)
+		return NetworkingHub{}, fmt.Errorf("%w: %q: %w", kind, hubID, err)
 	}
 	if entry == nil {
 		err = errors.New("hub cache returned an empty entry")
 		if _, statusErr := r.updateStatus(ctx, networkClass, hubID, privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, err.Error()); statusErr != nil {
-			return NetworkingHub{}, fmt.Errorf("%w: %v; failed to update network class status: %v", ErrCanonicalHubUnavailable, err, statusErr)
+			return NetworkingHub{}, fmt.Errorf("%w; failed to update network class status", errors.Join(ErrCanonicalHubUnavailable, err, statusErr))
 		}
-		return NetworkingHub{}, fmt.Errorf("%w: %q: %v", ErrCanonicalHubUnavailable, hubID, err)
+		return NetworkingHub{}, fmt.Errorf("%w: %q: %w", ErrCanonicalHubUnavailable, hubID, err)
 	}
 
 	if _, err = r.updateStatus(ctx, networkClass, hubID, privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, ""); err != nil {
