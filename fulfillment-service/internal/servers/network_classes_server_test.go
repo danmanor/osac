@@ -271,11 +271,25 @@ var _ = Describe("Network classes server", func() {
 
 		Describe("Single NetworkClass invariant", func() {
 			It("starts pending until the NetworkClass reconciler resolves its canonical Hub", func() {
-				nc := createNetworkClass()
+				response, err := privateServer.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
+					Object: privatev1.NetworkClass_builder{
+						Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("test-nc-%s", uuid.NewString()[:8])}.Build(),
+						Title:         "Test Network Class",
+						FabricManager: new("netris"),
+						Status: privatev1.NetworkClassStatus_builder{
+							Hub:     "caller-supplied-hub",
+							State:   privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED,
+							Message: new("caller-supplied-status"),
+						}.Build(),
+					}.Build(),
+				}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				nc := response.GetObject()
 
 				Expect(nc.GetStatus().GetState()).To(
 					Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
 				Expect(nc.GetStatus().GetHub()).To(BeEmpty())
+				Expect(nc.GetStatus().GetMessage()).To(BeEmpty())
 			})
 
 			// createSecondNetworkClass attempts to Create a second NetworkClass via the private

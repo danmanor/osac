@@ -86,7 +86,37 @@ var _ = Describe("NetworkClass reconciler", func() {
 		Expect(client.updates[0].GetObject().GetStatus().GetHub()).To(Equal("hub-a"))
 		Expect(client.updates[0].GetObject().GetStatus().GetState()).To(
 			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
+		Expect(client.updates[0].GetUpdateMask().GetPaths()).To(ConsistOf(
+			"status.hub", "status.state", "status.message"))
 		Expect(client.updates[0].GetLock()).To(BeTrue())
+	})
+
+	It("does not write status when the resolution is already persisted", func() {
+		resolver := &fakeNetworkClassHubResolver{
+			result: controllers.NetworkingHubResolution{
+				NetworkingHub: controllers.NetworkingHub{ID: "hub-a"},
+				HubID:         "hub-a",
+				State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			},
+		}
+		client := &fakeNetworkClassStatusClient{}
+		reconcile, err := NewFunction().
+			SetLogger(logger).
+			SetResolver(resolver).
+			SetNetworkClassesClient(client).
+			Build()
+		Expect(err).ToNot(HaveOccurred())
+
+		networkClass := privatev1.NetworkClass_builder{
+			Id: "nc-a",
+			Status: privatev1.NetworkClassStatus_builder{
+				Hub:   "hub-a",
+				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			}.Build(),
+		}.Build()
+
+		Expect(reconcile(context.Background(), networkClass)).To(Succeed())
+		Expect(client.updates).To(BeEmpty())
 	})
 
 	It("does not resolve a deleted NetworkClass", func() {

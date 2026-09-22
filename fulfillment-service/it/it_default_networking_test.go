@@ -364,6 +364,40 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 
+	It("retries a pending tenant resource when the canonical Hub becomes available", func(ctx context.Context) {
+		additionalHubID := fmt.Sprintf("additional-hub-%s", uuid.New())
+		createTestHub(ctx, hubsClient, additionalHubID)
+
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			"",
+			"expected exactly one active networking hub, found multiple",
+		)
+		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
+
+		By("Removing the extra Hub and waiting for NetworkClass reconciliation")
+		_, err := hubsClient.Delete(ctx, privatev1.HubsDeleteRequest_builder{Id: additionalHubID}.Build())
+		Expect(err).ToNot(HaveOccurred())
+
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			hubId,
+			"",
+		)
+		Eventually(func(g Gomega) {
+			response, getErr := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnID}.Build())
+			g.Expect(getErr).ToNot(HaveOccurred())
+			g.Expect(response.GetObject().GetStatus().GetHub()).To(Equal(hubId))
+		}, time.Minute, time.Second).Should(Succeed())
+	})
+
 	It("keeps a tenant resource pending when the canonical reference is invalid", func(ctx context.Context) {
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, "missing-canonical-hub")
 		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)

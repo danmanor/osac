@@ -198,10 +198,9 @@ func (s *PrivateNetworkClassesServer) Create(ctx context.Context,
 	// NetworkClass reconciler. Start pending and let reconciliation persist status.hub and
 	// transition the object to READY once the Hub client is available.
 	nc := request.GetObject()
-	if nc.Status == nil {
-		nc.Status = &privatev1.NetworkClassStatus{}
-	}
-	nc.Status.SetState(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING)
+	nc.SetStatus(privatev1.NetworkClassStatus_builder{
+		State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+	}.Build())
 
 	// Clear any caller-provided ID so the DAO always generates a UUID.
 	nc.SetId("")

@@ -515,7 +515,7 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 		SetName("network_class").
 		SetClient(r.client).
 		SetFunction(networkClassReconcilerFunction).
-		SetEventFilter("has(event.network_class) || (has(event.hub) && event.type == EVENT_TYPE_OBJECT_CREATED)").
+		SetEventFilter("has(event.network_class) || has(event.hub)").
 		SetHealthReporter(healthAggregator).
 		Build()
 	if err != nil {
@@ -589,7 +589,7 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 		SetName("virtual_network").
 		SetClient(r.client).
 		SetFunction(virtualNetworkReconcilerFunction).
-		SetEventFilter("has(event.virtual_network) || (has(event.hub) && event.type == EVENT_TYPE_OBJECT_CREATED)").
+		SetEventFilter("has(event.virtual_network) || has(event.network_class) || has(event.hub)").
 		SetHealthReporter(healthAggregator).
 		Build()
 	if err != nil {
