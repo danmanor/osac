@@ -28,6 +28,7 @@ import (
 
 type fakeNetworkClassesClient struct {
 	objects      []*privatev1.NetworkClass
+	listRequests []*privatev1.NetworkClassesListRequest
 	updates      []*privatev1.NetworkClassesUpdateRequest
 	listCalls    int
 	updateErr    error
@@ -36,10 +37,11 @@ type fakeNetworkClassesClient struct {
 
 func (f *fakeNetworkClassesClient) List(
 	_ context.Context,
-	_ *privatev1.NetworkClassesListRequest,
+	request *privatev1.NetworkClassesListRequest,
 	_ ...grpc.CallOption,
 ) (*privatev1.NetworkClassesListResponse, error) {
 	f.listCalls++
+	f.listRequests = append(f.listRequests, proto.Clone(request).(*privatev1.NetworkClassesListRequest))
 	return privatev1.NetworkClassesListResponse_builder{
 		Items: f.objects,
 		Size:  int32(len(f.objects)),
@@ -64,17 +66,19 @@ func (f *fakeNetworkClassesClient) Update(
 }
 
 type fakeHubsListClient struct {
-	items    []*privatev1.Hub
-	listErr  error
-	listCall int
+	items        []*privatev1.Hub
+	listRequests []*privatev1.HubsListRequest
+	listErr      error
+	listCall     int
 }
 
 func (f *fakeHubsListClient) List(
 	_ context.Context,
-	_ *privatev1.HubsListRequest,
+	request *privatev1.HubsListRequest,
 	_ ...grpc.CallOption,
 ) (*privatev1.HubsListResponse, error) {
 	f.listCall++
+	f.listRequests = append(f.listRequests, proto.Clone(request).(*privatev1.HubsListRequest))
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -122,6 +126,10 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(result.ID).To(Equal("hub-a"))
 		Expect(result.Namespace).To(Equal("networking"))
 		Expect(hubs.listCall).To(Equal(1))
+		Expect(networkClasses.listRequests[0].GetFilter()).To(Equal(activeResourceFilter))
+		Expect(networkClasses.listRequests[0].GetLimit()).To(Equal(int32(activeResourceLimit)))
+		Expect(hubs.listRequests[0].GetFilter()).To(Equal(activeResourceFilter))
+		Expect(hubs.listRequests[0].GetLimit()).To(Equal(int32(activeResourceLimit)))
 		Expect(cache.calls).To(Equal([]string{"hub-a"}))
 		Expect(networkClasses.updates).To(HaveLen(2))
 		Expect(networkClasses.updates[0].GetObject().GetStatus().GetHub()).To(Equal("hub-a"))

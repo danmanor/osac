@@ -39,6 +39,8 @@ var (
 
 const (
 	canonicalHubNegativeCacheTTL    = time.Second
+	activeResourceFilter            = "!has(this.metadata.deletion_timestamp)"
+	activeResourceLimit             = 2
 	canonicalHubNoCandidatesMessage = "expected exactly one active networking hub, found none"
 	canonicalHubMultipleMessage     = "expected exactly one active networking hub, found multiple"
 	canonicalHubStatusMessage       = "status.hub"
@@ -186,7 +188,12 @@ func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHub, err
 }
 
 func (r *networkingHubResolver) findNetworkClass(ctx context.Context) (*privatev1.NetworkClass, error) {
-	response, err := r.networkClassesClient.List(ctx, privatev1.NetworkClassesListRequest_builder{}.Build())
+	filter := activeResourceFilter
+	limit := int32(activeResourceLimit)
+	response, err := r.networkClassesClient.List(ctx, privatev1.NetworkClassesListRequest_builder{
+		Filter: &filter,
+		Limit:  &limit,
+	}.Build())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list network classes: %w", err)
 	}
@@ -196,6 +203,7 @@ func (r *networkingHubResolver) findNetworkClass(ctx context.Context) (*privatev
 
 	return findOnlyActive(
 		response.GetItems(),
+		response.GetTotal(),
 		func(networkClass *privatev1.NetworkClass) bool {
 			return networkClass.GetMetadata().HasDeletionTimestamp()
 		},
@@ -205,7 +213,12 @@ func (r *networkingHubResolver) findNetworkClass(ctx context.Context) (*privatev
 }
 
 func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub, error) {
-	response, err := r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{}.Build())
+	filter := activeResourceFilter
+	limit := int32(activeResourceLimit)
+	response, err := r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{
+		Filter: &filter,
+		Limit:  &limit,
+	}.Build())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networking hubs: %w", err)
 	}
@@ -215,6 +228,7 @@ func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub
 
 	hub, err := findOnlyActive(
 		response.GetItems(),
+		response.GetTotal(),
 		func(hub *privatev1.Hub) bool { return hub.GetMetadata().HasDeletionTimestamp() },
 		ErrNoNetworkingHubs,
 		func(int) error { return ErrMultipleNetworkingHubs },
@@ -230,6 +244,7 @@ func (r *networkingHubResolver) findOnlyHub(ctx context.Context) (*privatev1.Hub
 
 func findOnlyActive[T any](
 	items []*T,
+	total int32,
 	isDeleting func(*T) bool,
 	noItemsErr error,
 	multipleItemsErr func(int) error,
@@ -241,10 +256,17 @@ func findOnlyActive[T any](
 		}
 	}
 
+	if total > 1 {
+		return nil, multipleItemsErr(int(total))
+	}
+
 	switch len(active) {
 	case 0:
 		return nil, noItemsErr
 	case 1:
+		if len(active) == 0 {
+			return nil, noItemsErr
+		}
 		return active[0], nil
 	default:
 		return nil, multipleItemsErr(len(active))
