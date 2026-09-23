@@ -469,8 +469,8 @@ func createTestHub(ctx context.Context, hubsClient privatev1.HubsClient, id stri
 		}.Build(),
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
-	DeferCleanup(func() {
-		_, _ = hubsClient.Delete(ctx, privatev1.HubsDeleteRequest_builder{Id: id}.Build())
+	DeferCleanup(func(cleanupCtx context.Context) {
+		_, _ = hubsClient.Delete(cleanupCtx, privatev1.HubsDeleteRequest_builder{Id: id}.Build())
 	})
 }
 
