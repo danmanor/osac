@@ -140,7 +140,7 @@ var _ = Describe("NetworkClass reconciler", func() {
 		Expect(resolver.calls).To(Equal(0))
 	})
 
-	It("persists pending status when Hub discovery has no candidates", func() {
+	It("clears a stale Hub when discovery has no candidates", func() {
 		resolver := &fakeNetworkClassHubResolver{
 			result: controllers.NetworkingHubResolution{
 				State:   privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
@@ -159,6 +159,7 @@ var _ = Describe("NetworkClass reconciler", func() {
 		networkClass := privatev1.NetworkClass_builder{
 			Id: "nc-a",
 			Status: privatev1.NetworkClassStatus_builder{
+				Hub:   "previous-hub",
 				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			}.Build(),
 		}.Build()
@@ -167,6 +168,7 @@ var _ = Describe("NetworkClass reconciler", func() {
 		Expect(client.updates).To(HaveLen(1))
 		Expect(client.updates[0].GetObject().GetStatus().GetState()).To(
 			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+		Expect(client.updates[0].GetObject().GetStatus().GetHub()).To(BeEmpty())
 		Expect(client.updates[0].GetObject().GetStatus().GetMessage()).To(
 			Equal("expected exactly one active networking hub, found none"))
 	})

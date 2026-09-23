@@ -351,8 +351,6 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 	It("keeps a multiple-Hub deployment pending without selecting a Hub", func(ctx context.Context) {
 		createTestHub(ctx, hubsClient, fmt.Sprintf("additional-hub-%s", uuid.New()))
 
-		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
-
 		expectNetworkClassStatus(
 			ctx,
 			networkClassesClient,
@@ -361,6 +359,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			"",
 			"expected exactly one active networking hub, found multiple",
 		)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 
@@ -368,7 +367,6 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		additionalHubID := fmt.Sprintf("additional-hub-%s", uuid.New())
 		createTestHub(ctx, hubsClient, additionalHubID)
 
-		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 		expectNetworkClassStatus(
 			ctx,
 			networkClassesClient,
@@ -377,6 +375,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			"",
 			"expected exactly one active networking hub, found multiple",
 		)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 
 		By("Removing the extra Hub and waiting for NetworkClass reconciliation")
@@ -400,7 +399,6 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 
 	It("keeps a tenant resource pending when the canonical reference is invalid", func(ctx context.Context) {
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, "missing-canonical-hub")
-		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		expectNetworkClassStatus(
 			ctx,
@@ -410,6 +408,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			"missing-canonical-hub",
 			`canonical networking hub "missing-canonical-hub" is not registered`,
 		)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 
@@ -418,7 +417,6 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		createTestHub(ctx, hubsClient, unavailableHubID)
 
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, unavailableHubID)
-		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 
 		expectNetworkClassStatus(
 			ctx,
@@ -428,6 +426,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			unavailableHubID,
 			fmt.Sprintf(`canonical networking hub %q is unavailable`, unavailableHubID),
 		)
+		_, _, vnID := createTenantAndDefaultVirtualNetwork(ctx, virtualNetworksClient)
 		expectVirtualNetworkWithoutHub(ctx, virtualNetworksClient, vnID)
 	})
 })

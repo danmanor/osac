@@ -146,9 +146,13 @@ func (r *function) updateStatus(
 		object.SetStatus(&privatev1.NetworkClassStatus{})
 	}
 	status := object.GetStatus()
-	if resolution.HubID != "" {
-		status.SetHub(resolution.HubID)
-	}
+	// A resolution without a HubID means that no canonical Hub is currently
+	// selectable (for example, when there are no Hubs or multiple active
+	// Hubs). Clear any previously persisted assignment so status describes the
+	// current resolution rather than a stale READY binding. Resolutions for an
+	// explicitly configured canonical Hub always include its ID, including
+	// FAILED and PENDING results, so those assignments remain visible.
+	status.SetHub(resolution.HubID)
 	status.SetState(resolution.State)
 	if resolution.Message == "" {
 		status.ClearMessage()
