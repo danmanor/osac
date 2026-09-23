@@ -42,6 +42,7 @@ import (
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/baremetalinstance"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/cluster"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/computeinstance"
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers/defaultnetworking"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/externalip"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/externalipattachment"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/externalippool"
@@ -361,6 +362,18 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 		Build()
 	if err != nil {
 		return fmt.Errorf("failed to create hub cache: %w", err)
+	}
+
+	// Create the shared default-networking manager. Tenant reconciliation uses
+	// it to ensure resources asynchronously; project reconciliation uses the
+	// same manager to clean them up during root-project deletion.
+	r.logger.InfoContext(ctx, "Creating default networking manager")
+	defaultNetworking, err := defaultnetworking.NewManager().
+		SetLogger(r.logger).
+		SetConnection(r.client).
+		Build()
+	if err != nil {
+		return fmt.Errorf("failed to create default networking manager: %w", err)
 	}
 
 	// Create the IDP client:
@@ -946,11 +959,12 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 		SetConnection(r.client).
 		SetIdpManager(idpManager).
 		SetVaultLifecycle(vaultLifecycleClient).
+		SetDefaultNetworking(defaultNetworking).
 		Build()
 	if err != nil {
 		return fmt.Errorf("failed to create tenant reconciler function: %w", err)
 	}
-	tenantEventFilter := "has(event.tenant)"
+	tenantEventFilter := "has(event.tenant) || has(event.network_class) || has(event.hub)"
 	for _, resource := range []string{"virtual_network", "subnet", "security_group", "nat_gateway", "external_ip"} {
 		// Subscribe only to non-CREATE events for default-labeled resources. The tenant
 		// reconciler needs these events to detect when default networking resources
@@ -1071,6 +1085,7 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 		SetLogger(r.logger).
 		SetConnection(r.client).
 		SetProjectGroupManager(projectGroupManager).
+		SetDefaultNetworking(defaultNetworking).
 		Build()
 	if err != nil {
 		return fmt.Errorf("failed to create project reconciler function: %w", err)

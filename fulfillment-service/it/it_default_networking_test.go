@@ -51,7 +51,8 @@ var _ = Describe("Default networking provisioning", func() {
 		subnetsClient = privatev1.NewSubnetsClient(tool.InternalView().AdminConn())
 		securityGroupsClient = privatev1.NewSecurityGroupsClient(tool.InternalView().AdminConn())
 
-		// Create a default NetworkClass with defaults so ensureDefaultNetworking fires.
+		// Create the deployment singleton NetworkClass. The tenant controller
+		// asynchronously consumes it after its Hub status becomes READY.
 		networkClassId = createDefaultNetworkClass(
 			ctx,
 			networkClassesClient,
@@ -88,18 +89,6 @@ var _ = Describe("Default networking provisioning", func() {
 			"this.metadata.labels['osac.openshift.io/default'] == 'true' && this.metadata.tenant == %q",
 			tenantName,
 		)
-
-		By("Waiting for DefaultNetworkingReady=False/ResourcesPending (ensureDefaultNetworking ran)")
-		Eventually(func(g Gomega) {
-			resp, err := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantId}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			cond := findTenantCondition(resp.GetObject().GetStatus().GetConditions(),
-				privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY)
-			g.Expect(cond).ToNot(BeNil())
-			g.Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
-			g.Expect(cond.HasReason()).To(BeTrue())
-			g.Expect(cond.GetReason()).To(Equal("ResourcesPending"))
-		}, time.Minute, time.Second).Should(Succeed())
 
 		// logVNState logs the current VN state from the FS DB for tracing reconciler progress.
 		logVNState := func() {
@@ -307,7 +296,6 @@ func createDefaultNetworkClass(
 			Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("%s-%s", namePrefix, uuid.New())}.Build(),
 			Title:         title,
 			FabricManager: new("cudn_net"),
-			IsDefault:     new(true),
 			Spec: privatev1.NetworkClassSpec_builder{
 				Defaults: privatev1.NetworkDefaults_builder{
 					VirtualNetworkIpv4Cidr: virtualNetworkCIDR,
