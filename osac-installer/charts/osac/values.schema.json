@@ -2177,7 +2177,7 @@
         },
         "NETRIS_VALIDATE_CERTS": {
           "type": "string",
-          "enum": ["", "true", "false"],
+          "enum": ["true", "false"],
           "description": "Verify Netris HTTPS certificates; defaults to enabled."
         },
         "NETRIS_USERNAME": {

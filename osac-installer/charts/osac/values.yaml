@@ -244,7 +244,7 @@ aap:
         # Netris connection fields below must also be set on networkFulfillment
         # (including NETRIS_PASSWORD); there is no shared Netris config block.
         NETRIS_CONTROLLER_URL: ""
-        NETRIS_VALIDATE_CERTS: ""
+        NETRIS_VALIDATE_CERTS: "true"
         NETRIS_USERNAME: ""
         NETRIS_SITE_ID: ""
         NETRIS_TENANT_ID: ""
@@ -282,7 +282,7 @@ aap:
       config:
         # Duplicate of clusterFulfillment Netris connection fields — set both.
         NETRIS_CONTROLLER_URL: ""
-        NETRIS_VALIDATE_CERTS: ""
+        NETRIS_VALIDATE_CERTS: "true"
         NETRIS_USERNAME: ""
         NETRIS_SITE_ID: ""
         NETRIS_TENANT_ID: ""
