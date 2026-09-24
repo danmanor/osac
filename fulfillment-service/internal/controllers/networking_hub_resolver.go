@@ -185,18 +185,13 @@ func (b *NetworkingHubReaderBuilder) Build() (NetworkingHubReader, error) {
 }
 
 func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHubResolution, error) {
-	if result, ok := r.cachedResolution(ctx); ok {
-		return NetworkingHubResolution{
-			NetworkingHub: result,
-			HubID:         result.ID,
-			State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
-		}, nil
-	}
-	if err, ok := r.cachedFailure(); ok {
-		return NetworkingHubResolution{}, err
-	}
-
-	value, err, _ := r.resolveGroup.Do("canonical-networking-hub", func() (any, error) {
+	// The NetworkClass reconciler must re-evaluate the active Hub set on every
+	// reconciliation. Hub create/delete events trigger that reconciliation, so
+	// caching its discovery result would allow a stale canonical assignment to
+	// survive a topology change. Read-only resource consumers can cache the
+	// already-persisted canonical reference because they never discover or
+	// select a Hub.
+	if r.readOnly {
 		if result, ok := r.cachedResolution(ctx); ok {
 			return NetworkingHubResolution{
 				NetworkingHub: result,
@@ -207,9 +202,26 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHubResol
 		if err, ok := r.cachedFailure(); ok {
 			return NetworkingHubResolution{}, err
 		}
+	}
+
+	value, err, _ := r.resolveGroup.Do("canonical-networking-hub", func() (any, error) {
+		if r.readOnly {
+			if result, ok := r.cachedResolution(ctx); ok {
+				return NetworkingHubResolution{
+					NetworkingHub: result,
+					HubID:         result.ID,
+					State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+				}, nil
+			}
+			if err, ok := r.cachedFailure(); ok {
+				return NetworkingHubResolution{}, err
+			}
+		}
 
 		result, err := r.resolve(ctx)
-		r.cacheResult(result.NetworkingHub, err)
+		if r.readOnly {
+			r.cacheResult(result.NetworkingHub, err)
+		}
 		return result, err
 	})
 	if err != nil {

@@ -369,6 +369,16 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 		By("Removing the extra Hub and waiting for NetworkClass reconciliation")
 		_, err := hubsClient.Delete(ctx, privatev1.HubsDeleteRequest_builder{Id: additionalHubID}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		Eventually(func(g Gomega) {
+			filter := "!has(this.metadata.deletion_timestamp)"
+			response, listErr := hubsClient.List(ctx, privatev1.HubsListRequest_builder{
+				Filter: &filter,
+				Limit:  new(int32(2)),
+			}.Build())
+			g.Expect(listErr).ToNot(HaveOccurred())
+			g.Expect(response.GetItems()).To(HaveLen(1))
+			g.Expect(response.GetItems()[0].GetId()).To(Equal(hubId))
+		}, time.Minute, time.Second).Should(Succeed())
 
 		expectNetworkClassStatus(
 			ctx,
@@ -462,21 +472,23 @@ func createTestHub(ctx context.Context, hubsClient privatev1.HubsClient, id stri
 }
 
 func setNetworkClassCanonicalHub(ctx context.Context, client privatev1.NetworkClassesClient, id, hubID string) {
-	response, err := client.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: id}.Build())
-	Expect(err).ToNot(HaveOccurred())
-	networkClass := response.GetObject()
-	if !networkClass.HasStatus() {
-		networkClass.SetStatus(&privatev1.NetworkClassStatus{})
-	}
-	networkClass.GetStatus().SetHub(hubID)
-	_, err = client.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
-		Object: networkClass,
-		UpdateMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"status.hub"},
-		},
-		Lock: true,
-	}.Build())
-	Expect(err).ToNot(HaveOccurred())
+	Eventually(func(g Gomega) {
+		response, err := client.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: id}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		networkClass := response.GetObject()
+		if !networkClass.HasStatus() {
+			networkClass.SetStatus(&privatev1.NetworkClassStatus{})
+		}
+		networkClass.GetStatus().SetHub(hubID)
+		_, err = client.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
+			Object: networkClass,
+			UpdateMask: &fieldmaskpb.FieldMask{
+				Paths: []string{"status.hub"},
+			},
+			Lock: true,
+		}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+	}, time.Minute, time.Second).Should(Succeed())
 }
 
 func createTenantAndDefaultVirtualNetwork(

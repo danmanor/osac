@@ -208,15 +208,6 @@ func (t *task) update(ctx context.Context) error {
 			return err
 		}
 		if err := t.ensureDefaultNetworking(ctx); err != nil {
-			if errors.Is(err, defaultnetworking.ErrNetworkClassNotReady) {
-				t.updateCondition(
-					privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY,
-					privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
-					"NetworkClassNotReady",
-					"Waiting for the NetworkClass controller to select a ready Hub",
-				)
-				return nil
-			}
 			return err
 		}
 		return t.checkDefaultNetworkingReadiness(ctx)

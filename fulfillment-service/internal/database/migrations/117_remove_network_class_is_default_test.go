@@ -28,7 +28,7 @@ var _ = DescribeMigration("Remove NetworkClass is_default", func() {
 		`)
 		Expect(err).ToNot(HaveOccurred())
 
-		Expect(tool.Migrate(ctx, 116)).To(Succeed())
+		Expect(tool.Migrate(ctx, 117)).To(Succeed())
 
 		var data []byte
 		err = conn.QueryRow(ctx, `select data from network_classes where id = 'network-class-legacy'`).Scan(&data)

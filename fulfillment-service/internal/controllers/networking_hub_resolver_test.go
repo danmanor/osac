@@ -208,28 +208,33 @@ var _ = Describe("NetworkingHubResolver", func() {
 		Expect(networkClasses.updates).To(BeEmpty())
 	})
 
-	It("reuses a resolved canonical Hub without relisting NetworkClasses", func() {
-		networkClass := testNetworkClass("nc-a", "hub-a", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
+	It("re-evaluates active Hubs for each writable resolution", func() {
+		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
 		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
 		hubs := &fakeHubsListClient{}
 		cache := &fakeNetworkingHubCache{entries: map[string]*HubEntry{
 			"hub-a": {Namespace: "canonical", Client: nil},
+			"hub-b": {Namespace: "canonical", Client: nil},
 		}}
 
 		resolver := mustBuildNetworkingHubResolver(networkClasses, hubs, cache)
 
+		hubs.items = []*privatev1.Hub{testHub("hub-a")}
 		first, err := resolver.Resolve(ctx)
 		Expect(err).ToNot(HaveOccurred())
+		hubs.items = []*privatev1.Hub{testHub("hub-b")}
+		networkClass.GetStatus().SetHub("")
 		second, err := resolver.Resolve(ctx)
 		Expect(err).ToNot(HaveOccurred())
 
-		Expect(second.ID).To(Equal(first.ID))
-		Expect(second.Namespace).To(Equal(first.Namespace))
-		Expect(networkClasses.listCalls).To(Equal(1))
-		Expect(cache.calls).To(Equal([]string{"hub-a", "hub-a"}))
+		Expect(first.ID).To(Equal("hub-a"))
+		Expect(second.ID).To(Equal("hub-b"))
+		Expect(networkClasses.listCalls).To(Equal(2))
+		Expect(hubs.listCall).To(Equal(2))
+		Expect(cache.calls).To(Equal([]string{"hub-a", "hub-b"}))
 	})
 
-	It("reuses a recent resolution failure without relisting NetworkClasses", func() {
+	It("re-evaluates a recent resolution failure for each writable resolution", func() {
 		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
 		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
 		hubs := &fakeHubsListClient{}
@@ -242,8 +247,8 @@ var _ = Describe("NetworkingHubResolver", func() {
 
 		Expect(errors.Is(firstErr, ErrNoNetworkingHubs)).To(BeTrue())
 		Expect(errors.Is(secondErr, ErrNoNetworkingHubs)).To(BeTrue())
-		Expect(networkClasses.listCalls).To(Equal(1))
-		Expect(hubs.listCall).To(Equal(1))
+		Expect(networkClasses.listCalls).To(Equal(2))
+		Expect(hubs.listCall).To(Equal(2))
 		Expect(networkClasses.updates).To(BeEmpty())
 	})
 

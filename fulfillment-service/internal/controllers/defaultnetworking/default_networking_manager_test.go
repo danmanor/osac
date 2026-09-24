@@ -193,7 +193,7 @@ var _ = Describe("default networking manager", func() {
 		}
 	})
 
-	It("waits for the NetworkClass controller before creating resources", func() {
+	It("creates default resources while NetworkClass Hub selection is pending", func() {
 		m.networkClasses = &fakeNetworkClasses{items: []*privatev1.NetworkClass{
 			privatev1.NetworkClass_builder{
 				Id: "nc-1",
@@ -208,8 +208,8 @@ var _ = Describe("default networking manager", func() {
 			}.Build(),
 		}}
 
-		Expect(m.Ensure(ctx, "tenant-a")).To(MatchError(ContainSubstring(ErrNetworkClassNotReady.Error())))
-		Expect(m.virtualNetworks.(*fakeVirtualNetworks).creates).To(BeEmpty())
+		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(m.virtualNetworks.(*fakeVirtualNetworks).creates).To(HaveLen(1))
 	})
 
 	It("creates the default resources asynchronously and idempotently", func() {

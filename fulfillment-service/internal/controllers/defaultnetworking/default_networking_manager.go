@@ -38,9 +38,6 @@ const (
 )
 
 var (
-	// ErrNetworkClassNotReady tells a tenant reconciler to wait for the
-	// NetworkClass controller to persist a usable Hub binding.
-	ErrNetworkClassNotReady = errors.New("NetworkClass is not ready for default networking")
 	// ErrResourcesDeleting tells a project reconciler to retry while a child
 	// resource controller finishes asynchronous cleanup.
 	ErrResourcesDeleting = errors.New("default networking resources are still being deleted")
@@ -145,8 +142,11 @@ type manager struct {
 }
 
 // Ensure creates the default resources for a tenant when the singleton
-// NetworkClass is READY and contains defaults. Every operation is idempotent;
-// reconciliation can safely resume after any API or controller failure.
+// NetworkClass contains defaults. Hub selection is owned by the NetworkClass
+// and VirtualNetwork controllers, so default resources are created even while
+// the NetworkClass is pending; their controllers keep them pending until a
+// canonical Hub is available. Every operation is idempotent; reconciliation
+// can safely resume after any API or controller failure.
 func (m *manager) Ensure(ctx context.Context, tenantName string) error {
 	if tenantName == "system" || tenantName == "shared" {
 		return nil
@@ -159,12 +159,6 @@ func (m *manager) Ensure(ctx context.Context, tenantName string) error {
 	if networkClass == nil || networkClass.GetSpec().GetDefaults() == nil {
 		return nil
 	}
-	if networkClass.GetStatus().GetState() != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY ||
-		networkClass.GetStatus().GetHub() == "" {
-		return fmt.Errorf("%w: state=%s hub=%q", ErrNetworkClassNotReady,
-			networkClass.GetStatus().GetState(), networkClass.GetStatus().GetHub())
-	}
-
 	defaults := networkClass.GetSpec().GetDefaults()
 	vn, err := m.ensureVirtualNetwork(ctx, tenantName, networkClass, defaults)
 	if err != nil {
