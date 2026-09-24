@@ -2577,6 +2577,7 @@ var _ = Describe("Private compute instances server", func() {
 				}.Build())
 				Expect(err).ToNot(HaveOccurred())
 				created := createResponse.GetObject()
+				originalAttachment := proto.Clone(created.GetSpec().GetNetworkAttachments()[0]).(*privatev1.ComputeNetworkAttachment)
 
 				// Update subnet to non-READY state (simulate resource being deleted/modified)
 				subnet.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_PENDING)
@@ -2592,14 +2593,7 @@ var _ = Describe("Private compute instances server", func() {
 				deletionTime := timestamppb.Now()
 				created.GetMetadata().SetDeletionTimestamp(deletionTime)
 
-				// Try to update security groups while subnet is PENDING
-				// A live object must still pass readiness validation.
-				created.GetSpec().SetNetworkAttachments([]*privatev1.ComputeNetworkAttachment{
-					privatev1.ComputeNetworkAttachment_builder{
-						Subnet:         privatev1.SubnetLocalReference_builder{Id: subnet.GetId()}.Build(),
-						SecurityGroups: []*privatev1.SecurityGroupLocalReference{}, // Change security groups (allowed)
-					}.Build(),
-				})
+				// An unchanged attachment still goes through readiness validation while the instance is live.
 				updateRequest := &privatev1.ComputeInstancesUpdateRequest{}
 				updateRequest.SetObject(created)
 				updateRequest.SetUpdateMask(&fieldmaskpb.FieldMask{Paths: []string{"spec.network_attachments"}})
@@ -2625,13 +2619,27 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(err).NotTo(HaveOccurred())
 				_, err = server.Delete(ctx, privatev1.ComputeInstancesDeleteRequest_builder{Id: created.GetId()}.Build())
 				Expect(err).NotTo(HaveOccurred())
+
+				// Deletion permits readiness checks to tolerate the pending subnet, but does not make the attachment mutable.
+				deletingObject := proto.Clone(created).(*privatev1.ComputeInstance)
+				deletingObject.GetSpec().GetNetworkAttachments()[0].SetSecurityGroups(nil)
+				updateRequest.SetObject(deletingObject)
 				updateRequest.SetUpdateMask(&fieldmaskpb.FieldMask{Paths: []string{"spec.network_attachments"}})
+				_, err = server.Update(ctx, updateRequest)
+				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
+				stored, err = server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: created.GetId()}.Build())
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stored.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeTrue())
+				Expect(stored.GetObject().GetSpec().GetNetworkAttachments()[0].GetSecurityGroups()).To(HaveLen(1))
+
+				// An unchanged attachment update is still accepted for a deleting instance.
+				deletingObject.GetSpec().SetNetworkAttachments([]*privatev1.ComputeNetworkAttachment{originalAttachment})
+				updateRequest.SetObject(deletingObject)
 				_, err = server.Update(ctx, updateRequest)
 				Expect(err).NotTo(HaveOccurred())
 				stored, err = server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: created.GetId()}.Build())
 				Expect(err).NotTo(HaveOccurred())
-				Expect(stored.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeTrue())
-				Expect(stored.GetObject().GetSpec().GetNetworkAttachments()[0].GetSecurityGroups()).To(BeEmpty())
+				Expect(proto.Equal(stored.GetObject().GetSpec().GetNetworkAttachments()[0], originalAttachment)).To(BeTrue())
 
 			})
 		})
