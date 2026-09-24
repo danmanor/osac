@@ -981,17 +981,12 @@ func validateClusterNetworkAttachmentImmutability(current, candidate *privatev1.
 			refKey(existingSubnet), refKey(newSubnet),
 		)
 	}
-	existingGroups := existingAttachment.GetSecurityGroups()
-	newGroups := newAttachment.GetSecurityGroups()
-	if len(existingGroups) != len(newGroups) {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"cannot change spec.network_attachment.security_groups: security groups are immutable")
-	}
-	for i := range existingGroups {
-		if refKey(existingGroups[i]) != refKey(newGroups[i]) {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"cannot change spec.network_attachment.security_groups[%d]: security groups are immutable", i)
-		}
+	if err := validateImmutableSecurityGroups(
+		existingAttachment.GetSecurityGroups(),
+		newAttachment.GetSecurityGroups(),
+		"spec.network_attachment.security_groups",
+	); err != nil {
+		return err
 	}
 
 	return nil

@@ -844,17 +844,12 @@ func validateComputeNetworkAttachmentsImmutability(
 				i, refKey(existingSubnet), refKey(newSubnet),
 			)
 		}
-		existingGroups := existingAttachments[i].GetSecurityGroups()
-		newGroups := newAttachments[i].GetSecurityGroups()
-		if len(existingGroups) != len(newGroups) {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"cannot change network_attachments[%d].security_groups: security groups are immutable", i)
-		}
-		for j := range existingGroups {
-			if refKey(existingGroups[j]) != refKey(newGroups[j]) {
-				return grpcstatus.Errorf(grpccodes.InvalidArgument,
-					"cannot change network_attachments[%d].security_groups[%d]: security groups are immutable", i, j)
-			}
+		if err := validateImmutableSecurityGroups(
+			existingAttachments[i].GetSecurityGroups(),
+			newAttachments[i].GetSecurityGroups(),
+			fmt.Sprintf("network_attachments[%d].security_groups", i),
+		); err != nil {
+			return err
 		}
 	}
 

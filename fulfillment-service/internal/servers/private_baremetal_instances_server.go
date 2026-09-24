@@ -905,17 +905,12 @@ func compareNetworkAttachmentsImmutability(existing, updated []*privatev1.BareMe
 			return grpcstatus.Errorf(grpccodes.InvalidArgument,
 				"cannot change network_attachments[%d].primary: primary is immutable after creation", i)
 		}
-		existingGroups := existing[i].GetSecurityGroups()
-		updatedGroups := updated[i].GetSecurityGroups()
-		if len(existingGroups) != len(updatedGroups) {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"cannot change network_attachments[%d].security_groups: security groups are immutable", i)
-		}
-		for j := range existingGroups {
-			if refKey(existingGroups[j]) != refKey(updatedGroups[j]) {
-				return grpcstatus.Errorf(grpccodes.InvalidArgument,
-					"cannot change network_attachments[%d].security_groups[%d]: security groups are immutable", i, j)
-			}
+		if err := validateImmutableSecurityGroups(
+			existing[i].GetSecurityGroups(),
+			updated[i].GetSecurityGroups(),
+			fmt.Sprintf("network_attachments[%d].security_groups", i),
+		); err != nil {
+			return err
 		}
 	}
 	return nil
