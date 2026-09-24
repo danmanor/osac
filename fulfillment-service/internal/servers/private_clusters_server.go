@@ -447,10 +447,6 @@ func (s *PrivateClustersServer) Update(ctx context.Context,
 	if err != nil {
 		return
 	}
-	err = s.validateNetworkAttachmentImmutability(ctx, request)
-	if err != nil {
-		return
-	}
 	err = s.validateAutoExternalIPImmutability(ctx, request)
 	if err != nil {
 		return
@@ -461,6 +457,9 @@ func (s *PrivateClustersServer) Update(ctx context.Context,
 	}
 
 	err = s.generic.UpdateWithCandidatePreparation(ctx, request, &response, func(ctx context.Context, current *privatev1.Cluster, candidate *privatev1.Cluster) error {
+		if err := validateClusterNetworkAttachmentImmutability(current, candidate, request.GetUpdateMask()); err != nil {
+			return err
+		}
 		if err := validateClusterTemplateImmutability(current, candidate, request.GetUpdateMask()); err != nil {
 			return err
 		}
@@ -963,26 +962,17 @@ func (s *PrivateClustersServer) validateVersionUpdate(ctx context.Context,
 	return validateResolvedClusterVersion(version, version.GetMetadata().GetName(), "")
 }
 
-// validateNetworkAttachmentImmutability ensures that the subnet field within
-// network_attachment cannot be changed after cluster creation.
-func (s *PrivateClustersServer) validateNetworkAttachmentImmutability(ctx context.Context,
-	request *privatev1.ClustersUpdateRequest) error {
-	updateMask := request.GetUpdateMask()
-
-	if !updateIncludesField(updateMask, "spec.network_attachment.subnet") {
+// validateClusterNetworkAttachmentImmutability rejects changes to the complete
+// network attachment after applying the update mask.
+func validateClusterNetworkAttachmentImmutability(current, candidate *privatev1.Cluster,
+	updateMask *fieldmaskpb.FieldMask) error {
+	if !updateIncludesField(updateMask, "spec.network_attachment") {
 		return nil
 	}
-
-	existingCluster, found, err := s.getExistingCluster(ctx, request)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-
-	existingSubnet := existingCluster.GetSpec().GetNetworkAttachment().GetSubnet()
-	newSubnet := request.GetObject().GetSpec().GetNetworkAttachment().GetSubnet()
+	existingAttachment := current.GetSpec().GetNetworkAttachment()
+	newAttachment := candidate.GetSpec().GetNetworkAttachment()
+	existingSubnet := existingAttachment.GetSubnet()
+	newSubnet := newAttachment.GetSubnet()
 
 	if refKey(existingSubnet) != refKey(newSubnet) {
 		return grpcstatus.Errorf(
@@ -990,6 +980,18 @@ func (s *PrivateClustersServer) validateNetworkAttachmentImmutability(ctx contex
 			"cannot change spec.network_attachment.subnet from '%s' to '%s': subnet is immutable",
 			refKey(existingSubnet), refKey(newSubnet),
 		)
+	}
+	existingGroups := existingAttachment.GetSecurityGroups()
+	newGroups := newAttachment.GetSecurityGroups()
+	if len(existingGroups) != len(newGroups) {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"cannot change spec.network_attachment.security_groups: security groups are immutable")
+	}
+	for i := range existingGroups {
+		if refKey(existingGroups[i]) != refKey(newGroups[i]) {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument,
+				"cannot change spec.network_attachment.security_groups[%d]: security groups are immutable", i)
+		}
 	}
 
 	return nil
