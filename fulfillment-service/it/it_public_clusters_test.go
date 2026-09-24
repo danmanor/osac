@@ -55,6 +55,9 @@ var _ = Describe("Public clusters", func() {
 					Name: fmt.Sprintf("test-ht-%s", uuid.New()[24:32]),
 				}.Build(),
 				Id: hostTypeId,
+				Interfaces: []*privatev1.NetworkInterface{
+					privatev1.NetworkInterface_builder{Name: "data-0", Role: "fabric"}.Build(),
+				},
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
