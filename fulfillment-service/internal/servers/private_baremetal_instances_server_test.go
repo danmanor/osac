@@ -2344,6 +2344,10 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(attachments).To(HaveLen(2))
 			Expect(attachments[0].GetSubnet().GetId()).To(Equal(subnetID1))
 			Expect(attachments[1].GetSubnet().GetId()).To(Equal(subnetID2))
+			original := created.GetObject().GetSpec().GetNetworkAttachments()
+			Expect(original).To(HaveLen(2))
+			Expect(proto.Equal(attachments[0], original[0])).To(BeTrue())
+			Expect(proto.Equal(attachments[1], original[1])).To(BeTrue())
 		})
 
 		It("Accepts update that does not touch network_attachments", func() {

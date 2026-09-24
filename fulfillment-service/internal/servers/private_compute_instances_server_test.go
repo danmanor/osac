@@ -2830,6 +2830,10 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(attachments).To(HaveLen(2))
 				Expect(attachments[0].GetSubnet().GetId()).To(Equal(subnet1.GetId()))
 				Expect(attachments[1].GetSubnet().GetId()).To(Equal(subnet2.GetId()))
+				original := created.GetObject().GetSpec().GetNetworkAttachments()
+				Expect(original).To(HaveLen(2))
+				Expect(proto.Equal(attachments[0], original[0])).To(BeTrue())
+				Expect(proto.Equal(attachments[1], original[1])).To(BeTrue())
 			})
 
 			It("Rejects adding network attachments", func() {
