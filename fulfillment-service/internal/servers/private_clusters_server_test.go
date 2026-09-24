@@ -1698,6 +1698,9 @@ var _ = Describe("Private clusters server", func() {
 				Expect(status.Message()).To(Equal(
 					"cannot change spec.network_attachment.subnet from 'subnet-1' to 'subnet-2': subnet is immutable",
 				))
+				stored, err := server.Get(ctx, privatev1.ClustersGetRequest_builder{Id: object.GetId()}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(proto.Equal(stored.GetObject().GetSpec().GetNetworkAttachment(), object.GetSpec().GetNetworkAttachment())).To(BeTrue())
 			})
 
 			It("Rejects removing network_attachment when one exists", func() {
@@ -1719,6 +1722,9 @@ var _ = Describe("Private clusters server", func() {
 				Expect(status.Message()).To(Equal(
 					"cannot change spec.network_attachment.subnet from 'subnet-1' to '': subnet is immutable",
 				))
+				stored, err := server.Get(ctx, privatev1.ClustersGetRequest_builder{Id: object.GetId()}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(proto.Equal(stored.GetObject().GetSpec().GetNetworkAttachment(), object.GetSpec().GetNetworkAttachment())).To(BeTrue())
 			})
 
 			It("Rejects adding network_attachment when none existed", func() {
@@ -1753,6 +1759,9 @@ var _ = Describe("Private clusters server", func() {
 				Expect(status.Message()).To(Equal(
 					"cannot change spec.network_attachment.subnet from '' to 'subnet-1': subnet is immutable",
 				))
+				stored, err := server.Get(ctx, privatev1.ClustersGetRequest_builder{Id: object.GetId()}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(stored.GetObject().GetSpec().GetNetworkAttachment()).To(BeNil())
 			})
 
 			It("Rejects changing security_groups with same subnet", func() {

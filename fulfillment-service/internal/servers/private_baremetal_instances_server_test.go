@@ -2427,6 +2427,9 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 			Expect(status.Message()).To(ContainSubstring("cannot change number of network attachments"))
+			stored, err := server.Get(ctx, privatev1.BareMetalInstancesGetRequest_builder{Id: id}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(proto.Equal(stored.GetObject().GetSpec(), createResp.GetObject().GetSpec())).To(BeTrue())
 		})
 
 		It("Rejects update that changes subnet", func() {
@@ -2472,6 +2475,9 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 			Expect(status.Message()).To(ContainSubstring("subnet is immutable"))
+			stored, err := server.Get(ctx, privatev1.BareMetalInstancesGetRequest_builder{Id: id}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(proto.Equal(stored.GetObject().GetSpec(), createResp.GetObject().GetSpec())).To(BeTrue())
 		})
 
 		It("Rejects update that changes interface", func() {
@@ -2517,6 +2523,9 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 			Expect(status.Message()).To(ContainSubstring("interface is immutable"))
+			stored, err := server.Get(ctx, privatev1.BareMetalInstancesGetRequest_builder{Id: id}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(proto.Equal(stored.GetObject().GetSpec(), createResp.GetObject().GetSpec())).To(BeTrue())
 		})
 
 		It("Rejects update that changes primary", func() {
@@ -2572,6 +2581,9 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 			Expect(status.Message()).To(ContainSubstring("primary is immutable"))
+			stored, err := server.Get(ctx, privatev1.BareMetalInstancesGetRequest_builder{Id: id}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(proto.Equal(stored.GetObject().GetSpec(), createResp.GetObject().GetSpec())).To(BeTrue())
 		})
 	})
 

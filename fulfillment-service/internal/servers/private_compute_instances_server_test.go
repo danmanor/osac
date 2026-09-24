@@ -2698,6 +2698,9 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(ok).To(BeTrue())
 				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 				Expect(status.Message()).To(ContainSubstring("subnet is immutable"))
+				stored, err := server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: id}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(proto.Equal(stored.GetObject().GetSpec(), createResponse.GetObject().GetSpec())).To(BeTrue())
 			})
 
 			It("Rejects changing security groups in network_attachments", func() {
@@ -2877,6 +2880,9 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(ok).To(BeTrue())
 				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 				Expect(status.Message()).To(ContainSubstring("cannot change number"))
+				stored, err := server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: id}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(proto.Equal(stored.GetObject().GetSpec(), createResponse.GetObject().GetSpec())).To(BeTrue())
 			})
 
 			It("Rejects removing network attachments", func() {
@@ -2927,6 +2933,9 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(ok).To(BeTrue())
 				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 				Expect(status.Message()).To(ContainSubstring("cannot change number"))
+				stored, err := server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: id}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(proto.Equal(stored.GetObject().GetSpec(), createResponse.GetObject().GetSpec())).To(BeTrue())
 			})
 		})
 
