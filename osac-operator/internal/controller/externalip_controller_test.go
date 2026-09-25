@@ -148,7 +148,7 @@ var _ = Describe("ExternalIPReconciler", func() {
 		emptyTargetClient := fake.NewClientBuilder().WithScheme(testScheme).Build()
 
 		resolver, ncClient := wireExternalIPDispatcher(fakeClient, testNamespace, []*privatev1.NetworkClass{{
-			Id: "nc-default", FabricManager: ptr.To("metallb-l2"), IsDefault: ptr.To(true),
+			Id: "nc-default", FabricManager: ptr.To("metallb-l2"),
 		}})
 
 		reconciler = &ExternalIPReconciler{

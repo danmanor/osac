@@ -93,7 +93,7 @@ var _ = Describe("ExternalIPPoolReconciler", func() {
 		mockProvider = &mockProvisioningProvider{name: "mock-aap"}
 
 		resolver, ncClient := wireExternalIPDispatcher(fakeClient, "test-namespace", []*privatev1.NetworkClass{{
-			Id: "nc-default", FabricManager: ptr.To("metallb-l2"), IsDefault: ptr.To(true),
+			Id: "nc-default", FabricManager: ptr.To("metallb-l2"),
 		}})
 
 		reconciler = &ExternalIPPoolReconciler{
