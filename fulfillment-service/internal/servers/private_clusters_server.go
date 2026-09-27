@@ -328,6 +328,9 @@ func (s *PrivateClustersServer) Create(ctx context.Context, request *privatev1.C
 func (s *PrivateClustersServer) prepareCreate(ctx context.Context, candidate *privatev1.Cluster) (err error) {
 	// Ensure sane defaults:
 	s.setDefaults(candidate)
+	if err = validateClusterEndpointAddresses(candidate.GetStatus(), nil); err != nil {
+		return
+	}
 	if err = s.resolveAddOnOperators(ctx, candidate); err != nil {
 		return
 	}
@@ -460,6 +463,9 @@ func (s *PrivateClustersServer) Update(ctx context.Context,
 	}
 
 	err = s.generic.UpdateWithCandidatePreparation(ctx, request, &response, func(ctx context.Context, current *privatev1.Cluster, candidate *privatev1.Cluster) error {
+		if err := validateClusterEndpointAddresses(candidate.GetStatus(), request.GetUpdateMask()); err != nil {
+			return err
+		}
 		if err := validateClusterTemplateImmutability(current, candidate, request.GetUpdateMask()); err != nil {
 			return err
 		}
@@ -565,6 +571,23 @@ func (s *PrivateClustersServer) setDefaults(cluster *privatev1.Cluster) {
 	if !cluster.HasStatus() {
 		cluster.SetStatus(&privatev1.ClusterStatus{})
 	}
+}
+
+func validateClusterEndpointAddresses(status *privatev1.ClusterStatus, updateMask *fieldmaskpb.FieldMask) error {
+	for _, field := range []struct {
+		path  string
+		value string
+	}{
+		{path: "status.api_endpoint", value: status.GetApiEndpoint()},
+		{path: "status.ingress_endpoint", value: status.GetIngressEndpoint()},
+	} {
+		if updateIncludesField(updateMask, field.path) {
+			if err := validateCanonicalIPv4Address(field.path, field.value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *PrivateClustersServer) validatePullSecretSecret(
