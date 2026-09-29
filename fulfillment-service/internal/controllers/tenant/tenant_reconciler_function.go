@@ -15,6 +15,7 @@ language governing permissions and limitations under the License.
 //go:generate mockgen -destination=virtual_networks_client_mock.go -package=tenant github.com/osac-project/osac/proto/gen/osac/private/v1 VirtualNetworksClient
 //go:generate mockgen -destination=subnets_client_mock.go -package=tenant github.com/osac-project/osac/proto/gen/osac/private/v1 SubnetsClient
 //go:generate mockgen -destination=security_groups_client_mock.go -package=tenant github.com/osac-project/osac/proto/gen/osac/private/v1 SecurityGroupsClient
+//go:generate mockgen -destination=external_ips_client_mock.go -package=tenant github.com/osac-project/osac/proto/gen/osac/private/v1 ExternalIPsClient
 //go:generate mockgen -destination=nat_gateways_client_mock.go -package=tenant github.com/osac-project/osac/proto/gen/osac/private/v1 NATGatewaysClient
 
 package tenant
@@ -116,6 +117,7 @@ func (b *FunctionBuilder) Build() (result *function, err error) {
 		virtualNetworksClient: privatev1.NewVirtualNetworksClient(b.connection),
 		subnetsClient:         privatev1.NewSubnetsClient(b.connection),
 		securityGroupsClient:  privatev1.NewSecurityGroupsClient(b.connection),
+		externalIPsClient:     privatev1.NewExternalIPsClient(b.connection),
 		natGatewaysClient:     privatev1.NewNATGatewaysClient(b.connection),
 		secretsClient:         privatev1.NewSecretsClient(b.connection),
 		idpManager:            b.idpManager,
@@ -134,6 +136,7 @@ type function struct {
 	virtualNetworksClient privatev1.VirtualNetworksClient
 	subnetsClient         privatev1.SubnetsClient
 	securityGroupsClient  privatev1.SecurityGroupsClient
+	externalIPsClient     privatev1.ExternalIPsClient
 	natGatewaysClient     privatev1.NATGatewaysClient
 	secretsClient         privatev1.SecretsClient
 	defaultNetwork        defaultnetworking.Manager
@@ -825,6 +828,22 @@ func (t *task) checkDefaultNetworkingReadiness(ctx context.Context) error {
 		}
 	}
 
+	eips, err := t.r.externalIPsClient.List(ctx, privatev1.ExternalIPsListRequest_builder{
+		Filter: new(filter),
+	}.Build())
+	if err != nil {
+		return fmt.Errorf("failed to list default external IPs: %w", err)
+	}
+	for _, eip := range eips.GetItems() {
+		switch eip.GetStatus().GetState() {
+		case privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED:
+		case privatev1.ExternalIPState_EXTERNAL_IP_STATE_FAILED:
+			failed = append(failed, fmt.Sprintf("ExternalIP/%s", eip.GetMetadata().GetName()))
+		default:
+			pending = append(pending, fmt.Sprintf("ExternalIP/%s", eip.GetMetadata().GetName()))
+		}
+	}
+
 	ngs, err := t.r.natGatewaysClient.List(ctx, privatev1.NATGatewaysListRequest_builder{
 		Filter: new(filter),
 	}.Build())
@@ -841,22 +860,27 @@ func (t *task) checkDefaultNetworkingReadiness(ctx context.Context) error {
 		}
 	}
 
-	// The default-networking manager has already attempted idempotent creation
-	// for this reconciliation. Subnets are optional in NetworkDefaults, so the
-	// presence of the default VirtualNetwork and SecurityGroup determines
-	// whether default networking is configured.
-	coreResourcesMissing := len(vns.GetItems()) == 0 || len(sgs.GetItems()) == 0
-	if coreResourcesMissing {
+	defaultCount := len(vns.GetItems()) + len(subnets.GetItems()) + len(sgs.GetItems()) +
+		len(eips.GetItems()) + len(ngs.GetItems())
+	if defaultCount == 0 {
 		t.updateCondition(condType, privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
 			"NoDefaultNetworking", "No default networking resources configured")
 		return nil
 	}
 
-	// All core resources exist (or NC=nil but some resources remain) — evaluate their states.
 	if len(failed) > 0 {
 		t.updateCondition(condType, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
 			"ResourceFailed", fmt.Sprintf("Default networking resources failed: %s", strings.Join(failed, ", ")))
 		return nil
+	}
+	// VirtualNetwork and SecurityGroup are always part of a configured default
+	// network. A partial set is still being created even if its existing objects
+	// have already reached their ready states.
+	if len(vns.GetItems()) == 0 {
+		pending = append(pending, "VirtualNetwork/default")
+	}
+	if len(sgs.GetItems()) == 0 {
+		pending = append(pending, "SecurityGroup/default")
 	}
 	if len(pending) > 0 {
 		t.updateCondition(condType, privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
