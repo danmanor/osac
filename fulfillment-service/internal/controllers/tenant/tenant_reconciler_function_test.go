@@ -1711,6 +1711,16 @@ var _ = Describe("Skip Reconciliation", func() {
 	})
 })
 
+type testDefaultNetworkingManager func(context.Context, string) error
+
+func (m testDefaultNetworkingManager) Ensure(ctx context.Context, tenantName string) error {
+	return m(ctx, tenantName)
+}
+
+func (testDefaultNetworkingManager) Delete(context.Context, string) error {
+	return fmt.Errorf("unexpected default networking deletion")
+}
+
 var _ = Describe("Default networking readiness", func() {
 	var (
 		ctx         context.Context
@@ -1946,6 +1956,58 @@ var _ = Describe("Default networking readiness", func() {
 		Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
 		Expect(cond.GetReason()).To(Equal("ResourcesPending"))
 		Expect(cond.GetMessage()).To(ContainSubstring("NATGateway/default"))
+		Expect(ncCalls).To(Equal(1))
+	})
+
+	It("keeps readiness pending when ExternalIP becomes allocated between Ensure and readiness", func() {
+		const tenantName = "allocation-race-tenant"
+		defaults = privatev1.NetworkDefaults_builder{
+			SubnetIpv4Cidr: "10.0.1.0/24", SubnetIpv6Cidr: "fd00::/64", EnableNatGateway: true,
+		}.Build()
+		tenant := newSyncedTenant(tenantName)
+		expectReadyCore([]*privatev1.Subnet{
+			privatev1.Subnet_builder{
+				Metadata: privatev1.Metadata_builder{Name: "default-ipv4"}.Build(),
+				Status:   privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build(),
+			}.Build(),
+			privatev1.Subnet_builder{
+				Metadata: privatev1.Metadata_builder{Name: "default-ipv6"}.Build(),
+				Status:   privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build(),
+			}.Build(),
+		})
+		externalIPs = []*privatev1.ExternalIP{
+			privatev1.ExternalIP_builder{
+				Metadata: privatev1.Metadata_builder{Name: "default-nat"}.Build(),
+				Status:   privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_PENDING}.Build(),
+			}.Build(),
+		}
+		mockNGs.EXPECT().List(gomock.Any(), gomock.Any()).Return(
+			privatev1.NATGatewaysListResponse_builder{}.Build(), nil)
+		reconciler.defaultNetwork = testDefaultNetworkingManager(func(ctx context.Context, name string) error {
+			Expect(name).To(Equal(tenantName))
+			response, err := reconciler.externalIPsClient.List(ctx,
+				privatev1.ExternalIPsListRequest_builder{}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.GetItems()).To(HaveLen(1))
+			Expect(response.GetItems()[0].GetStatus().GetState()).To(Equal(
+				privatev1.ExternalIPState_EXTERNAL_IP_STATE_PENDING))
+			return nil
+		})
+
+		t := &task{r: reconciler, tenant: tenant}
+		t.setDefaults()
+		t.setConditionDefaults()
+		Expect(t.ensureDefaultNetworking(ctx)).To(Succeed())
+		Expect(eipCalls).To(Equal(1))
+		externalIPs[0].SetStatus(privatev1.ExternalIPStatus_builder{
+			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED,
+		}.Build())
+		Expect(t.checkDefaultNetworkingReadiness(ctx)).To(Succeed())
+		cond := findCondition(tenant)
+		Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
+		Expect(cond.GetReason()).To(Equal("ResourcesPending"))
+		Expect(cond.GetMessage()).To(ContainSubstring("NATGateway/default"))
+		Expect(eipCalls).To(Equal(2))
 		Expect(ncCalls).To(Equal(1))
 	})
 
