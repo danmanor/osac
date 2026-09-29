@@ -475,6 +475,52 @@ var _ = Describe("Default networking provisioning", func() {
 			gatewayID = gateways[0].GetId()
 			expectNotReady(g)
 		}, time.Minute, time.Second).Should(Succeed())
+
+		By("Signaling another tenant reconciliation while NATGateway remains PENDING")
+		tenantResponse, err := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantID}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		tenant := tenantResponse.GetObject()
+		condition := findTenantCondition(tenant.GetStatus().GetConditions(),
+			privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY)
+		Expect(condition).ToNot(BeNil())
+		condition.SetReason("ReconciliationRequested")
+		_, err = tenantsClient.Update(ctx, privatev1.TenantsUpdateRequest_builder{
+			Object: tenant, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.conditions"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		_, err = tenantsClient.Signal(ctx, privatev1.TenantsSignalRequest_builder{Id: tenantID}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		expectPendingResources := func(g Gomega) {
+			response, getErr := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantID}.Build())
+			g.Expect(getErr).ToNot(HaveOccurred())
+			condition := findTenantCondition(response.GetObject().GetStatus().GetConditions(),
+				privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY)
+			g.Expect(condition).ToNot(BeNil())
+			g.Expect(condition.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
+			g.Expect(condition.GetReason()).To(Equal("ResourcesPending"))
+			vns, listErr := virtualNetworksClient.List(ctx, privatev1.VirtualNetworksListRequest_builder{Filter: &filter}.Build())
+			g.Expect(listErr).ToNot(HaveOccurred())
+			g.Expect(vns.GetItems()).To(HaveLen(1))
+			g.Expect(vns.GetItems()[0].GetId()).To(Equal(vnID))
+			subnets := listSubnets(g)
+			g.Expect(subnets).To(HaveLen(2))
+			for _, subnet := range subnets {
+				g.Expect(subnetIDs).To(HaveKeyWithValue(subnet.GetMetadata().GetName(), subnet.GetId()))
+			}
+			groups := listGroups(g)
+			g.Expect(groups).To(HaveLen(1))
+			g.Expect(groups[0].GetId()).To(Equal(groupID))
+			ips := listIPs(g)
+			g.Expect(ips).To(HaveLen(1))
+			g.Expect(ips[0].GetId()).To(Equal(externalIPID))
+			gateways := listGateways(g)
+			g.Expect(gateways).To(HaveLen(1))
+			g.Expect(gateways[0].GetId()).To(Equal(gatewayID))
+			g.Expect(gateways[0].GetStatus().GetState()).To(Equal(privatev1.NATGatewayState_NAT_GATEWAY_STATE_PENDING))
+		}
+		Eventually(expectPendingResources, time.Minute, time.Second).Should(Succeed())
+		Consistently(expectPendingResources, 5*time.Second, time.Second).Should(Succeed())
+
 		gatewayResponse, err := natGatewaysClient.Get(ctx, privatev1.NATGatewaysGetRequest_builder{Id: gatewayID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		gateway := gatewayResponse.GetObject()
