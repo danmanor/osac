@@ -39,6 +39,7 @@ import (
 
 	"github.com/osac-project/osac/fulfillment-service/internal/auth"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers"
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers/autoexternalipattachment"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/baremetalinstance"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/cluster"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/computeinstance"
@@ -165,6 +166,8 @@ func Cmd() *cobra.Command {
 		"",
 		idpClientSecretFlagHelp,
 	)
+	flags.BoolVar(&runner.args.deferredAutoExternalIPAttachments, "deferred-auto-external-ip-attachments", false,
+		"reconcile deferred auto-created ExternalIPAttachments")
 	vault.AddBaseFlags(flags)
 	vault.AddLifecycleFlags(flags)
 	network.AddGrpcClientFlags(flags, network.GrpcClientName, network.DefaultGrpcAddress)
@@ -178,21 +181,22 @@ type runnerContext struct {
 	logger *slog.Logger
 	flags  *pflag.FlagSet
 	args   struct {
-		caFiles              []string
-		authIssuerUrl        string
-		authIssuerUrlFile    string
-		authClientId         string
-		authClientIdFile     string
-		authClientSecret     string
-		authClientSecretFile string
-		idpProvider          string
-		idpURL               string
-		idpClientId          string
-		idpClientIdFile      string
-		idpClientSecret      string
-		idpClientSecretFile  string
-		vaultBase            vault.BaseConfig
-		vaultLifecycle       vault.LifecycleConfig
+		caFiles                           []string
+		authIssuerUrl                     string
+		authIssuerUrlFile                 string
+		authClientId                      string
+		authClientIdFile                  string
+		authClientSecret                  string
+		authClientSecretFile              string
+		idpProvider                       string
+		idpURL                            string
+		idpClientId                       string
+		idpClientIdFile                   string
+		idpClientSecret                   string
+		deferredAutoExternalIPAttachments bool
+		idpClientSecretFile               string
+		vaultBase                         vault.BaseConfig
+		vaultLifecycle                    vault.LifecycleConfig
 	}
 	client *grpc.ClientConn
 }
@@ -766,6 +770,37 @@ func (r *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 			)
 		}
 	}()
+
+	if r.args.deferredAutoExternalIPAttachments {
+		r.logger.InfoContext(ctx, "Creating deferred automatic ExternalIP attachment reconciler")
+		autoAttachmentFunction, buildErr := autoexternalipattachment.NewFunction().
+			SetLogger(r.logger).
+			SetConnection(r.client).
+			Build()
+		if buildErr != nil {
+			return fmt.Errorf("failed to create deferred automatic ExternalIP attachment reconciler function: %w", buildErr)
+		}
+		autoAttachmentReconciler, buildErr := controllers.NewReconciler[*privatev1.ExternalIP]().
+			SetLogger(r.logger).
+			SetName("deferred_auto_external_ip_attachment").
+			SetClient(r.client).
+			SetFunction(autoAttachmentFunction).
+			SetEventFilter("has(event.external_ip) || has(event.compute_instance) || has(event.cluster) || has(event.bare_metal_instance) || (has(event.hub) && event.type == EVENT_TYPE_OBJECT_CREATED)").
+			SetHealthReporter(healthAggregator).
+			Build()
+		if buildErr != nil {
+			return fmt.Errorf("failed to create deferred automatic ExternalIP attachment reconciler: %w", buildErr)
+		}
+		r.logger.InfoContext(ctx, "Starting deferred automatic ExternalIP attachment reconciler")
+		go func() {
+			err := autoAttachmentReconciler.Start(ctx)
+			if err == nil || errors.Is(err, context.Canceled) {
+				r.logger.InfoContext(ctx, "Deferred automatic ExternalIP attachment reconciler finished")
+			} else {
+				r.logger.ErrorContext(ctx, "Deferred automatic ExternalIP attachment reconciler failed", slog.Any("error", err))
+			}
+		}()
+	}
 
 	// Create the external IP attachment reconciler:
 	r.logger.InfoContext(ctx, "Creating external IP attachment reconciler")
