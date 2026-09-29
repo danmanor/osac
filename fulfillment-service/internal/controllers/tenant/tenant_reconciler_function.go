@@ -181,8 +181,9 @@ func (r *function) Run(ctx context.Context, tenant *privatev1.Tenant) error {
 
 // task contains the data needed to reconcile a single tenant.
 type task struct {
-	r      *function
-	tenant *privatev1.Tenant
+	r                      *function
+	tenant                 *privatev1.Tenant
+	defaultNetworkDefaults *privatev1.NetworkDefaults
 }
 
 // update performs the reconciliation logic for creating or updating a tenant.
@@ -762,7 +763,12 @@ func (t *task) ensureDefaultNetworking(ctx context.Context) error {
 	if t.r.defaultNetwork == nil {
 		return nil
 	}
-	return t.r.defaultNetwork.Ensure(ctx, t.tenant.GetMetadata().GetName())
+	defaults, err := t.r.defaultNetwork.Ensure(ctx, t.tenant.GetMetadata().GetName())
+	if err != nil {
+		return err
+	}
+	t.defaultNetworkDefaults = defaults
+	return nil
 }
 
 func (t *task) checkDefaultNetworkingReadiness(ctx context.Context) error {
@@ -778,9 +784,13 @@ func (t *task) checkDefaultNetworkingReadiness(ctx context.Context) error {
 	if t.r.virtualNetworksClient == nil {
 		return nil
 	}
-	defaults, err := t.activeNetworkDefaults(ctx)
-	if err != nil {
-		return err
+	defaults := t.defaultNetworkDefaults
+	if t.r.defaultNetwork == nil {
+		var err error
+		defaults, err = t.activeNetworkDefaults(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	filter := fmt.Sprintf("%s && this.metadata.tenant == %q", defaultLabelFilter, tenantName)
