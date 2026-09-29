@@ -113,31 +113,44 @@ func HandleResourceNetworkingHubResolutionError(
 	err error,
 	setPending func(error),
 	setFailed func(error),
-) bool {
-	if err == nil {
-		return false
+
+) (handled, retry bool) {
+	handled, retry, statusErr := classifyResourceNetworkingHubResolutionError(err)
+	if !handled {
+		return false, false
 	}
-	switch {
-	case errors.Is(err, ErrResourceHubConflict), errors.Is(err, ErrCanonicalHubNotFound):
-		setFailed(err)
-		return true
-	case IsResourceNetworkingHubResolutionRetryable(err):
-		setPending(err)
-		return true
-	default:
-		return false
+	if retry {
+		setPending(statusErr)
+		return true, true
 	}
+	setFailed(statusErr)
+	return true, false
 }
 
-// IsResourceNetworkingHubResolutionRetryable reports whether reconciliation should retry after
-// persisting a PENDING status for the unresolved canonical networking Hub.
-func IsResourceNetworkingHubResolutionRetryable(err error) bool {
-	return errors.Is(err, ErrCanonicalHubNotReady) ||
-		errors.Is(err, ErrCanonicalHubUnavailable) ||
-		errors.Is(err, ErrNoNetworkClass) ||
-		errors.Is(err, ErrMultipleNetworkClasses) ||
-		errors.Is(err, ErrNoNetworkingHubs) ||
-		errors.Is(err, ErrMultipleNetworkingHubs)
+// classifyResourceNetworkingHubResolutionError returns the safe status error and retry behavior for
+// a canonical Hub resolution error. Wrapped resolver errors may contain Hub or kubeconfig details
+// that should not be persisted in tenant-readable resource status.
+func classifyResourceNetworkingHubResolutionError(err error) (handled, retry bool, statusErr error) {
+	switch {
+	case errors.Is(err, ErrResourceHubConflict):
+		return true, false, ErrResourceHubConflict
+	case errors.Is(err, ErrCanonicalHubNotFound):
+		return true, false, ErrCanonicalHubNotFound
+	case errors.Is(err, ErrCanonicalHubNotReady):
+		return true, true, ErrCanonicalHubNotReady
+	case errors.Is(err, ErrCanonicalHubUnavailable):
+		return true, true, ErrCanonicalHubUnavailable
+	case errors.Is(err, ErrNoNetworkClass):
+		return true, true, ErrNoNetworkClass
+	case errors.Is(err, ErrMultipleNetworkClasses):
+		return true, true, ErrMultipleNetworkClasses
+	case errors.Is(err, ErrNoNetworkingHubs):
+		return true, true, ErrNoNetworkingHubs
+	case errors.Is(err, ErrMultipleNetworkingHubs):
+		return true, true, ErrMultipleNetworkingHubs
+	default:
+		return false, false, nil
+	}
 }
 
 // NetworkingHubResolverBuilder contains the dependencies needed to construct a canonical Hub resolver.

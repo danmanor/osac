@@ -145,11 +145,14 @@ func (r *function) run(ctx context.Context, virtualNetwork *privatev1.VirtualNet
 		err = t.update(ctx)
 	}
 	var hubResolutionRetryErr error
-	if err != nil && controllers.HandleResourceNetworkingHubResolutionError(err, t.setPending, t.setFailed) {
-		if controllers.IsResourceNetworkingHubResolutionRetryable(err) {
-			hubResolutionRetryErr = err
+	if err != nil {
+		handled, retry := controllers.HandleResourceNetworkingHubResolutionError(err, t.setPending, t.setFailed)
+		if handled {
+			if retry {
+				hubResolutionRetryErr = err
+			}
+			err = nil
 		}
-		err = nil
 	}
 	if err != nil {
 		r.logger.ErrorContext(ctx, "VN run: update/delete returned error",

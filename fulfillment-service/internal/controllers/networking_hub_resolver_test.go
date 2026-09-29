@@ -494,13 +494,14 @@ var _ = Describe("HandleResourceNetworkingHubResolutionError", func() {
 		for _, resolutionErr := range []error{ErrResourceHubConflict, ErrCanonicalHubNotFound} {
 			var pendingErr, failedErr error
 
-			handled := HandleResourceNetworkingHubResolutionError(
+			handled, retry := HandleResourceNetworkingHubResolutionError(
 				resolutionErr,
 				func(err error) { pendingErr = err },
 				func(err error) { failedErr = err },
 			)
 
 			Expect(handled).To(BeTrue())
+			Expect(retry).To(BeFalse())
 			Expect(pendingErr).ToNot(HaveOccurred())
 			Expect(errors.Is(failedErr, resolutionErr)).To(BeTrue())
 		}
@@ -517,37 +518,48 @@ var _ = Describe("HandleResourceNetworkingHubResolutionError", func() {
 		} {
 			var pendingErr, failedErr error
 
-			handled := HandleResourceNetworkingHubResolutionError(
+			handled, retry := HandleResourceNetworkingHubResolutionError(
 				resolutionErr,
 				func(err error) { pendingErr = err },
 				func(err error) { failedErr = err },
 			)
 
 			Expect(handled).To(BeTrue())
+			Expect(retry).To(BeTrue())
 			Expect(errors.Is(pendingErr, resolutionErr)).To(BeTrue())
 			Expect(failedErr).ToNot(HaveOccurred())
-			Expect(IsResourceNetworkingHubResolutionRetryable(resolutionErr)).To(BeTrue())
 		}
+	})
+
+	It("keeps internal Hub resolution details out of resource status messages", func() {
+		resolutionErr := fmt.Errorf("%w: kubeconfig secret id=%s", ErrCanonicalHubUnavailable, "sensitive-secret-id")
+		var pendingErr error
+
+		handled, retry := HandleResourceNetworkingHubResolutionError(
+			resolutionErr,
+			func(err error) { pendingErr = err },
+			func(error) {},
+		)
+
+		Expect(handled).To(BeTrue())
+		Expect(retry).To(BeTrue())
+		Expect(pendingErr).To(Equal(ErrCanonicalHubUnavailable))
+		Expect(pendingErr.Error()).ToNot(ContainSubstring("sensitive-secret-id"))
 	})
 
 	It("leaves unrelated errors for the controller retry path", func() {
 		resolutionErr := errors.New("database request failed")
 		called := false
 
-		handled := HandleResourceNetworkingHubResolutionError(
+		handled, retry := HandleResourceNetworkingHubResolutionError(
 			resolutionErr,
 			func(error) { called = true },
 			func(error) { called = true },
 		)
 
 		Expect(handled).To(BeFalse())
+		Expect(retry).To(BeFalse())
 		Expect(called).To(BeFalse())
-		Expect(IsResourceNetworkingHubResolutionRetryable(resolutionErr)).To(BeFalse())
-	})
-
-	It("does not retry conflicting or permanently missing Hub assignments", func() {
-		Expect(IsResourceNetworkingHubResolutionRetryable(ErrResourceHubConflict)).To(BeFalse())
-		Expect(IsResourceNetworkingHubResolutionRetryable(ErrCanonicalHubNotFound)).To(BeFalse())
 	})
 })
 

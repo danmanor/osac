@@ -25,10 +25,13 @@ import (
 	. "github.com/onsi/ginkgo/v2/dsl/core"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/osac-project/osac/fulfillment-service/internal/kubernetes/labels"
@@ -49,8 +52,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 		hubANamespace := hubAResponse.GetObject().GetSpec().GetNamespace()
 		Expect(hubANamespace).ToNot(BeEmpty())
 
-		hubBID, hubBNamespace := createValidRoutingHub(ctx, hubsClient)
-		deferRoutingHub(ctx, hubsClient, hubBID, hubBNamespace)
+		hubBNamespace := createValidRoutingHub(ctx, hubsClient)
 
 		networkClassesClient := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
 		virtualNetworksClient := privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
@@ -131,7 +133,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.VirtualNetworkList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.VirtualNetworkUuid: virtualNetworkID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 		setRoutingVirtualNetworkReady(ctx, virtualNetworksClient, virtualNetworkID)
 
 		subnetID := fmt.Sprintf("test-hub-a-subnet-%s", uuid.New())
@@ -160,7 +162,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.SubnetList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.SubnetUuid: subnetID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 		setRoutingSubnetReady(ctx, subnetsClient, subnetID)
 
 		securityGroupID := fmt.Sprintf("test-hub-a-sg-%s", uuid.New())
@@ -181,7 +183,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.SecurityGroupList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.SecurityGroupUuid: securityGroupID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 
 		By("creating an ExternalIPPool and two ExternalIPs")
 		poolID := fmt.Sprintf("test-hub-a-pool-%s", uuid.New())
@@ -210,7 +212,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.ExternalIPPoolList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.ExternalIPPoolUuid: poolID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 		setRoutingExternalIPPoolReady(ctx, poolsClient, poolID)
 
 		createAllocatedExternalIP := func() string {
@@ -239,7 +241,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 				list := &osacv1alpha1.ExternalIPList{}
 				listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.ExternalIPUuid: ipID})
 				return len(list.Items), listErr
-			}, hubANamespace)
+			})
 			setRoutingExternalIPAllocated(ctx, privateExternalIPsClient, ipID)
 			return ipID
 		}
@@ -319,7 +321,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.ExternalIPAttachmentList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.ExternalIPAttachmentUuid: attachmentID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 
 		By("creating a NATGateway from the second allocated ExternalIP")
 		natGatewayID := fmt.Sprintf("test-hub-a-nat-gateway-%s", uuid.New())
@@ -341,12 +343,12 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			list := &osacv1alpha1.NATGatewayList{}
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.NATGatewayUuid: natGatewayID})
 			return len(list.Items), listErr
-		}, hubANamespace)
+		})
 	})
 
 })
 
-func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient) (string, string) {
+func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient) string {
 	GinkgoHelper()
 	hubID := fmt.Sprintf("test-routing-hub-%s", uuid.New())
 	namespace := fmt.Sprintf("test-hub-%s", uuid.New()[24:])
@@ -354,14 +356,76 @@ func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient)
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		Expect(err).ToNot(HaveOccurred())
 	}
+	createdNamespace := err == nil
+	DeferCleanup(func(cleanupCtx context.Context) {
+		_, _ = hubsClient.Delete(cleanupCtx, privatev1.HubsDeleteRequest_builder{Id: hubID}.Build())
+		if !createdNamespace {
+			return
+		}
+		deleteErr := tool.KubeClient().Delete(cleanupCtx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
+		if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+			Expect(deleteErr).ToNot(HaveOccurred())
+		}
+	})
+
+	serviceAccountName := "networking-routing-test"
+	Expect(tool.KubeClient().Create(ctx, &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: namespace},
+	})).To(Succeed())
+	Expect(tool.KubeClient().Create(ctx, &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{osacv1alpha1.GroupVersion.Group},
+			Resources: []string{
+				"virtualnetworks",
+				"subnets",
+				"securitygroups",
+				"externalippools",
+				"externalips",
+				"externalipattachments",
+				"natgateways",
+			},
+			Verbs: []string{"create", "delete", "get", "list", "patch", "update"},
+		}},
+	})).To(Succeed())
+	Expect(tool.KubeClient().Create(ctx, &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: namespace},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "Role",
+			Name:     serviceAccountName,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      serviceAccountName,
+			Namespace: namespace,
+		}},
+	})).To(Succeed())
+
+	expirationSeconds := int64(3600)
+	tokenResponse, err := tool.kubeClientSet.CoreV1().ServiceAccounts(namespace).CreateToken(
+		ctx,
+		serviceAccountName,
+		&authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{ExpirationSeconds: &expirationSeconds}},
+		metav1.CreateOptions{},
+	)
+	Expect(err).ToNot(HaveOccurred())
 
 	kubeconfig, err := os.ReadFile(tool.kcFile)
 	Expect(err).ToNot(HaveOccurred())
 	config, err := clientcmd.Load(kubeconfig)
 	Expect(err).ToNot(HaveOccurred())
-	for _, cluster := range config.Clusters {
-		cluster.Server = "https://kubernetes.default.svc"
+	currentContext := config.Contexts[config.CurrentContext]
+	Expect(currentContext).ToNot(BeNil())
+	cluster := config.Clusters[currentContext.Cluster]
+	Expect(cluster).ToNot(BeNil())
+	cluster.Server = "https://kubernetes.default.svc"
+	config.Clusters = map[string]*clientcmdapi.Cluster{"hub-cluster": cluster}
+	config.AuthInfos = map[string]*clientcmdapi.AuthInfo{"hub-user": {Token: tokenResponse.Status.Token}}
+	config.Contexts = map[string]*clientcmdapi.Context{
+		"hub-context": {Cluster: "hub-cluster", AuthInfo: "hub-user"},
 	}
+	config.CurrentContext = "hub-context"
 	kubeconfig, err = clientcmd.Write(*config)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -376,18 +440,7 @@ func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient)
 		}.Build(),
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
-	return hubID, namespace
-}
-
-func deferRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient, hubID, namespace string) {
-	GinkgoHelper()
-	DeferCleanup(func(cleanupCtx context.Context) {
-		_, _ = hubsClient.Delete(cleanupCtx, privatev1.HubsDeleteRequest_builder{Id: hubID}.Build())
-		deleteErr := tool.KubeClient().Delete(cleanupCtx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
-		if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			Expect(deleteErr).ToNot(HaveOccurred())
-		}
-	})
+	return namespace
 }
 
 func expectNetworkingResourceHub(ctx context.Context, expectedHubID string, getHub func(context.Context) (string, error)) {
@@ -406,7 +459,6 @@ func expectNetworkingCRInHub(
 	label string,
 	resourceID string,
 	count func(namespace string) (int, error),
-	wantedNamespace string,
 ) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
@@ -414,16 +466,8 @@ func expectNetworkingCRInHub(
 		g.Expect(err).ToNot(HaveOccurred())
 		countB, err := count(hubBNamespace)
 		g.Expect(err).ToNot(HaveOccurred())
-		switch wantedNamespace {
-		case hubANamespace:
-			g.Expect(countA).To(Equal(1), "%s %q should be created in canonical Hub A", label, resourceID)
-			g.Expect(countB).To(BeZero(), "%s %q should be absent from alternate Hub B", label, resourceID)
-		case hubBNamespace:
-			g.Expect(countA).To(BeZero(), "%s %q should be absent from Hub A", label, resourceID)
-			g.Expect(countB).To(Equal(1), "%s %q should be created in Hub B", label, resourceID)
-		default:
-			g.Expect(wantedNamespace).To(BeElementOf(hubANamespace, hubBNamespace))
-		}
+		g.Expect(countA).To(Equal(1), "%s %q should be created in canonical Hub A", label, resourceID)
+		g.Expect(countB).To(BeZero(), "%s %q should be absent from alternate Hub B", label, resourceID)
 	}, time.Minute, time.Second).Should(Succeed())
 }
 
