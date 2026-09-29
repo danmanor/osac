@@ -40,12 +40,13 @@ import (
 )
 
 type PrivateComputeInstancesServerBuilder struct {
-	logger            *slog.Logger
-	attributionLogic  auth.AttributionLogic
-	tenancyLogic      auth.TenancyLogic
-	metricsRegisterer prometheus.Registerer
-	filterDesc        protoreflect.MessageDescriptor
-	secretStore       vault.SecretStore
+	logger                            *slog.Logger
+	attributionLogic                  auth.AttributionLogic
+	tenancyLogic                      auth.TenancyLogic
+	metricsRegisterer                 prometheus.Registerer
+	filterDesc                        protoreflect.MessageDescriptor
+	secretStore                       vault.SecretStore
+	deferredAutoExternalIPAttachments bool
 }
 
 var _ privatev1.ComputeInstancesServer = (*PrivateComputeInstancesServer)(nil)
@@ -53,22 +54,23 @@ var _ privatev1.ComputeInstancesServer = (*PrivateComputeInstancesServer)(nil)
 type PrivateComputeInstancesServer struct {
 	privatev1.UnimplementedComputeInstancesServer
 
-	logger                  *slog.Logger
-	tenancyLogic            auth.TenancyLogic
-	generic                 *GenericServer[*privatev1.ComputeInstance]
-	templatesDao            *dao.GenericDAO[*privatev1.ComputeInstanceTemplate]
-	catalogItemsDao         *dao.GenericDAO[*privatev1.ComputeInstanceCatalogItem]
-	subnetsDao              *dao.GenericDAO[*privatev1.Subnet]
-	securityGroupsDao       *dao.GenericDAO[*privatev1.SecurityGroup]
-	instanceTypesDao        *dao.GenericDAO[*privatev1.InstanceType]
-	diskImagesDao           *dao.GenericDAO[*privatev1.DiskImage]
-	externalIPPoolDao       *dao.GenericDAO[*privatev1.ExternalIPPool]
-	externalIPDao           *dao.GenericDAO[*privatev1.ExternalIP]
-	externalIPAttachmentDao *dao.GenericDAO[*privatev1.ExternalIPAttachment]
-	lifecycle               *externalIPLifecycle
-	secretsDao              *dao.GenericDAO[*privatev1.Secret]
-	secretStore             vault.SecretStore
-	storageTiersDao         *dao.GenericDAO[*privatev1.StorageTier]
+	logger                            *slog.Logger
+	tenancyLogic                      auth.TenancyLogic
+	generic                           *GenericServer[*privatev1.ComputeInstance]
+	templatesDao                      *dao.GenericDAO[*privatev1.ComputeInstanceTemplate]
+	catalogItemsDao                   *dao.GenericDAO[*privatev1.ComputeInstanceCatalogItem]
+	subnetsDao                        *dao.GenericDAO[*privatev1.Subnet]
+	securityGroupsDao                 *dao.GenericDAO[*privatev1.SecurityGroup]
+	instanceTypesDao                  *dao.GenericDAO[*privatev1.InstanceType]
+	diskImagesDao                     *dao.GenericDAO[*privatev1.DiskImage]
+	externalIPPoolDao                 *dao.GenericDAO[*privatev1.ExternalIPPool]
+	externalIPDao                     *dao.GenericDAO[*privatev1.ExternalIP]
+	externalIPAttachmentDao           *dao.GenericDAO[*privatev1.ExternalIPAttachment]
+	lifecycle                         *externalIPLifecycle
+	deferredAutoExternalIPAttachments bool
+	secretsDao                        *dao.GenericDAO[*privatev1.Secret]
+	secretStore                       vault.SecretStore
+	storageTiersDao                   *dao.GenericDAO[*privatev1.StorageTier]
 }
 
 func NewPrivateComputeInstancesServer() *PrivateComputeInstancesServerBuilder {
@@ -87,6 +89,12 @@ func (b *PrivateComputeInstancesServerBuilder) SetAttributionLogic(value auth.At
 
 func (b *PrivateComputeInstancesServerBuilder) SetTenancyLogic(value auth.TenancyLogic) *PrivateComputeInstancesServerBuilder {
 	b.tenancyLogic = value
+	return b
+}
+
+// SetDeferredAutoExternalIPAttachments enables delayed automatic attachment creation.
+func (b *PrivateComputeInstancesServerBuilder) SetDeferredAutoExternalIPAttachments(value bool) *PrivateComputeInstancesServerBuilder {
+	b.deferredAutoExternalIPAttachments = value
 	return b
 }
 
@@ -235,21 +243,22 @@ func (b *PrivateComputeInstancesServerBuilder) Build() (result *PrivateComputeIn
 		return
 	}
 	result = &PrivateComputeInstancesServer{
-		storageTiersDao:         storageTiersDao,
-		logger:                  b.logger,
-		tenancyLogic:            b.tenancyLogic,
-		generic:                 generic,
-		templatesDao:            templatesDao,
-		catalogItemsDao:         catalogItemsDao,
-		subnetsDao:              subnetsDao,
-		securityGroupsDao:       securityGroupsDao,
-		instanceTypesDao:        instanceTypesDao,
-		diskImagesDao:           diskImagesDao,
-		externalIPPoolDao:       externalIPPoolDao,
-		externalIPDao:           externalIPDao,
-		externalIPAttachmentDao: externalIPAttachmentDao,
-		secretsDao:              secretsDao,
-		secretStore:             b.secretStore,
+		storageTiersDao:                   storageTiersDao,
+		logger:                            b.logger,
+		deferredAutoExternalIPAttachments: b.deferredAutoExternalIPAttachments,
+		tenancyLogic:                      b.tenancyLogic,
+		generic:                           generic,
+		templatesDao:                      templatesDao,
+		catalogItemsDao:                   catalogItemsDao,
+		subnetsDao:                        subnetsDao,
+		securityGroupsDao:                 securityGroupsDao,
+		instanceTypesDao:                  instanceTypesDao,
+		diskImagesDao:                     diskImagesDao,
+		externalIPPoolDao:                 externalIPPoolDao,
+		externalIPDao:                     externalIPDao,
+		externalIPAttachmentDao:           externalIPAttachmentDao,
+		secretsDao:                        secretsDao,
+		secretStore:                       b.secretStore,
 	}
 	result.lifecycle = newExternalIPLifecycle(
 		externalIPDao,
@@ -1231,11 +1240,6 @@ func (s *PrivateComputeInstancesServer) resolveCatalogItem(
 	return resolvedTemplate, nil
 }
 
-const (
-	autoCreatedLabel    = "osac.openshift.io/auto-created"
-	autoCreatedForLabel = "osac.openshift.io/auto-created-for"
-)
-
 func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 	ctx context.Context, ci *privatev1.ComputeInstance,
 ) error {
@@ -1251,15 +1255,21 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 		shortID = shortID[:8]
 	}
 
+	eipLabels := map[string]string{
+		autoCreatedLabel:    "true",
+		autoCreatedForLabel: ciID,
+	}
+	if s.deferredAutoExternalIPAttachments {
+		eipLabels[autoAttachmentDeferredLabel] = "true"
+		eipLabels[autoCreatedKindLabel] = "compute_instance"
+	}
 	eip := privatev1.ExternalIP_builder{
 		Metadata: privatev1.Metadata_builder{
 			Name:   fmt.Sprintf("auto-eip-%s", shortID),
 			Tenant: tenant,
-			Labels: map[string]string{
-				autoCreatedLabel:    "true",
-				autoCreatedForLabel: ciID,
-			},
+			Labels: eipLabels,
 			Annotations: map[string]string{
+				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: ciID,
 			},
 			Creator: "system",
@@ -1278,9 +1288,11 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 	}
 	eipID := eipResp.GetObject().GetId()
 
-	err = s.lifecycle.lockNewAttachmentReferences(ctx, eipID, ciID, s.generic.dao)
-	if err != nil {
-		return fmt.Errorf("auto_external_ip_attachment: failed to lock attachment references: %w", err)
+	if !s.deferredAutoExternalIPAttachments {
+		err = s.lifecycle.lockNewAttachmentReferences(ctx, eipID, ciID, s.generic.dao)
+		if err != nil {
+			return fmt.Errorf("auto_external_ip_attachment: failed to lock attachment references: %w", err)
+		}
 	}
 
 	err = UpdatePoolCapacity(ctx, s.externalIPPoolDao, pool.GetId(), 1)
@@ -1288,6 +1300,9 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 		return grpcstatus.Errorf(grpccodes.FailedPrecondition, "auto_external_ip_attachment: %s", err)
 	}
 
+	if s.deferredAutoExternalIPAttachments {
+		return nil
+	}
 	attachment := privatev1.ExternalIPAttachment_builder{
 		Metadata: privatev1.Metadata_builder{
 			Name:   fmt.Sprintf("auto-eipa-%s", shortID),
@@ -1297,6 +1312,7 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 				autoCreatedForLabel: ciID,
 			},
 			Annotations: map[string]string{
+				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: ciID,
 			},
 			Creator: "system",
@@ -1339,6 +1355,16 @@ func (s *PrivateComputeInstancesServer) autoCleanupExternalIP(ctx context.Contex
 			err = s.lifecycle.deleteAttachment(ctx, attachmentID)
 		}
 		if err != nil {
+			return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
+		}
+	}
+
+	eipList, err := s.externalIPDao.List().SetFilter(filter).Do(ctx)
+	if err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list ExternalIPs: %w", err)
+	}
+	for _, externalIP := range eipList.GetItems() {
+		if err := s.lifecycle.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
 			return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
 		}
 	}
