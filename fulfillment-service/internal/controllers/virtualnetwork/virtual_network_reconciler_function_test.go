@@ -192,7 +192,11 @@ type fakeNetworkingHubReader struct {
 
 func (f *fakeNetworkingHubReader) Resolve(context.Context) (controllers.NetworkingHubResolution, error) {
 	f.calls++
-	return controllers.NetworkingHubResolution{NetworkingHub: f.result}, f.err
+	return controllers.NetworkingHubResolution{
+		NetworkingHub: f.result,
+		HubID:         f.result.ID,
+		State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+	}, f.err
 }
 
 var _ = Describe("delete", func() {
@@ -639,9 +643,14 @@ var _ = Describe("hub persistence", func() {
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		resolver := &fakeNetworkingHubReader{err: errors.New("there are no hubs")}
+		resolver := &fakeNetworkingHubReader{err: controllers.ErrNoNetworkingHubs}
 
 		vnClient := NewMockVirtualNetworksClient(ctrl)
+		vnClient.EXPECT().
+			Update(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, req *privatev1.VirtualNetworksUpdateRequest, opts ...grpc.CallOption) (*privatev1.VirtualNetworksUpdateResponse, error) {
+				return &privatev1.VirtualNetworksUpdateResponse{Object: req.GetObject()}, nil
+			})
 
 		vn := privatev1.VirtualNetwork_builder{
 			Id: virtualNetworkID,
@@ -667,8 +676,10 @@ var _ = Describe("hub persistence", func() {
 		}
 
 		err := f.run(ctx, vn)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("there are no hubs"))
+		Expect(errors.Is(err, controllers.ErrNoNetworkingHubs)).To(BeTrue())
+		Expect(vn.GetStatus().GetState()).To(Equal(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_PENDING))
+		Expect(vn.GetStatus().GetHub()).To(BeEmpty())
+		Expect(vn.GetStatus().GetMessage()).To(ContainSubstring(controllers.ErrNoNetworkingHubs.Error()))
 
 		list := &osacv1alpha1.VirtualNetworkList{}
 		err = fakeClient.List(ctx, list)
@@ -681,12 +692,6 @@ var _ = Describe("hub persistence", func() {
 		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		mockHubCache := controllers.NewMockHubCache(ctrl)
-		mockHubCache.EXPECT().Get(gomock.Any(), hubID).Return(&controllers.HubEntry{
-			Namespace: hubNamespace,
-			Client:    fakeClient,
-		}, nil)
-
 		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
 			ID:        hubID,
 			Namespace: hubNamespace,
@@ -720,14 +725,13 @@ var _ = Describe("hub persistence", func() {
 		f := &function{
 			logger:                logger,
 			virtualNetworksClient: vnClient,
-			hubCache:              mockHubCache,
 			networkingHubReader:   resolver,
 			maskCalculator:        nil,
 		}
 
 		err := f.run(ctx, vn)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(resolver.calls).To(Equal(0))
+		Expect(resolver.calls).To(Equal(1))
 
 		list := &osacv1alpha1.VirtualNetworkList{}
 		err = fakeClient.List(ctx, list)
@@ -747,12 +751,6 @@ var _ = Describe("hub persistence", func() {
 			Namespace: hubNamespace,
 			Client:    fakeClient,
 		}}
-		mockHubCache := controllers.NewMockHubCache(ctrl)
-		mockHubCache.EXPECT().Get(gomock.Any(), hubID).Return(&controllers.HubEntry{
-			Namespace: hubNamespace,
-			Client:    fakeClient,
-		}, nil)
-
 		vnClient := NewMockVirtualNetworksClient(ctrl)
 		vnClient.EXPECT().
 			Update(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -779,7 +777,6 @@ var _ = Describe("hub persistence", func() {
 		f := &function{
 			logger:                logger,
 			virtualNetworksClient: vnClient,
-			hubCache:              mockHubCache,
 			networkingHubReader:   resolver,
 			maskCalculator:        masks.NewCalculator().Build(),
 		}
@@ -803,6 +800,38 @@ var _ = Describe("hub persistence", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(list.Items).To(HaveLen(1))
 		Expect(list.Items[0].Namespace).To(Equal(hubNamespace))
+	})
+})
+
+var _ = Describe("canonical networking Hub resolution", func() {
+	It("rejects a conflicting assignment and never selects a Hub when resolution is unavailable", func() {
+		resolver := &fakeNetworkingHubReader{result: controllers.NetworkingHub{
+			ID:        "hub-a",
+			Namespace: "hub-a-ns",
+			Client:    fake.NewClientBuilder().Build(),
+		}}
+		r := &function{logger: logger, networkingHubReader: resolver}
+		t := &task{
+			r: r,
+			virtualNetwork: privatev1.VirtualNetwork_builder{
+				Status: privatev1.VirtualNetworkStatus_builder{Hub: "hub-b"}.Build(),
+			}.Build(),
+		}
+		err := t.selectHub(context.Background())
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, controllers.ErrResourceHubConflict)).To(BeTrue())
+		Expect(t.hubClient).To(BeNil())
+
+		for _, resolutionErr := range []error{
+			controllers.ErrNoNetworkingHubs,
+			controllers.ErrMultipleNetworkingHubs,
+			controllers.ErrCanonicalHubUnavailable,
+		} {
+			resolver.err = resolutionErr
+			t := &task{r: r, virtualNetwork: privatev1.VirtualNetwork_builder{}.Build()}
+			Expect(t.selectHub(context.Background())).To(MatchError(resolutionErr))
+			Expect(t.hubClient).To(BeNil())
+		}
 	})
 })
 
@@ -835,12 +864,6 @@ var _ = Describe("Kubernetes validation error handling", func() {
 			Namespace: "hub-ns",
 			Client:    fakeClient,
 		}}
-		mockHubCache := controllers.NewMockHubCache(ctrl)
-		mockHubCache.EXPECT().Get(gomock.Any(), "hub-validation").Return(&controllers.HubEntry{
-			Namespace: "hub-ns",
-			Client:    fakeClient,
-		}, nil)
-
 		vnClient := NewMockVirtualNetworksClient(ctrl)
 		vnClient.EXPECT().
 			Update(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -868,7 +891,6 @@ var _ = Describe("Kubernetes validation error handling", func() {
 		f := &function{
 			logger:                logger,
 			virtualNetworksClient: vnClient,
-			hubCache:              mockHubCache,
 			networkingHubReader:   resolver,
 			maskCalculator:        nil,
 		}

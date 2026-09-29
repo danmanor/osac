@@ -36,6 +36,25 @@ import (
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
+type fakeNetworkingHubReader struct {
+	result controllers.NetworkingHubResolution
+	err    error
+	calls  int
+}
+
+func (f *fakeNetworkingHubReader) Resolve(context.Context) (controllers.NetworkingHubResolution, error) {
+	f.calls++
+	return f.result, f.err
+}
+
+func readyNetworkingHubReader(id, namespace string, client clnt.Client) *fakeNetworkingHubReader {
+	return &fakeNetworkingHubReader{result: controllers.NetworkingHubResolution{
+		NetworkingHub: controllers.NetworkingHub{ID: id, Namespace: namespace, Client: client},
+		HubID:         id,
+		State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+	}}
+}
+
 var _ = Describe("buildSpec", func() {
 	It("Includes virtualNetwork and rules", func() {
 		portFrom := int32(80)
@@ -384,19 +403,10 @@ var _ = Describe("delete", func() {
 		// This test verifies the core behavior: when a hub is decommissioned/deleted,
 		// the reconciler removes its finalizer to allow the security group to be archived.
 
-		// Mock HubsClient to return a hub
-		hubsClient := controllers.NewMockHubsClient(ctrl)
-		hubsClient.EXPECT().
-			List(gomock.Any(), gomock.Any()).
-			Return(&privatev1.HubsListResponse{
-				Items: []*privatev1.Hub{privatev1.Hub_builder{Id: hubID}.Build()},
-			}, nil)
-
-		// Mock HubCache to return ErrHubNotFound (hub decommissioned)
-		mockHubCache := controllers.NewMockHubCache(ctrl)
-		mockHubCache.EXPECT().
-			Get(gomock.Any(), hubID).
-			Return(nil, controllers.ErrHubNotFound)
+		resolver := &fakeNetworkingHubReader{
+			result: controllers.NetworkingHubResolution{HubID: hubID},
+			err:    controllers.ErrCanonicalHubNotFound,
+		}
 
 		sg := privatev1.SecurityGroup_builder{
 			Id: sgID,
@@ -409,9 +419,8 @@ var _ = Describe("delete", func() {
 		}.Build()
 
 		f := &function{
-			logger:     logger,
-			hubsClient: hubsClient,
-			hubCache:   mockHubCache,
+			logger:              logger,
+			networkingHubReader: resolver,
 		}
 
 		t := &task{
@@ -487,6 +496,32 @@ var _ = Describe("removeFinalizer", func() {
 	})
 })
 
+var _ = Describe("canonical networking Hub resolution", func() {
+	It("uses the canonical Hub repeatedly and does not fall back when it is unavailable", func() {
+		kubeClient := fake.NewClientBuilder().Build()
+		resolver := readyNetworkingHubReader("hub-a", "hub-a-ns", kubeClient)
+		r := &function{logger: logger, networkingHubReader: resolver}
+		t := &task{r: r, securityGroup: privatev1.SecurityGroup_builder{}.Build()}
+		Expect(t.selectHub(context.Background())).To(Succeed())
+		Expect(t.hubId).To(Equal("hub-a"))
+		Expect(t.hubNamespace).To(Equal("hub-a-ns"))
+		Expect(t.hubClient).To(BeIdenticalTo(kubeClient))
+		Expect(t.selectHub(context.Background())).To(Succeed())
+		Expect(resolver.calls).To(Equal(2))
+
+		for _, resolutionErr := range []error{
+			controllers.ErrNoNetworkingHubs,
+			controllers.ErrMultipleNetworkingHubs,
+			controllers.ErrCanonicalHubUnavailable,
+		} {
+			resolver.err = resolutionErr
+			failed := &task{r: r, securityGroup: privatev1.SecurityGroup_builder{}.Build()}
+			Expect(failed.selectHub(context.Background())).To(MatchError(resolutionErr))
+			Expect(failed.hubClient).To(BeNil())
+		}
+	})
+})
+
 var _ = Describe("Kubernetes validation error handling", func() {
 	It("should mark a legacy IPv6-only rule as failed without contacting Kubernetes", func() {
 		ctx := context.Background()
@@ -494,17 +529,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 		DeferCleanup(ctrl.Finish)
 
 		ipv6 := "2001:db8::/32"
-		hubsClient := controllers.NewMockHubsClient(ctrl)
-		hubsClient.EXPECT().
-			List(gomock.Any(), gomock.Any()).
-			Return(&privatev1.HubsListResponse{
-				Items: []*privatev1.Hub{privatev1.Hub_builder{Id: "hub-1"}.Build()},
-			}, nil)
-
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), "hub-1").
-			Return(&controllers.HubEntry{Namespace: "test-ns"}, nil)
+		resolver := readyNetworkingHubReader("hub-1", "test-ns", nil)
 
 		sg := privatev1.SecurityGroup_builder{
 			Id: "sg-legacy-ipv6",
@@ -525,9 +550,8 @@ var _ = Describe("Kubernetes validation error handling", func() {
 
 		t := &task{
 			r: &function{
-				logger:     logger,
-				hubsClient: hubsClient,
-				hubCache:   hubCache,
+				logger:              logger,
+				networkingHubReader: resolver,
 			},
 			securityGroup: sg,
 		}
@@ -565,18 +589,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 			}).
 			Build()
 
-		hubsClient := controllers.NewMockHubsClient(ctrl)
-		hubsClient.EXPECT().
-			List(gomock.Any(), gomock.Any()).
-			Return(&privatev1.HubsListResponse{
-				Items: []*privatev1.Hub{privatev1.Hub_builder{Id: "hub-1"}.Build()},
-			}, nil)
-
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), "hub-1").
-			Return(&controllers.HubEntry{Namespace: "test-ns", Client: fakeClient}, nil).
-			AnyTimes()
+		resolver := readyNetworkingHubReader("hub-1", "test-ns", fakeClient)
 
 		securityGroupsClient := NewMockSecurityGroupsClient(ctrl)
 		securityGroupsClient.EXPECT().
@@ -602,9 +615,8 @@ var _ = Describe("Kubernetes validation error handling", func() {
 
 		f := &function{
 			logger:               logger,
-			hubCache:             hubCache,
 			securityGroupsClient: securityGroupsClient,
-			hubsClient:           hubsClient,
+			networkingHubReader:  resolver,
 			maskCalculator:       masks.NewCalculator().Build(),
 		}
 

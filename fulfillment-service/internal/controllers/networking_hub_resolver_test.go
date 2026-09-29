@@ -489,6 +489,68 @@ var _ = Describe("ResolveResourceNetworkingHub", func() {
 	})
 })
 
+var _ = Describe("HandleResourceNetworkingHubResolutionError", func() {
+	It("maps conflicting and permanently missing Hub assignments to resource failure", func() {
+		for _, resolutionErr := range []error{ErrResourceHubConflict, ErrCanonicalHubNotFound} {
+			var pendingErr, failedErr error
+
+			handled := HandleResourceNetworkingHubResolutionError(
+				resolutionErr,
+				func(err error) { pendingErr = err },
+				func(err error) { failedErr = err },
+			)
+
+			Expect(handled).To(BeTrue())
+			Expect(pendingErr).ToNot(HaveOccurred())
+			Expect(errors.Is(failedErr, resolutionErr)).To(BeTrue())
+		}
+	})
+
+	It("maps unresolved or unavailable canonical state to resource pending", func() {
+		for _, resolutionErr := range []error{
+			ErrCanonicalHubNotReady,
+			ErrCanonicalHubUnavailable,
+			ErrNoNetworkClass,
+			ErrMultipleNetworkClasses,
+			ErrNoNetworkingHubs,
+			ErrMultipleNetworkingHubs,
+		} {
+			var pendingErr, failedErr error
+
+			handled := HandleResourceNetworkingHubResolutionError(
+				resolutionErr,
+				func(err error) { pendingErr = err },
+				func(err error) { failedErr = err },
+			)
+
+			Expect(handled).To(BeTrue())
+			Expect(errors.Is(pendingErr, resolutionErr)).To(BeTrue())
+			Expect(failedErr).ToNot(HaveOccurred())
+			Expect(IsResourceNetworkingHubResolutionRetryable(resolutionErr)).To(BeTrue())
+		}
+	})
+
+	It("leaves unrelated errors for the controller retry path", func() {
+		resolutionErr := errors.New("database request failed")
+		called := false
+
+		handled := HandleResourceNetworkingHubResolutionError(
+			resolutionErr,
+			func(error) { called = true },
+			func(error) { called = true },
+		)
+
+		Expect(handled).To(BeFalse())
+		Expect(called).To(BeFalse())
+		Expect(IsResourceNetworkingHubResolutionRetryable(resolutionErr)).To(BeFalse())
+	})
+
+	It("does not retry conflicting or permanently missing Hub assignments", func() {
+		Expect(IsResourceNetworkingHubResolutionRetryable(ErrResourceHubConflict)).To(BeFalse())
+		Expect(IsResourceNetworkingHubResolutionRetryable(ErrCanonicalHubNotFound)).To(BeFalse())
+	})
+})
+
 func mustBuildNetworkingHubResolver(
 	networkClasses *fakeNetworkClassesClient,
 	hubs *fakeHubsListClient,

@@ -108,6 +108,38 @@ func ResolveResourceNetworkingHub(
 	return resolution, nil
 }
 
+// HandleResourceNetworkingHubResolutionError applies resource status for errors returned by the canonical Hub reader.
+func HandleResourceNetworkingHubResolutionError(
+	err error,
+	setPending func(error),
+	setFailed func(error),
+) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, ErrResourceHubConflict), errors.Is(err, ErrCanonicalHubNotFound):
+		setFailed(err)
+		return true
+	case IsResourceNetworkingHubResolutionRetryable(err):
+		setPending(err)
+		return true
+	default:
+		return false
+	}
+}
+
+// IsResourceNetworkingHubResolutionRetryable reports whether reconciliation should retry after
+// persisting a PENDING status for the unresolved canonical networking Hub.
+func IsResourceNetworkingHubResolutionRetryable(err error) bool {
+	return errors.Is(err, ErrCanonicalHubNotReady) ||
+		errors.Is(err, ErrCanonicalHubUnavailable) ||
+		errors.Is(err, ErrNoNetworkClass) ||
+		errors.Is(err, ErrMultipleNetworkClasses) ||
+		errors.Is(err, ErrNoNetworkingHubs) ||
+		errors.Is(err, ErrMultipleNetworkingHubs)
+}
+
 // NetworkingHubResolverBuilder contains the dependencies needed to construct a canonical Hub resolver.
 type NetworkingHubResolverBuilder struct {
 	networkClassesClient networkClassesClient
