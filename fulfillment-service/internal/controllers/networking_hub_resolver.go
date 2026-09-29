@@ -35,6 +35,7 @@ var (
 	ErrCanonicalHubNotFound    = errors.New("canonical networking hub not found")
 	ErrCanonicalHubNotReady    = errors.New("canonical networking hub is not ready")
 	ErrCanonicalHubUnavailable = errors.New("canonical networking hub unavailable")
+	ErrResourceHubConflict     = errors.New("resource Hub assignment conflicts with canonical networking Hub")
 )
 
 const (
@@ -84,6 +85,27 @@ type NetworkingHubResolution struct {
 	HubID   string
 	State   privatev1.NetworkClassState
 	Message string
+}
+
+// ResolveResourceNetworkingHub returns the canonical Hub when the resource is unassigned or
+// already assigned to it. A conflicting assignment is returned as a deterministic error.
+func ResolveResourceNetworkingHub(
+	ctx context.Context,
+	resolver NetworkingHubReader,
+	assignedHubID string,
+) (NetworkingHubResolution, error) {
+	resolution, err := resolver.Resolve(ctx)
+	if err != nil {
+		return resolution, err
+	}
+	if resolution.State != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY ||
+		resolution.HubID == "" || resolution.ID == "" || resolution.HubID != resolution.ID {
+		return resolution, ErrCanonicalHubNotReady
+	}
+	if assignedHubID != "" && assignedHubID != resolution.HubID {
+		return resolution, fmt.Errorf("%w: assigned %q, canonical %q", ErrResourceHubConflict, assignedHubID, resolution.HubID)
+	}
+	return resolution, nil
 }
 
 // NetworkingHubResolverBuilder contains the dependencies needed to construct a canonical Hub resolver.
