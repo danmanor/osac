@@ -164,19 +164,31 @@ func (m *manager) Ensure(ctx context.Context, tenantName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to ensure default VirtualNetwork: %w", err)
 	}
+	if vn.GetStatus().GetState() != privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY {
+		return nil
+	}
 
+	subnetsReady := true
 	if defaults.GetSubnetIpv4Cidr() != "" {
-		if err := m.ensureSubnet(ctx, tenantName, vn.GetId(), defaults.GetSubnetIpv4Cidr(), "", "default-ipv4"); err != nil {
+		subnet, err := m.ensureSubnet(ctx, tenantName, vn.GetId(), defaults.GetSubnetIpv4Cidr(), "", "default-ipv4")
+		if err != nil {
 			return fmt.Errorf("failed to ensure default IPv4 Subnet: %w", err)
 		}
+		subnetsReady = subnet.GetStatus().GetState() == privatev1.SubnetState_SUBNET_STATE_READY
 	}
 	if defaults.GetSubnetIpv6Cidr() != "" {
-		if err := m.ensureSubnet(ctx, tenantName, vn.GetId(), "", defaults.GetSubnetIpv6Cidr(), "default-ipv6"); err != nil {
+		subnet, err := m.ensureSubnet(ctx, tenantName, vn.GetId(), "", defaults.GetSubnetIpv6Cidr(), "default-ipv6")
+		if err != nil {
 			return fmt.Errorf("failed to ensure default IPv6 Subnet: %w", err)
 		}
+		subnetsReady = subnetsReady && subnet.GetStatus().GetState() == privatev1.SubnetState_SUBNET_STATE_READY
 	}
-	if err := m.ensureSecurityGroup(ctx, tenantName, vn.GetId(), defaults); err != nil {
+	securityGroup, err := m.ensureSecurityGroup(ctx, tenantName, vn.GetId(), defaults)
+	if err != nil {
 		return fmt.Errorf("failed to ensure default SecurityGroup: %w", err)
+	}
+	if !subnetsReady || securityGroup.GetStatus().GetState() != privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY {
+		return nil
 	}
 	if defaults.GetEnableNatGateway() {
 		if err := m.ensureNATGateway(ctx, tenantName, vn.GetId()); err != nil {
@@ -253,14 +265,14 @@ func (m *manager) getVirtualNetwork(ctx context.Context, tenantName string) (*pr
 	return response.GetItems()[0], nil
 }
 
-func (m *manager) ensureSubnet(ctx context.Context, tenantName, virtualNetworkID, ipv4CIDR, ipv6CIDR, name string) error {
+func (m *manager) ensureSubnet(ctx context.Context, tenantName, virtualNetworkID, ipv4CIDR, ipv6CIDR, name string) (*privatev1.Subnet, error) {
 	filter := resourceFilter(tenantName, name)
 	response, err := m.subnets.List(ctx, privatev1.SubnetsListRequest_builder{Filter: &filter}.Build())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(response.GetItems()) > 0 {
-		return nil
+		return response.GetItems()[0], nil
 	}
 	object := privatev1.Subnet_builder{
 		Metadata: privatev1.Metadata_builder{
@@ -278,22 +290,32 @@ func (m *manager) ensureSubnet(ctx context.Context, tenantName, virtualNetworkID
 	if ipv6CIDR != "" {
 		object.GetSpec().SetIpv6Cidr(ipv6CIDR)
 	}
-	_, err = m.subnets.Create(ctx, privatev1.SubnetsCreateRequest_builder{Object: object}.Build())
+	created, err := m.subnets.Create(ctx, privatev1.SubnetsCreateRequest_builder{Object: object}.Build())
 	if status.Code(err) == codes.AlreadyExists {
-		return nil
+		response, findErr := m.subnets.List(ctx, privatev1.SubnetsListRequest_builder{Filter: &filter}.Build())
+		if findErr != nil {
+			return nil, fmt.Errorf("subnet already exists but could not be looked up: %w", findErr)
+		}
+		if len(response.GetItems()) == 0 {
+			return nil, errors.New("subnet already exists but could not be found")
+		}
+		return response.GetItems()[0], nil
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return created.GetObject(), nil
 }
 
 func (m *manager) ensureSecurityGroup(ctx context.Context, tenantName, virtualNetworkID string,
-	defaults *privatev1.NetworkDefaults) error {
+	defaults *privatev1.NetworkDefaults) (*privatev1.SecurityGroup, error) {
 	filter := resourceFilter(tenantName, defaultResourceName)
 	response, err := m.securityGroups.List(ctx, privatev1.SecurityGroupsListRequest_builder{Filter: &filter}.Build())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(response.GetItems()) > 0 {
-		return nil
+		return response.GetItems()[0], nil
 	}
 	object := privatev1.SecurityGroup_builder{
 		Metadata: privatev1.Metadata_builder{
@@ -307,11 +329,21 @@ func (m *manager) ensureSecurityGroup(ctx context.Context, tenantName, virtualNe
 			Egress:         defaults.GetEgressRules(),
 		}.Build(),
 	}.Build()
-	_, err = m.securityGroups.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{Object: object}.Build())
+	created, err := m.securityGroups.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{Object: object}.Build())
 	if status.Code(err) == codes.AlreadyExists {
-		return nil
+		response, findErr := m.securityGroups.List(ctx, privatev1.SecurityGroupsListRequest_builder{Filter: &filter}.Build())
+		if findErr != nil {
+			return nil, fmt.Errorf("security group already exists but could not be looked up: %w", findErr)
+		}
+		if len(response.GetItems()) == 0 {
+			return nil, errors.New("security group already exists but could not be found")
+		}
+		return response.GetItems()[0], nil
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return created.GetObject(), nil
 }
 
 func (m *manager) ensureNATGateway(ctx context.Context, tenantName, virtualNetworkID string) error {
@@ -327,6 +359,9 @@ func (m *manager) ensureNATGateway(ctx context.Context, tenantName, virtualNetwo
 	externalIP, err := m.ensureExternalIP(ctx, tenantName)
 	if err != nil {
 		return err
+	}
+	if externalIP.GetStatus().GetState() != privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED {
+		return nil
 	}
 	object := privatev1.NATGateway_builder{
 		Metadata: privatev1.Metadata_builder{
