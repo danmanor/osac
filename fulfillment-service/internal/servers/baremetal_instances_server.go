@@ -29,11 +29,12 @@ import (
 )
 
 type BareMetalInstancesServerBuilder struct {
-	logger            *slog.Logger
-	attributionLogic  auth.AttributionLogic
-	tenancyLogic      auth.TenancyLogic
-	metricsRegisterer prometheus.Registerer
-	secretStore       vault.SecretStore
+	logger                            *slog.Logger
+	attributionLogic                  auth.AttributionLogic
+	tenancyLogic                      auth.TenancyLogic
+	metricsRegisterer                 prometheus.Registerer
+	secretStore                       vault.SecretStore
+	deferredAutoExternalIPAttachments bool
 }
 
 var _ publicv1.BareMetalInstancesServer = (*BareMetalInstancesServer)(nil)
@@ -81,6 +82,12 @@ func (b *BareMetalInstancesServerBuilder) SetSecretStore(value vault.SecretStore
 	return b
 }
 
+// SetDeferredAutoExternalIPAttachments defers auto-created ExternalIPAttachments until both resources are ready.
+func (b *BareMetalInstancesServerBuilder) SetDeferredAutoExternalIPAttachments(value bool) *BareMetalInstancesServerBuilder {
+	b.deferredAutoExternalIPAttachments = value
+	return b
+}
+
 func (b *BareMetalInstancesServerBuilder) Build() (result *BareMetalInstancesServer, err error) {
 	if b.logger == nil {
 		err = errors.New("logger is mandatory")
@@ -113,6 +120,7 @@ func (b *BareMetalInstancesServerBuilder) Build() (result *BareMetalInstancesSer
 		SetTenancyLogic(b.tenancyLogic).
 		SetMetricsRegisterer(b.metricsRegisterer).
 		SetSecretStore(b.secretStore).
+		SetDeferredAutoExternalIPAttachments(b.deferredAutoExternalIPAttachments).
 		SetFilterDesc((*publicv1.BareMetalInstance)(nil).ProtoReflect().Descriptor()).
 		Build()
 	if err != nil {

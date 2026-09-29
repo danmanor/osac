@@ -2546,6 +2546,11 @@
           ],
           "default": "k8s_only"
         },
+        "deferredAutoExternalIPAttachments": {
+          "type": "boolean",
+          "description": "Defer auto-created ExternalIPAttachments until the ExternalIP and target are ready. Enable after the OSAC-5749 operator cleanup fix is deployed.",
+          "default": false
+        },
         "netris": {
           "$ref": "#/$defs/networkingNetris"
         },

@@ -23,6 +23,9 @@ specific language governing permissions and limitations under the License.
 {{- $vaultIssuerURL := tpl (required "vault.keycloakIssuerUrl is required" .Values.vault.keycloakIssuerUrl) . }}
 {{- $vaultClientID := required "vault.keycloakClientId is required" .Values.vault.keycloakClientId }}
 {{- $vaultLifecycleRole := required "vault.lifecycleRole is required" .Values.vault.lifecycleRole }}
+{{- $globalValues := index .Values "global" | default dict }}
+{{- $networkingValues := index $globalValues "networking" | default dict }}
+{{- $deferredAutoExternalIPAttachments := index $networkingValues "deferredAutoExternalIPAttachments" | default false }}
 
 apiVersion: apps/v1
 kind: Deployment
@@ -174,6 +177,9 @@ spec:
         - --idp-client-secret-file=/etc/fulfillment-controller/idp/client-secret
         - --grpc-server-address=fulfillment-internal-api:8001
         - --grpc-keep-alive=5m
+        {{- if $deferredAutoExternalIPAttachments }}
+        - --deferred-auto-external-ip-attachments=true
+        {{- end }}
         - --grpc-listener-address=0.0.0.0:8000
         - --grpc-listener-tls-crt=/etc/fulfillment-controller/tls/tls.crt
         - --grpc-listener-tls-key=/etc/fulfillment-controller/tls/tls.key

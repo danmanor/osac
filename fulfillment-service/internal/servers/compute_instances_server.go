@@ -29,11 +29,12 @@ import (
 )
 
 type ComputeInstancesServerBuilder struct {
-	logger            *slog.Logger
-	attributionLogic  auth.AttributionLogic
-	tenancyLogic      auth.TenancyLogic
-	metricsRegisterer prometheus.Registerer
-	secretStore       vault.SecretStore
+	logger                            *slog.Logger
+	attributionLogic                  auth.AttributionLogic
+	tenancyLogic                      auth.TenancyLogic
+	metricsRegisterer                 prometheus.Registerer
+	secretStore                       vault.SecretStore
+	deferredAutoExternalIPAttachments bool
 }
 
 var _ publicv1.ComputeInstancesServer = (*ComputeInstancesServer)(nil)
@@ -81,6 +82,12 @@ func (b *ComputeInstancesServerBuilder) SetSecretStore(value vault.SecretStore) 
 	return b
 }
 
+// SetDeferredAutoExternalIPAttachments defers auto-created ExternalIPAttachments until both resources are ready.
+func (b *ComputeInstancesServerBuilder) SetDeferredAutoExternalIPAttachments(value bool) *ComputeInstancesServerBuilder {
+	b.deferredAutoExternalIPAttachments = value
+	return b
+}
+
 func (b *ComputeInstancesServerBuilder) Build() (result *ComputeInstancesServer, err error) {
 	// Check parameters:
 	if b.logger == nil {
@@ -115,6 +122,7 @@ func (b *ComputeInstancesServerBuilder) Build() (result *ComputeInstancesServer,
 		SetTenancyLogic(b.tenancyLogic).
 		SetMetricsRegisterer(b.metricsRegisterer).
 		SetSecretStore(b.secretStore).
+		SetDeferredAutoExternalIPAttachments(b.deferredAutoExternalIPAttachments).
 		SetFilterDesc((*publicv1.ComputeInstance)(nil).ProtoReflect().Descriptor()).
 		Build()
 	if err != nil {
