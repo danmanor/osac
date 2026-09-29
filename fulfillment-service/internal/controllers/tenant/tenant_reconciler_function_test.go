@@ -1711,9 +1711,9 @@ var _ = Describe("Skip Reconciliation", func() {
 	})
 })
 
-type testDefaultNetworkingManager func(context.Context, string) error
+type testDefaultNetworkingManager func(context.Context, string) (*privatev1.NetworkDefaults, error)
 
-func (m testDefaultNetworkingManager) Ensure(ctx context.Context, tenantName string) error {
+func (m testDefaultNetworkingManager) Ensure(ctx context.Context, tenantName string) (*privatev1.NetworkDefaults, error) {
 	return m(ctx, tenantName)
 }
 
@@ -1983,7 +1983,7 @@ var _ = Describe("Default networking readiness", func() {
 		}
 		mockNGs.EXPECT().List(gomock.Any(), gomock.Any()).Return(
 			privatev1.NATGatewaysListResponse_builder{}.Build(), nil)
-		reconciler.defaultNetwork = testDefaultNetworkingManager(func(ctx context.Context, name string) error {
+		reconciler.defaultNetwork = testDefaultNetworkingManager(func(ctx context.Context, name string) (*privatev1.NetworkDefaults, error) {
 			Expect(name).To(Equal(tenantName))
 			response, err := reconciler.externalIPsClient.List(ctx,
 				privatev1.ExternalIPsListRequest_builder{}.Build())
@@ -1991,7 +1991,7 @@ var _ = Describe("Default networking readiness", func() {
 			Expect(response.GetItems()).To(HaveLen(1))
 			Expect(response.GetItems()[0].GetStatus().GetState()).To(Equal(
 				privatev1.ExternalIPState_EXTERNAL_IP_STATE_PENDING))
-			return nil
+			return defaults, nil
 		})
 
 		t := &task{r: reconciler, tenant: tenant}
@@ -2008,7 +2008,7 @@ var _ = Describe("Default networking readiness", func() {
 		Expect(cond.GetReason()).To(Equal("ResourcesPending"))
 		Expect(cond.GetMessage()).To(ContainSubstring("NATGateway/default"))
 		Expect(eipCalls).To(Equal(2))
-		Expect(ncCalls).To(Equal(1))
+		Expect(ncCalls).To(Equal(0))
 	})
 
 	It("keeps readiness pending until the configured ExternalIP exists", func() {

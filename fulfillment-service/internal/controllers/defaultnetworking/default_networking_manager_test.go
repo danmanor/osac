@@ -141,8 +141,9 @@ type fakeNATGateways struct {
 }
 
 type fakeExternalIPs struct {
-	items   []*privatev1.ExternalIP
-	deletes []string
+	items         []*privatev1.ExternalIP
+	deletes       []string
+	alreadyExists bool
 }
 
 type fakeExternalIPPools struct {
@@ -164,7 +165,15 @@ func (f *fakeExternalIPs) Create(_ context.Context, request *privatev1.ExternalI
 	object := request.GetObject()
 	object.SetId("eip-default")
 	f.items = append(f.items, object)
+	if f.alreadyExists {
+		return nil, status.Error(codes.AlreadyExists, "concurrent creation")
+	}
 	return privatev1.ExternalIPsCreateResponse_builder{Object: object}.Build(), nil
+}
+
+func ensureManager(m Manager, ctx context.Context, tenantName string) error {
+	_, err := m.Ensure(ctx, tenantName)
+	return err
 }
 
 func (f *fakeExternalIPs) Delete(_ context.Context, request *privatev1.ExternalIPsDeleteRequest,
@@ -212,6 +221,22 @@ var _ = Describe("default networking manager", func() {
 		}
 	})
 
+	It("returns configured defaults for tenant readiness evaluation", func() {
+		defaults := privatev1.NetworkDefaults_builder{
+			SubnetIpv4Cidr: "10.0.1.0/24", EnableNatGateway: true,
+		}.Build()
+		m.networkClasses = &fakeNetworkClasses{items: []*privatev1.NetworkClass{
+			privatev1.NetworkClass_builder{
+				Id:   "nc-1",
+				Spec: privatev1.NetworkClassSpec_builder{Defaults: defaults}.Build(),
+			}.Build(),
+		}}
+
+		got, err := m.Ensure(ctx, "tenant-a")
+		Expect(err).ToNot(HaveOccurred())
+		Expect(got).To(Equal(defaults))
+	})
+
 	It("creates default resources while NetworkClass Hub selection is pending", func() {
 		m.networkClasses = &fakeNetworkClasses{items: []*privatev1.NetworkClass{
 			privatev1.NetworkClass_builder{
@@ -227,7 +252,7 @@ var _ = Describe("default networking manager", func() {
 			}.Build(),
 		}}
 
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(m.virtualNetworks.(*fakeVirtualNetworks).creates).To(HaveLen(1))
 	})
 
@@ -253,20 +278,20 @@ var _ = Describe("default networking manager", func() {
 		ips := m.externalIPs.(*fakeExternalIPs)
 		gateways := m.natGateways.(*fakeNATGateways)
 
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(vns.creates).To(HaveLen(1))
 		Expect(subnets.creates).To(BeEmpty())
 		Expect(groups.creates).To(BeEmpty())
 		vns.items[0].SetStatus(privatev1.VirtualNetworkStatus_builder{
 			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_FAILED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(subnets.creates).To(BeEmpty())
 		vns.items[0].SetStatus(privatev1.VirtualNetworkStatus_builder{
 			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
 		}.Build())
 
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(subnets.creates).To(HaveLen(2))
 		Expect(groups.creates).To(HaveLen(1))
 		Expect(ips.items).To(BeEmpty())
@@ -277,13 +302,13 @@ var _ = Describe("default networking manager", func() {
 		subnets.items[0].SetStatus(privatev1.SubnetStatus_builder{
 			State: privatev1.SubnetState_SUBNET_STATE_READY,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(ips.items).To(BeEmpty())
 
 		subnets.items[1].SetStatus(privatev1.SubnetStatus_builder{
 			State: privatev1.SubnetState_SUBNET_STATE_FAILED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(ips.items).To(BeEmpty())
 
 		subnets.items[1].SetStatus(privatev1.SubnetStatus_builder{
@@ -292,27 +317,27 @@ var _ = Describe("default networking manager", func() {
 		groups.items[0].SetStatus(privatev1.SecurityGroupStatus_builder{
 			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_FAILED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(ips.items).To(BeEmpty())
 
 		groups.items[0].SetStatus(privatev1.SecurityGroupStatus_builder{
 			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(ips.items).To(HaveLen(1))
 		Expect(gateways.creates).To(BeEmpty())
 
 		ips.items[0].SetStatus(privatev1.ExternalIPStatus_builder{
 			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_FAILED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(gateways.creates).To(BeEmpty())
 
 		ips.items[0].SetStatus(privatev1.ExternalIPStatus_builder{
 			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(vns.creates).To(HaveLen(1))
 		Expect(subnets.creates).To(HaveLen(2))
 		Expect(groups.creates).To(HaveLen(1))
@@ -341,12 +366,12 @@ var _ = Describe("default networking manager", func() {
 		vns := m.virtualNetworks.(*fakeVirtualNetworks)
 		subnets := m.subnets.(*fakeSubnets)
 		securityGroups := m.securityGroups.(*fakeSecurityGroups)
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		vns.items[0].SetStatus(privatev1.VirtualNetworkStatus_builder{
 			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 
 		Expect(vns.creates).To(HaveLen(1))
 		Expect(vns.creates[0].GetMetadata().GetLabels()).To(HaveKeyWithValue(defaultLabel, "true"))
@@ -356,7 +381,7 @@ var _ = Describe("default networking manager", func() {
 		Expect(securityGroups.creates).To(HaveLen(1))
 	})
 
-	It("re-reads Subnet and SecurityGroup after concurrent creation", func() {
+	It("re-reads default resources after concurrent creation", func() {
 		m.networkClasses = &fakeNetworkClasses{items: []*privatev1.NetworkClass{
 			privatev1.NetworkClass_builder{
 				Id: "nc-1",
@@ -375,6 +400,7 @@ var _ = Describe("default networking manager", func() {
 		}}
 		m.subnets = &fakeSubnets{alreadyExists: true}
 		m.securityGroups = &fakeSecurityGroups{alreadyExists: true}
+		m.externalIPs = &fakeExternalIPs{alreadyExists: true}
 		m.externalIPPools = &fakeExternalIPPools{items: []*privatev1.ExternalIPPool{
 			privatev1.ExternalIPPool_builder{
 				Id: "pool-a", Status: privatev1.ExternalIPPoolStatus_builder{
@@ -383,7 +409,7 @@ var _ = Describe("default networking manager", func() {
 			}.Build(),
 		}}
 
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(m.externalIPs.(*fakeExternalIPs).items).To(HaveLen(1))
 		Expect(m.natGateways.(*fakeNATGateways).creates).To(BeEmpty())
 	})
@@ -420,20 +446,20 @@ var _ = Describe("default networking manager", func() {
 
 		externalIPs := m.externalIPs.(*fakeExternalIPs)
 		natGateways := m.natGateways.(*fakeNATGateways)
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		m.virtualNetworks.(*fakeVirtualNetworks).items[0].SetStatus(privatev1.VirtualNetworkStatus_builder{
 			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		m.securityGroups.(*fakeSecurityGroups).items[0].SetStatus(privatev1.SecurityGroupStatus_builder{
 			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(natGateways.creates).To(BeEmpty())
 		externalIPs.items[0].SetStatus(privatev1.ExternalIPStatus_builder{
 			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED,
 		}.Build())
-		Expect(m.Ensure(ctx, "tenant-a")).To(Succeed())
+		Expect(ensureManager(m, ctx, "tenant-a")).To(Succeed())
 		Expect(externalIPs.items).To(HaveLen(1))
 		Expect(externalIPs.items[0].GetSpec().GetPool().GetId()).To(Equal("pool-a"))
 		Expect(natGateways.creates).To(HaveLen(1))
@@ -441,8 +467,8 @@ var _ = Describe("default networking manager", func() {
 	})
 
 	It("does not create resources for reserved tenants", func() {
-		Expect(m.Ensure(ctx, "system")).To(Succeed())
-		Expect(m.Ensure(ctx, "shared")).To(Succeed())
+		Expect(ensureManager(m, ctx, "system")).To(Succeed())
+		Expect(ensureManager(m, ctx, "shared")).To(Succeed())
 		Expect(m.networkClasses.(*fakeNetworkClasses).items).To(BeEmpty())
 	})
 
@@ -466,6 +492,6 @@ var _ = Describe("default networking manager", func() {
 			privatev1.NetworkClass_builder{Id: "nc-a"}.Build(),
 			privatev1.NetworkClass_builder{Id: "nc-b"}.Build(),
 		}}
-		Expect(m.Ensure(ctx, "tenant-a")).To(MatchError(errors.New("multiple active NetworkClasses are configured")))
+		Expect(ensureManager(m, ctx, "tenant-a")).To(MatchError(errors.New("multiple active NetworkClasses are configured")))
 	})
 })
