@@ -1707,6 +1707,53 @@ var _ = Describe("Private bare metal instances server", func() {
 
 		})
 
+		It("defers the automatic attachment and cleans up an unattached ExternalIP", func() {
+			deferredServer, err := NewPrivateBareMetalInstancesServer().
+				SetLogger(logger).
+				SetAttributionLogic(attribution).
+				SetTenancyLogic(tenancy).
+				SetDeferredAutoExternalIPAttachments(true).
+				Build()
+			Expect(err).ToNot(HaveOccurred())
+
+			response, err := deferredServer.Create(ctx, privatev1.BareMetalInstancesCreateRequest_builder{
+				Object: privatev1.BareMetalInstance_builder{
+					Metadata: privatev1.Metadata_builder{Name: fmt.Sprintf("deferred-%s", uuid.NewString()[:8])}.Build(),
+					Spec: privatev1.BareMetalInstanceSpec_builder{
+						DiskImage:                privatev1.DiskImageReference_builder{Id: "default-bmi-disk-image"}.Build(),
+						CatalogItem:              privatev1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemID}.Build(),
+						SshPublicKey:             new(testSSHPublicKey),
+						AutoExternalIpAttachment: proto.Bool(true),
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			bmiID := response.GetObject().GetId()
+
+			eipDao, err := dao.NewGenericDAO[*privatev1.ExternalIP]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			filter := fmt.Sprintf("this.metadata.labels['osac.openshift.io/auto-created-for'] == '%s'", bmiID)
+			eipList, err := eipDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eipList.GetItems()).To(HaveLen(1))
+			Expect(eipList.GetItems()[0].GetMetadata().GetLabels()[autoAttachmentDeferredLabel]).To(Equal("true"))
+			Expect(eipList.GetItems()[0].GetMetadata().GetLabels()[autoCreatedKindLabel]).To(Equal("bare_metal_instance"))
+			Expect(eipList.GetItems()[0].GetMetadata().GetAnnotations()[ownerReferenceAnnotation]).To(Equal(bmiID))
+			Expect(eipList.GetItems()[0].GetMetadata().GetAnnotations()["osac.openshift.io/tenant"]).To(Equal(testTenant))
+
+			eiaDao, err := dao.NewGenericDAO[*privatev1.ExternalIPAttachment]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			eiaList, err := eiaDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eiaList.GetItems()).To(BeEmpty())
+
+			_, err = deferredServer.Delete(ctx, privatev1.BareMetalInstancesDeleteRequest_builder{Id: bmiID}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			eipList, err = eipDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eipList.GetItems()).To(BeEmpty())
+		})
+
 		It("Rejects PATCH that changes auto_external_ip_attachment", func() {
 			createResponse, err := server.Create(ctx, privatev1.BareMetalInstancesCreateRequest_builder{
 				Object: privatev1.BareMetalInstance_builder{

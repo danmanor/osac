@@ -32,6 +32,15 @@ import (
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
+const (
+	autoCreatedLabel            = "osac.openshift.io/auto-created"
+	autoCreatedForLabel         = "osac.openshift.io/auto-created-for"
+	autoAttachmentDeferredLabel = "osac.openshift.io/auto-attachment-deferred"
+	autoCreatedKindLabel        = "osac.openshift.io/auto-created-kind"
+	autoCreatedEndpointLabel    = "osac.openshift.io/auto-created-endpoint"
+	tenantAnnotation            = "osac.openshift.io/tenant"
+)
+
 var validExternalIPAttachmentTransitions = map[privatev1.ExternalIPAttachmentState][]privatev1.ExternalIPAttachmentState{
 	privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_PENDING: {
 		privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_READY,
