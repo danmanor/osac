@@ -185,6 +185,17 @@ var _ = Describe("automatic ExternalIPAttachment reconciliation", func() {
 		Expect(attachments.created).To(BeEmpty())
 	})
 
+	It("ignores tenant-created ExternalIPs with forged deferred attachment markers", func() {
+		computeInstances.object = computeInstance(privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING, "192.0.2.10")
+		computeInstances.object.GetMetadata().SetProject("victim-project")
+		externalIP := computeExternalIP(privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)
+		externalIP.GetMetadata().SetProject("attacker-project")
+		externalIP.GetMetadata().SetCreator("tenant-user")
+
+		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
+		Expect(attachments.created).To(BeEmpty())
+	})
+
 	It("waits for the ComputeInstance READY condition", func() {
 		computeInstances.object = computeInstance(privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING, "192.0.2.10")
 		computeInstances.object.GetStatus().GetConditions()[0].SetStatus(privatev1.ConditionStatus_CONDITION_STATUS_FALSE)
@@ -224,22 +235,34 @@ var _ = Describe("automatic ExternalIPAttachment reconciliation", func() {
 		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
 		Expect(attachments.created).To(HaveLen(2))
 	})
+
+	It("validates existing attachments from typed fields without interpreting annotations", func() {
+		computeInstances.object = computeInstance(privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING, "192.0.2.10")
+		externalIP := computeExternalIP(privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)
+
+		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
+		Expect(attachments.created).To(HaveLen(1))
+
+		annotations := attachments.attachments[0].GetMetadata().GetAnnotations()
+		annotations[tenantAnnotation] = "stale-tenant"
+		annotations[ownerReferenceAnnotation] = "stale-owner"
+
+		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
+		Expect(attachments.created).To(HaveLen(1))
+	})
 })
 
 func computeExternalIP(state privatev1.ExternalIPState) *privatev1.ExternalIP {
 	return privatev1.ExternalIP_builder{
 		Id: "eip-ci-1",
 		Metadata: privatev1.Metadata_builder{
-			Tenant: "tenant-1",
+			Creator: "system",
+			Tenant:  "tenant-1",
 			Labels: map[string]string{
 				autoCreatedLabel:            "true",
 				autoCreatedForLabel:         "ci-1",
 				autoAttachmentDeferredLabel: "true",
 				autoCreatedKindLabel:        "compute_instance",
-			},
-			Annotations: map[string]string{
-				tenantAnnotation:         "tenant-1",
-				ownerReferenceAnnotation: "ci-1",
 			},
 		}.Build(),
 		Status: privatev1.ExternalIPStatus_builder{State: state}.Build(),
@@ -279,17 +302,14 @@ func clusterExternalIP(endpoint string) *privatev1.ExternalIP {
 	return privatev1.ExternalIP_builder{
 		Id: "eip-cluster-" + endpoint,
 		Metadata: privatev1.Metadata_builder{
-			Tenant: "tenant-1",
+			Creator: "system",
+			Tenant:  "tenant-1",
 			Labels: map[string]string{
 				autoCreatedLabel:            "true",
 				autoCreatedForLabel:         "cluster-1",
 				autoAttachmentDeferredLabel: "true",
 				autoCreatedKindLabel:        "cluster",
 				autoCreatedEndpointLabel:    endpoint,
-			},
-			Annotations: map[string]string{
-				tenantAnnotation:         "tenant-1",
-				ownerReferenceAnnotation: "cluster-1",
 			},
 		}.Build(),
 		Status: privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED}.Build(),
@@ -300,16 +320,13 @@ func bareMetalExternalIP() *privatev1.ExternalIP {
 	return privatev1.ExternalIP_builder{
 		Id: "eip-bmi-1",
 		Metadata: privatev1.Metadata_builder{
-			Tenant: "tenant-1",
+			Creator: "system",
+			Tenant:  "tenant-1",
 			Labels: map[string]string{
 				autoCreatedLabel:            "true",
 				autoCreatedForLabel:         "bmi-1",
 				autoAttachmentDeferredLabel: "true",
 				autoCreatedKindLabel:        "bare_metal_instance",
-			},
-			Annotations: map[string]string{
-				tenantAnnotation:         "tenant-1",
-				ownerReferenceAnnotation: "bmi-1",
 			},
 		}.Build(),
 		Status: privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED}.Build(),

@@ -40,6 +40,7 @@ const (
 	autoCreatedEndpointLabel    = "osac.openshift.io/auto-created-endpoint"
 	tenantAnnotation            = "osac.openshift.io/tenant"
 	ownerReferenceAnnotation    = "osac.openshift.io/owner-reference"
+	systemCreator               = "system"
 
 	computeInstanceKind   = "compute_instance"
 	clusterKind           = "cluster"
@@ -116,8 +117,20 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 	if externalIP == nil || !externalIP.HasMetadata() || externalIP.GetMetadata().HasDeletionTimestamp() {
 		return nil
 	}
-	labels := externalIP.GetMetadata().GetLabels()
+	metadata := externalIP.GetMetadata()
+	labels := metadata.GetLabels()
 	if labels[autoCreatedLabel] != "true" || labels[autoAttachmentDeferredLabel] != "true" {
+		return nil
+	}
+	// GenericServer assigns creator from the authenticated caller. Automatic
+	// workload ExternalIPs are created directly by the server with creator=system,
+	// so caller-supplied labels and annotations cannot opt a tenant IP into this
+	// privileged reconciler.
+	if metadata.GetCreator() != systemCreator {
+		r.logger.DebugContext(ctx, "Skipping deferred automatic attachment for non-system ExternalIP",
+			slog.String("external_ip_id", externalIP.GetId()),
+			slog.String("creator", metadata.GetCreator()),
+		)
 		return nil
 	}
 	if externalIP.GetStatus().GetState() != privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED {
@@ -127,14 +140,13 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 		return errors.New("deferred automatic ExternalIP has no ID")
 	}
 
-	tenant := externalIP.GetMetadata().GetTenant()
+	tenant := metadata.GetTenant()
 	ownerID := labels[autoCreatedForLabel]
-	annotations := externalIP.GetMetadata().GetAnnotations()
-	if tenant == "" || annotations[tenantAnnotation] != tenant {
-		return fmt.Errorf("deferred automatic ExternalIP %q has inconsistent tenant metadata", externalIP.GetId())
+	if tenant == "" {
+		return fmt.Errorf("deferred automatic ExternalIP %q has no tenant", externalIP.GetId())
 	}
-	if ownerID == "" || annotations[ownerReferenceAnnotation] != ownerID {
-		return fmt.Errorf("deferred automatic ExternalIP %q has inconsistent owner metadata", externalIP.GetId())
+	if ownerID == "" {
+		return fmt.Errorf("deferred automatic ExternalIP %q has no owner reference", externalIP.GetId())
 	}
 
 	attachmentSpec, ready, err := r.targetSpec(ctx, labels[autoCreatedKindLabel], ownerID, tenant, labels[autoCreatedEndpointLabel])
@@ -142,13 +154,14 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 		return err
 	}
 	attachmentSpec.ExternalIp = privatev1.ExternalIPLocalReference_builder{Id: externalIP.GetId()}.Build()
+	expectedSpec := attachmentSpec.Build()
 
 	existing, err := r.findAttachment(ctx, externalIP.GetId())
 	if err != nil {
 		return err
 	}
 	if existing != nil {
-		return r.validateExisting(existing, externalIP.GetId(), ownerID, tenant, labels[autoCreatedKindLabel], labels[autoCreatedEndpointLabel])
+		return r.validateExisting(existing, ownerID, tenant, expectedSpec)
 	}
 
 	attachmentLabels := map[string]string{
@@ -168,7 +181,7 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 				ownerReferenceAnnotation: ownerID,
 			},
 		}.Build(),
-		Spec: attachmentSpec.Build(),
+		Spec: expectedSpec,
 	}.Build()
 	createResponse, err := r.externalIPAttachmentsClient.Create(ctx, privatev1.ExternalIPAttachmentsCreateRequest_builder{Object: attachment}.Build())
 	if status.Code(err) != codes.AlreadyExists {
@@ -190,7 +203,7 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 	if existing == nil {
 		return fmt.Errorf("ExternalIPAttachment for ExternalIP %q already exists but could not be found", externalIP.GetId())
 	}
-	return r.validateExisting(existing, externalIP.GetId(), ownerID, tenant, labels[autoCreatedKindLabel], labels[autoCreatedEndpointLabel])
+	return r.validateExisting(existing, ownerID, tenant, expectedSpec)
 }
 
 func (r *function) targetSpec(
@@ -285,35 +298,16 @@ func (r *function) findAttachment(ctx context.Context, externalIPID string) (*pr
 
 func (r *function) validateExisting(
 	attachment *privatev1.ExternalIPAttachment,
-	externalIPID string,
 	ownerID string,
 	tenant string,
-	kind string,
-	endpoint string,
+	expectedSpec *privatev1.ExternalIPAttachmentSpec,
 ) error {
+	externalIPID := expectedSpec.GetExternalIp().GetId()
 	metadata := attachment.GetMetadata()
 	labels := metadata.GetLabels()
-	annotations := metadata.GetAnnotations()
 	if labels[autoCreatedLabel] != "true" || labels[autoCreatedForLabel] != ownerID ||
-		metadata.GetTenant() != tenant || annotations[tenantAnnotation] != tenant ||
-		annotations[ownerReferenceAnnotation] != ownerID || attachment.GetSpec().GetExternalIp().GetId() != externalIPID {
+		metadata.GetTenant() != tenant || !proto.Equal(attachment.GetSpec(), expectedSpec) {
 		return fmt.Errorf("ExternalIP %q is already attached by a different or inconsistent ExternalIPAttachment", externalIPID)
-	}
-	switch kind {
-	case computeInstanceKind:
-		if attachment.GetSpec().GetComputeInstance().GetId() != ownerID {
-			return fmt.Errorf("ExternalIPAttachment for ExternalIP %q targets a different ComputeInstance", externalIPID)
-		}
-	case clusterKind:
-		if attachment.GetSpec().GetCluster().GetId() != ownerID || endpointName(attachment.GetSpec().GetTargetEndpoint()) != endpoint {
-			return fmt.Errorf("ExternalIPAttachment for ExternalIP %q targets a different Cluster endpoint", externalIPID)
-		}
-	case bareMetalInstanceKind:
-		if attachment.GetSpec().GetBaremetalInstance().GetId() != ownerID {
-			return fmt.Errorf("ExternalIPAttachment for ExternalIP %q targets a different BareMetalInstance", externalIPID)
-		}
-	default:
-		return fmt.Errorf("deferred automatic ExternalIP has unsupported owner kind %q", kind)
 	}
 	return nil
 }
@@ -349,15 +343,4 @@ func hasPrimaryBareMetalAddress(instance *privatev1.BareMetalInstance) bool {
 		}
 	}
 	return false
-}
-
-func endpointName(endpoint privatev1.ExternalIPAttachmentEndpoint) string {
-	switch endpoint {
-	case privatev1.ExternalIPAttachmentEndpoint_EXTERNAL_IP_ATTACHMENT_ENDPOINT_API:
-		return "api"
-	case privatev1.ExternalIPAttachmentEndpoint_EXTERNAL_IP_ATTACHMENT_ENDPOINT_INGRESS:
-		return "ingress"
-	default:
-		return ""
-	}
 }

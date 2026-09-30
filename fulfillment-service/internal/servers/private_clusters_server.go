@@ -512,10 +512,7 @@ func (s *PrivateClustersServer) Delete(ctx context.Context,
 }
 
 func (s *PrivateClustersServer) autoCleanupExternalIP(ctx context.Context, clusterID string) error {
-	filter := fmt.Sprintf(
-		"this.metadata.labels['%s'] == '%s'",
-		autoCreatedForLabel, clusterID,
-	)
+	filter := autoCreatedExternalIPAttachmentFilter(clusterID)
 	listResp, err := s.externalIPAttachmentDao.List().SetFilter(filter).Do(ctx)
 	if err != nil {
 		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list attachments: %w", err)
@@ -536,14 +533,8 @@ func (s *PrivateClustersServer) autoCleanupExternalIP(ctx context.Context, clust
 		}
 	}
 
-	eipList, err := s.externalIPDao.List().SetFilter(filter).Do(ctx)
-	if err != nil {
-		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list ExternalIPs: %w", err)
-	}
-	for _, externalIP := range eipList.GetItems() {
-		if err := s.lifecycle.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
-			return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
-		}
+	if err := s.lifecycle.deleteAutoCreatedExternalIPs(ctx, clusterID); err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
 	}
 
 	return nil
@@ -1242,7 +1233,7 @@ func (s *PrivateClustersServer) autoProvisionExternalIPs(ctx context.Context, cl
 					tenantAnnotation:         tenant,
 					ownerReferenceAnnotation: clusterID,
 				},
-				Creator: "system",
+				Creator: systemCreator,
 			}.Build(),
 			Spec: privatev1.ExternalIPSpec_builder{
 				Pool: privatev1.ExternalIPPoolReference_builder{Id: pool.GetId()}.Build(),
@@ -1277,7 +1268,7 @@ func (s *PrivateClustersServer) autoProvisionExternalIPs(ctx context.Context, cl
 					tenantAnnotation:         tenant,
 					ownerReferenceAnnotation: clusterID,
 				},
-				Creator: "system",
+				Creator: systemCreator,
 			}.Build(),
 			Spec: privatev1.ExternalIPAttachmentSpec_builder{
 				ExternalIp:     privatev1.ExternalIPLocalReference_builder{Id: eipID}.Build(),
