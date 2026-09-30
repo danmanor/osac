@@ -504,7 +504,7 @@ csi-render-test: helm-deps ## Verify CSI and storage-provider chart rendering
 			--values values/caas-ci/infra.yaml \
 			--set csiDriver.enabled=true > "$$infra_enabled_render"; \
 		rg -q 'name: osac-infra-create-csi-creds' "$$infra_enabled_render"; \
-		assert_helm_failure "at '/csiDriver/namespace': value must be 'osac-csi'" \
+		assert_helm_failure 'csiDriver.namespace must be one of the following: "osac-csi"' \
 			helm template osac $(OSAC_CHART) \
 			--values charts/osac/ci/full-values.yaml \
 			--set operator.networkManagers.enabled=true \
@@ -520,7 +520,7 @@ csi-render-test: helm-deps ## Verify CSI and storage-provider chart rendering
 			--set operator.networkManagers.enabled=true \
 			--namespace osac-csi \
 			--set csiDriver.controller.fulfillment.configMap.name=osac-fulfillment-config; \
-		assert_helm_failure "value must be one of '', 'osac-csi'" \
+		assert_helm_failure 'namespace must be one of the following: "", "osac-csi"' \
 			helm template csi-driver ../osac-csi-driver/charts/csi-driver \
 			--set namespace=not-osac-csi; \
 		echo 'CSI render checks passed.'

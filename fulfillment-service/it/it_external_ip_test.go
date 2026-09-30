@@ -255,7 +255,8 @@ var _ = Describe("Private ExternalIPPool CRUD", func() {
 			Object: privatev1.ExternalIPPool_builder{
 				Id: poolId,
 				Metadata: privatev1.Metadata_builder{
-					Name: fmt.Sprintf("test-pool-%s", uuid.New()[24:32]),
+					Name:   fmt.Sprintf("test-pool-%s", uuid.New()[24:32]),
+					Tenant: usersGroup,
 				}.Build(),
 				Spec: privatev1.ExternalIPPoolSpec_builder{
 					Cidrs:    []string{uniqueCIDR()},
