@@ -17,6 +17,7 @@ limitations under the License.
 package autoexternalipattachment
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -194,6 +195,28 @@ var _ = Describe("automatic ExternalIPAttachment reconciliation", func() {
 
 		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
 		Expect(attachments.created).To(BeEmpty())
+	})
+
+	It("does not log tenant identity or ExternalIP identifiers", func() {
+		var logs bytes.Buffer
+		reconciler.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		externalIP := computeExternalIP(privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)
+		externalIP.SetId("tenant-selected-external-ip")
+		externalIP.GetMetadata().SetCreator("tenant-user@example.com")
+		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
+		Expect(attachments.created).To(BeEmpty())
+		Expect(logs.String()).NotTo(ContainSubstring("tenant-user@example.com"))
+		Expect(logs.String()).NotTo(ContainSubstring("tenant-selected-external-ip"))
+
+		logs.Reset()
+		externalIP.GetMetadata().SetCreator(systemCreator)
+		computeInstances.object = computeInstance(privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING, "192.0.2.10")
+		Expect(reconciler.run(ctx, externalIP)).To(Succeed())
+		Expect(attachments.created).To(HaveLen(1))
+		Expect(logs.String()).NotTo(ContainSubstring("tenant-selected-external-ip"))
+		Expect(logs.String()).NotTo(ContainSubstring("external_ip_id"))
+		Expect(logs.String()).NotTo(ContainSubstring("external_ip_attachment_id"))
 	})
 
 	It("waits for the ComputeInstance READY condition", func() {

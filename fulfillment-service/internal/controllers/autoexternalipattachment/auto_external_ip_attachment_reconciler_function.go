@@ -127,10 +127,7 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 	// so caller-supplied labels and annotations cannot opt a tenant IP into this
 	// privileged reconciler.
 	if metadata.GetCreator() != systemCreator {
-		r.logger.DebugContext(ctx, "Skipping deferred automatic attachment for non-system ExternalIP",
-			slog.String("external_ip_id", externalIP.GetId()),
-			slog.String("creator", metadata.GetCreator()),
-		)
+		r.logger.DebugContext(ctx, "Skipping deferred automatic attachment for non-system ExternalIP")
 		return nil
 	}
 	if externalIP.GetStatus().GetState() != privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED {
@@ -183,15 +180,12 @@ func (r *function) run(ctx context.Context, externalIP *privatev1.ExternalIP) er
 		}.Build(),
 		Spec: expectedSpec,
 	}.Build()
-	createResponse, err := r.externalIPAttachmentsClient.Create(ctx, privatev1.ExternalIPAttachmentsCreateRequest_builder{Object: attachment}.Build())
+	_, err = r.externalIPAttachmentsClient.Create(ctx, privatev1.ExternalIPAttachmentsCreateRequest_builder{Object: attachment}.Build())
 	if status.Code(err) != codes.AlreadyExists {
 		if err != nil {
 			return fmt.Errorf("failed to create automatic ExternalIPAttachment for ExternalIP %q: %w", externalIP.GetId(), err)
 		}
-		r.logger.InfoContext(ctx, "Created deferred automatic ExternalIPAttachment",
-			slog.String("external_ip_id", externalIP.GetId()),
-			slog.String("external_ip_attachment_id", createResponse.GetObject().GetId()),
-		)
+		r.logger.InfoContext(ctx, "Created deferred automatic ExternalIPAttachment")
 		return nil
 	}
 
