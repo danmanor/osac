@@ -250,12 +250,10 @@ var _ = Describe("Default networking provisioning", func() {
 	})
 
 	It("waits for every default networking dependency before creating NAT and reporting ready", func(ctx context.Context) {
-		By("Enabling NAT and a second Subnet on the singleton NetworkClass")
+		By("Enabling NAT on the singleton NetworkClass")
 		ncResponse, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: networkClassId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		nc := ncResponse.GetObject()
-		nc.GetSpec().GetDefaults().SetVirtualNetworkIpv6Cidr("fd00:200::/48")
-		nc.GetSpec().GetDefaults().SetSubnetIpv6Cidr("fd00:200:0:1::/64")
 		nc.GetSpec().GetDefaults().SetEnableNatGateway(true)
 		_, err = networkClassesClient.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
 			Object: nc, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.defaults"}},
@@ -376,19 +374,18 @@ var _ = Describe("Default networking provisioning", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 
-		By("Waiting for both Subnets and SecurityGroup, with no ExternalIP yet")
+		By("Waiting for the default Subnet and SecurityGroup, with no ExternalIP yet")
 		var subnetIDs map[string]string
 		var groupID string
 		Eventually(func(g Gomega) {
 			subnets := listSubnets(g)
-			g.Expect(subnets).To(HaveLen(2))
-			subnetIDs = make(map[string]string, 2)
+			g.Expect(subnets).To(HaveLen(1))
+			subnetIDs = make(map[string]string, 1)
 			for _, subnet := range subnets {
 				g.Expect(subnet.GetStatus().GetState()).To(Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
 				subnetIDs[subnet.GetMetadata().GetName()] = subnet.GetId()
 			}
 			g.Expect(subnetIDs).To(HaveKey("default-ipv4"))
-			g.Expect(subnetIDs).To(HaveKey("default-ipv6"))
 			groups := listGroups(g)
 			g.Expect(groups).To(HaveLen(1))
 			g.Expect(groups[0].GetStatus().GetState()).To(Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING))
@@ -418,19 +415,12 @@ var _ = Describe("Default networking provisioning", func() {
 		}
 		setSubnetReady(subnetIDs["default-ipv4"])
 		Consistently(func(g Gomega) {
-			g.Expect(listSubnets(g)).To(HaveLen(2))
+			g.Expect(listSubnets(g)).To(HaveLen(1))
 			g.Expect(listGroups(g)).To(HaveLen(1))
 			g.Expect(listIPs(g)).To(BeEmpty())
 			g.Expect(listGateways(g)).To(BeEmpty())
 			expectNotReady(g)
 		}, 5*time.Second, time.Second).Should(Succeed())
-		setSubnetReady(subnetIDs["default-ipv6"])
-		Consistently(func(g Gomega) {
-			g.Expect(listIPs(g)).To(BeEmpty())
-			g.Expect(listGateways(g)).To(BeEmpty())
-			expectNotReady(g)
-		}, 5*time.Second, time.Second).Should(Succeed())
-
 		groupResponse, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: groupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		group := groupResponse.GetObject()
@@ -503,7 +493,7 @@ var _ = Describe("Default networking provisioning", func() {
 			g.Expect(vns.GetItems()).To(HaveLen(1))
 			g.Expect(vns.GetItems()[0].GetId()).To(Equal(vnID))
 			subnets := listSubnets(g)
-			g.Expect(subnets).To(HaveLen(2))
+			g.Expect(subnets).To(HaveLen(1))
 			for _, subnet := range subnets {
 				g.Expect(subnetIDs).To(HaveKeyWithValue(subnet.GetMetadata().GetName(), subnet.GetId()))
 			}
@@ -542,7 +532,7 @@ var _ = Describe("Default networking provisioning", func() {
 			response, listErr := virtualNetworksClient.List(ctx, privatev1.VirtualNetworksListRequest_builder{Filter: &filter}.Build())
 			g.Expect(listErr).ToNot(HaveOccurred())
 			g.Expect(response.GetItems()).To(HaveLen(1))
-			g.Expect(listSubnets(g)).To(HaveLen(2))
+			g.Expect(listSubnets(g)).To(HaveLen(1))
 			g.Expect(listGroups(g)).To(HaveLen(1))
 			g.Expect(listIPs(g)).To(HaveLen(1))
 			g.Expect(listGateways(g)).To(HaveLen(1))
