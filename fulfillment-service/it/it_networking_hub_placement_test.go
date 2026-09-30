@@ -354,6 +354,17 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 
 		By("preserving the SecurityGroup assignment if the canonical Hub changes")
 		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, hubBID)
+		By("triggering SecurityGroup reconciliation against the changed canonical Hub")
+		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+			Object: privatev1.SecurityGroup_builder{
+				Id: securityGroupID,
+				Metadata: privatev1.Metadata_builder{
+					Labels: map[string]string{"integration-test-trigger": "canonical-hub-changed"},
+				}.Build(),
+			}.Build(),
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
 		Eventually(func(g Gomega) {
 			response, getErr := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
 			g.Expect(getErr).ToNot(HaveOccurred())
