@@ -17,8 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
-	"time"
 
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
@@ -39,7 +37,6 @@ var (
 )
 
 const (
-	canonicalHubNegativeCacheTTL    = time.Second
 	activeResourceFilter            = "!has(this.metadata.deletion_timestamp)"
 	activeResourceLimit             = 2
 	canonicalHubNoCandidatesMessage = "expected exactly one active networking hub, found none"
@@ -170,11 +167,7 @@ type networkingHubResolver struct {
 	networkClassesClient networkClassesClient
 	hubsClient           hubsListClient
 	hubCache             HubCache
-	mu                   sync.Mutex
 	resolveGroup         singleflight.Group
-	cachedHub            *NetworkingHub
-	cachedError          error
-	errorExpiresAt       time.Time
 	readOnly             bool
 }
 
@@ -255,41 +248,12 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHubResol
 	// The NetworkClass reconciler must re-evaluate the active Hub set on every
 	// reconciliation. Hub create/delete events trigger that reconciliation, so
 	// caching its discovery result would allow a stale canonical assignment to
-	// survive a topology change. Read-only resource consumers can cache the
-	// already-persisted canonical reference because they never discover or
-	// select a Hub.
-	if r.readOnly {
-		if result, ok := r.cachedResolution(ctx); ok {
-			return NetworkingHubResolution{
-				NetworkingHub: result,
-				HubID:         result.ID,
-				State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
-			}, nil
-		}
-		if err, ok := r.cachedFailure(); ok {
-			return NetworkingHubResolution{}, err
-		}
-	}
+	// survive a topology change. Resource consumers also re-read the persisted
+	// canonical reference on each reconciliation so they can detect a changed
+	// assignment. The Hub cache still avoids rebuilding Kubernetes clients.
 
 	value, err, _ := r.resolveGroup.Do("canonical-networking-hub", func() (any, error) {
-		if r.readOnly {
-			if result, ok := r.cachedResolution(ctx); ok {
-				return NetworkingHubResolution{
-					NetworkingHub: result,
-					HubID:         result.ID,
-					State:         privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
-				}, nil
-			}
-			if err, ok := r.cachedFailure(); ok {
-				return NetworkingHubResolution{}, err
-			}
-		}
-
-		result, err := r.resolve(ctx)
-		if r.readOnly {
-			r.cacheResult(result.NetworkingHub, err)
-		}
-		return result, err
+		return r.resolve(ctx)
 	})
 	if err != nil {
 		if result, ok := value.(NetworkingHubResolution); ok {
@@ -298,58 +262,6 @@ func (r *networkingHubResolver) Resolve(ctx context.Context) (NetworkingHubResol
 		return NetworkingHubResolution{}, err
 	}
 	return value.(NetworkingHubResolution), nil
-}
-
-func (r *networkingHubResolver) cachedResolution(ctx context.Context) (NetworkingHub, bool) {
-	r.mu.Lock()
-	var cached NetworkingHub
-	if r.cachedHub != nil {
-		cached = *r.cachedHub
-	}
-	r.mu.Unlock()
-	if cached.ID == "" {
-		return NetworkingHub{}, false
-	}
-
-	entry, err := r.hubCache.Get(ctx, cached.ID)
-	if err == nil && entry != nil {
-		return NetworkingHub{ID: cached.ID, Namespace: entry.Namespace, Client: entry.Client}, true
-	}
-
-	r.mu.Lock()
-	if r.cachedHub != nil && r.cachedHub.ID == cached.ID {
-		r.cachedHub = nil
-	}
-	r.mu.Unlock()
-	return NetworkingHub{}, false
-}
-
-func (r *networkingHubResolver) cachedFailure() (error, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.cachedError == nil {
-		return nil, false
-	}
-	if time.Now().Before(r.errorExpiresAt) {
-		return r.cachedError, true
-	}
-	r.cachedError = nil
-	r.errorExpiresAt = time.Time{}
-	return nil, false
-}
-
-func (r *networkingHubResolver) cacheResult(result NetworkingHub, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err == nil {
-		r.cachedHub = &result
-		r.cachedError = nil
-		r.errorExpiresAt = time.Time{}
-		return
-	}
-	r.cachedHub = nil
-	r.cachedError = err
-	r.errorExpiresAt = time.Now().Add(canonicalHubNegativeCacheTTL)
 }
 
 func (r *networkingHubResolver) resolve(ctx context.Context) (NetworkingHubResolution, error) {

@@ -357,6 +357,31 @@ var _ = Describe("NetworkingHubReader", func() {
 		Expect(cache.calls).To(Equal([]string{"hub-a"}))
 	})
 
+	It("observes a changed persisted NetworkClass Hub on the next resolution", func() {
+		networkClass := testNetworkClass("nc-a", "hub-a", privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, "")
+		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
+		cache := &fakeNetworkingHubCache{entries: map[string]*HubEntry{
+			"hub-a": {Namespace: "networking-a", Client: nil},
+			"hub-b": {Namespace: "networking-b", Client: nil},
+		}}
+
+		reader := mustBuildNetworkingHubReader(networkClasses, cache)
+
+		first, err := reader.Resolve(context.Background())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(first.ID).To(Equal("hub-a"))
+
+		networkClass.GetStatus().SetHub("hub-b")
+		second, err := reader.Resolve(context.Background())
+
+		Expect(err).ToNot(HaveOccurred())
+		Expect(second.ID).To(Equal("hub-b"))
+		Expect(second.Namespace).To(Equal("networking-b"))
+		Expect(networkClasses.listRequests).To(HaveLen(2))
+		Expect(networkClasses.updates).To(BeEmpty())
+		Expect(cache.calls).To(Equal([]string{"hub-a", "hub-b"}))
+	})
+
 	It("does not discover or mutate a NetworkClass whose canonical Hub is not ready", func() {
 		networkClass := testNetworkClass("nc-a", "", privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING, "")
 		networkClasses := &fakeNetworkClassesClient{objects: []*privatev1.NetworkClass{networkClass}}
