@@ -15,6 +15,7 @@ package it
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -869,10 +870,18 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() {
+			var cleanupErrors []error
 			for _, attachment := range listAttachments() {
-				_, _ = privateAttachmentsClient.Delete(ctx, privatev1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachment.GetId()}.Build())
+				_, err := privateAttachmentsClient.Delete(ctx, privatev1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachment.GetId()}.Build())
+				if err != nil && grpcstatus.Code(err) != grpccodes.NotFound {
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("delete ExternalIPAttachment %q: %w", attachment.GetId(), err))
+				}
 			}
-			_, _ = privateExternalIPsClient.Delete(ctx, privatev1.ExternalIPsDeleteRequest_builder{Id: deferredIPID}.Build())
+			_, err := privateExternalIPsClient.Delete(ctx, privatev1.ExternalIPsDeleteRequest_builder{Id: deferredIPID}.Build())
+			if err != nil && grpcstatus.Code(err) != grpccodes.NotFound {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("delete ExternalIP %q: %w", deferredIPID, err))
+			}
+			Expect(errors.Join(cleanupErrors...)).NotTo(HaveOccurred())
 		})
 
 		Consistently(listAttachments, 2*time.Second, 100*time.Millisecond).Should(BeEmpty(),
