@@ -1272,7 +1272,7 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: ciID,
 			},
-			Creator: "system",
+			Creator: systemCreator,
 		}.Build(),
 		Spec: privatev1.ExternalIPSpec_builder{
 			Pool: privatev1.ExternalIPPoolReference_builder{Id: pool.GetId()}.Build(),
@@ -1315,7 +1315,7 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: ciID,
 			},
-			Creator: "system",
+			Creator: systemCreator,
 		}.Build(),
 		Spec: privatev1.ExternalIPAttachmentSpec_builder{
 			ExternalIp:      privatev1.ExternalIPLocalReference_builder{Id: eipID}.Build(),
@@ -1335,10 +1335,7 @@ func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
 }
 
 func (s *PrivateComputeInstancesServer) autoCleanupExternalIP(ctx context.Context, ciID string) error {
-	filter := fmt.Sprintf(
-		"this.metadata.labels['%s'] == '%s'",
-		autoCreatedForLabel, ciID,
-	)
+	filter := autoCreatedExternalIPAttachmentFilter(ciID)
 	listResp, err := s.externalIPAttachmentDao.List().SetFilter(filter).Do(ctx)
 	if err != nil {
 		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list attachments: %w", err)
@@ -1359,14 +1356,8 @@ func (s *PrivateComputeInstancesServer) autoCleanupExternalIP(ctx context.Contex
 		}
 	}
 
-	eipList, err := s.externalIPDao.List().SetFilter(filter).Do(ctx)
-	if err != nil {
-		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list ExternalIPs: %w", err)
-	}
-	for _, externalIP := range eipList.GetItems() {
-		if err := s.lifecycle.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
-			return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
-		}
+	if err := s.lifecycle.deleteAutoCreatedExternalIPs(ctx, ciID); err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
 	}
 
 	return nil

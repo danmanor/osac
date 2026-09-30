@@ -33,6 +33,7 @@ import (
 )
 
 const (
+	systemCreator               = "system"
 	autoCreatedLabel            = "osac.openshift.io/auto-created"
 	autoCreatedForLabel         = "osac.openshift.io/auto-created-for"
 	autoAttachmentDeferredLabel = "osac.openshift.io/auto-attachment-deferred"
@@ -474,6 +475,39 @@ func (l *externalIPLifecycle) deleteAttachmentAndExternalIP(ctx context.Context,
 		return err
 	}
 	return l.deleteLockedExternalIP(ctx, parent)
+}
+
+func (l *externalIPLifecycle) deleteAutoCreatedExternalIPs(ctx context.Context, ownerID string) error {
+	filter := autoCreatedExternalIPFilter(ownerID)
+	eipList, err := l.externalIPDao.List().SetFilter(filter).Do(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list ExternalIPs: %w", err)
+	}
+	for _, externalIP := range eipList.GetItems() {
+		// Only the workload servers create automatic ExternalIPs with the system
+		// creator. Ignore tenant-created objects that copy the owner labels.
+		if externalIP.GetMetadata().GetCreator() != systemCreator {
+			continue
+		}
+		if err := l.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func autoCreatedExternalIPFilter(ownerID string) string {
+	return fmt.Sprintf(
+		"this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s",
+		autoCreatedLabel, autoCreatedForLabel, strconv.Quote(ownerID),
+	)
+}
+
+func autoCreatedExternalIPAttachmentFilter(ownerID string) string {
+	return fmt.Sprintf(
+		"this.metadata.labels['%s'] == %s",
+		autoCreatedForLabel, strconv.Quote(ownerID),
+	)
 }
 
 func (l *externalIPLifecycle) deleteExternalIP(ctx context.Context, id string) error {

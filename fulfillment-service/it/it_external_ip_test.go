@@ -31,13 +31,14 @@ import (
 	publicv1 "github.com/osac-project/osac/proto/gen/osac/public/v1"
 )
 
-// cidrCounter provides a process-wide monotonic sequence so uniqueCIDR never returns
-// the same CIDR twice within a test run, avoiding pool CIDR collisions between specs.
+// cidrCounter and cidrOffset provide a process-wide sequence with a different starting
+// subnet on each run, avoiding pool CIDR collisions within and across repeated test runs.
 var cidrCounter atomic.Int64
+var cidrOffset = time.Now().UnixNano() % (200 * 256)
 
 func uniqueCIDR() string {
-	n := cidrCounter.Add(1)
-	return fmt.Sprintf("10.%d.%d.0/28", 20+(n/256)%200, n%256)
+	subnet := (cidrOffset + cidrCounter.Add(1) - 1) % (200 * 256)
+	return fmt.Sprintf("10.%d.%d.0/28", 20+subnet/256, subnet%256)
 }
 
 func createReadyExternalIPNetworkClass(ctx context.Context, client privatev1.NetworkClassesClient) {

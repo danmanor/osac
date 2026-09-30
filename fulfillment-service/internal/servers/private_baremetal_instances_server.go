@@ -494,10 +494,7 @@ func (s *PrivateBareMetalInstancesServer) Delete(ctx context.Context,
 }
 
 func (s *PrivateBareMetalInstancesServer) autoCleanupExternalIP(ctx context.Context, bmiID string) error {
-	filter := fmt.Sprintf(
-		"this.metadata.labels['%s'] == '%s'",
-		autoCreatedForLabel, bmiID,
-	)
+	filter := autoCreatedExternalIPAttachmentFilter(bmiID)
 	s.logger.InfoContext(ctx, "Auto-EIP cleanup: listing attachments",
 		slog.String("bmi_id", bmiID), slog.String("filter", filter))
 
@@ -531,14 +528,8 @@ func (s *PrivateBareMetalInstancesServer) autoCleanupExternalIP(ctx context.Cont
 		}
 	}
 
-	eipList, err := s.externalIPDao.List().SetFilter(filter).Do(ctx)
-	if err != nil {
-		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list ExternalIPs: %w", err)
-	}
-	for _, externalIP := range eipList.GetItems() {
-		if err := s.lifecycle.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
-			return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
-		}
+	if err := s.lifecycle.deleteAutoCreatedExternalIPs(ctx, bmiID); err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
 	}
 
 	return nil
@@ -1117,7 +1108,7 @@ func (s *PrivateBareMetalInstancesServer) autoProvisionExternalIP(
 				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: bmiID,
 			},
-			Creator: "system",
+			Creator: systemCreator,
 		}.Build(),
 		Spec: privatev1.ExternalIPSpec_builder{
 			Pool: privatev1.ExternalIPPoolReference_builder{Id: pool.GetId()}.Build(),
@@ -1160,7 +1151,7 @@ func (s *PrivateBareMetalInstancesServer) autoProvisionExternalIP(
 				tenantAnnotation:         tenant,
 				ownerReferenceAnnotation: bmiID,
 			},
-			Creator: "system",
+			Creator: systemCreator,
 		}.Build(),
 		Spec: privatev1.ExternalIPAttachmentSpec_builder{
 			ExternalIp:        privatev1.ExternalIPLocalReference_builder{Id: eipID}.Build(),
