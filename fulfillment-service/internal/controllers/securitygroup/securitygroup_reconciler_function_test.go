@@ -22,6 +22,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/finalizers"
+	"github.com/osac-project/osac/fulfillment-service/internal/kubernetes/labels"
 	"github.com/osac-project/osac/fulfillment-service/internal/masks"
 	osacv1alpha1 "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -399,9 +401,7 @@ var _ = Describe("delete", func() {
 		DeferCleanup(ctrl.Finish)
 	})
 
-	It("should remove finalizer when hub cache returns ErrHubNotFound", func() {
-		// This test verifies the core behavior: when a hub is decommissioned/deleted,
-		// the reconciler removes its finalizer to allow the security group to be archived.
+	It("should remove finalizer for a legacy resource when the canonical Hub is not found", func() {
 
 		resolver := &fakeNetworkingHubReader{
 			result: controllers.NetworkingHubResolution{HubID: hubID},
@@ -435,6 +435,70 @@ var _ = Describe("delete", func() {
 		Expect(err).ToNot(HaveOccurred())
 		// Finalizer should be removed to allow archiving
 		Expect(hasFinalizer(t.securityGroup)).To(BeFalse())
+	})
+
+	It("should remove finalizer when its assigned Hub has been decommissioned", func() {
+		hubCache := controllers.NewMockHubCache(ctrl)
+		hubCache.EXPECT().Get(ctx, hubID).Return(nil, controllers.ErrHubNotFound)
+		sg := privatev1.SecurityGroup_builder{
+			Id: sgID,
+			Metadata: privatev1.Metadata_builder{
+				Finalizers: []string{finalizers.Controller},
+			}.Build(),
+			Status: privatev1.SecurityGroupStatus_builder{Hub: hubID}.Build(),
+		}.Build()
+		t := &task{
+			r:             &function{logger: logger, hubCache: hubCache},
+			securityGroup: sg,
+		}
+
+		Expect(t.delete(ctx)).To(Succeed())
+		Expect(hasFinalizer(sg)).To(BeFalse())
+	})
+
+	It("should delete the Kubernetes object from its assigned Hub after the canonical Hub changes", func() {
+		scheme := runtime.NewScheme()
+		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
+
+		oldHubClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&osacv1alpha1.SecurityGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "securitygroup-old",
+					Namespace: "old-hub-ns",
+					Labels:    map[string]string{labels.SecurityGroupUuid: sgID},
+				},
+			}).
+			Build()
+		newHubClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		resolver := readyNetworkingHubReader("new-hub", "new-hub-ns", newHubClient)
+		hubCache := controllers.NewMockHubCache(ctrl)
+		hubCache.EXPECT().Get(ctx, "old-hub").Return(&controllers.HubEntry{
+			Namespace: "old-hub-ns",
+			Client:    oldHubClient,
+		}, nil)
+
+		sg := privatev1.SecurityGroup_builder{
+			Id: sgID,
+			Metadata: privatev1.Metadata_builder{
+				Finalizers: []string{finalizers.Controller},
+			}.Build(),
+			Status: privatev1.SecurityGroupStatus_builder{Hub: "old-hub"}.Build(),
+		}.Build()
+		f := &function{
+			logger:              logger,
+			networkingHubReader: resolver,
+			hubCache:            hubCache,
+		}
+		t := &task{r: f, securityGroup: sg}
+
+		Expect(t.delete(ctx)).To(Succeed())
+		Expect(resolver.calls).To(BeZero())
+
+		remaining := &osacv1alpha1.SecurityGroupList{}
+		Expect(oldHubClient.List(ctx, remaining, clnt.InNamespace("old-hub-ns"))).To(Succeed())
+		Expect(remaining.Items).To(BeEmpty())
+		Expect(hasFinalizer(sg)).To(BeTrue())
 	})
 })
 
@@ -519,6 +583,65 @@ var _ = Describe("canonical networking Hub resolution", func() {
 			Expect(failed.selectHub(context.Background())).To(MatchError(resolutionErr))
 			Expect(failed.hubClient).To(BeNil())
 		}
+	})
+
+	It("preserves the stored Hub assignment and rejects a changed canonical Hub", func() {
+		resolver := readyNetworkingHubReader("new-hub", "new-hub-ns", fake.NewClientBuilder().Build())
+		t := &task{
+			r: &function{logger: logger, networkingHubReader: resolver},
+			securityGroup: privatev1.SecurityGroup_builder{
+				Status: privatev1.SecurityGroupStatus_builder{Hub: "old-hub"}.Build(),
+			}.Build(),
+		}
+
+		Expect(t.selectHub(context.Background())).To(MatchError(ContainSubstring(controllers.ErrResourceHubConflict.Error())))
+		Expect(t.hubId).To(Equal("new-hub"))
+		Expect(t.securityGroup.GetStatus().GetHub()).To(Equal("old-hub"))
+	})
+
+	It("persists the Hub assignment before creating the Kubernetes object", func() {
+		ctx := context.Background()
+		ctrl := gomock.NewController(GinkgoT())
+		DeferCleanup(ctrl.Finish)
+
+		scheme := runtime.NewScheme()
+		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
+		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		resolver := readyNetworkingHubReader("hub-a", "hub-a-ns", kubeClient)
+		securityGroupsClient := NewMockSecurityGroupsClient(ctrl)
+		securityGroupsClient.EXPECT().
+			Update(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, req *privatev1.SecurityGroupsUpdateRequest, _ ...grpc.CallOption) (*privatev1.SecurityGroupsUpdateResponse, error) {
+				Expect(req.GetObject().GetStatus().GetHub()).To(Equal("hub-a"))
+				Expect(req.GetUpdateMask().GetPaths()).To(ContainElement("status.hub"))
+				return &privatev1.SecurityGroupsUpdateResponse{Object: req.GetObject()}, nil
+			})
+
+		sg := privatev1.SecurityGroup_builder{
+			Id: "sg-hub-assignment",
+			Metadata: privatev1.Metadata_builder{
+				Finalizers: []string{finalizers.Controller},
+				Tenant:     "test-tenant",
+			}.Build(),
+			Spec: privatev1.SecurityGroupSpec_builder{
+				VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: "vnet-1"}.Build(),
+			}.Build(),
+			Status: privatev1.SecurityGroupStatus_builder{
+				State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING,
+			}.Build(),
+		}.Build()
+		f := &function{
+			logger:               logger,
+			securityGroupsClient: securityGroupsClient,
+			networkingHubReader:  resolver,
+			maskCalculator:       masks.NewCalculator().Build(),
+		}
+
+		Expect(f.run(ctx, sg)).To(Succeed())
+		Expect(sg.GetStatus().GetHub()).To(Equal("hub-a"))
+		objects := &osacv1alpha1.SecurityGroupList{}
+		Expect(kubeClient.List(ctx, objects, clnt.InNamespace("hub-a-ns"))).To(Succeed())
+		Expect(objects.Items).To(BeEmpty())
 	})
 })
 
@@ -620,6 +743,8 @@ var _ = Describe("Kubernetes validation error handling", func() {
 			maskCalculator:       masks.NewCalculator().Build(),
 		}
 
+		// The first pass stores the Hub assignment. The next pass creates the Kubernetes object.
+		Expect(f.run(ctx, sg)).To(Succeed())
 		err := f.run(ctx, sg)
 		Expect(err).ToNot(HaveOccurred())
 

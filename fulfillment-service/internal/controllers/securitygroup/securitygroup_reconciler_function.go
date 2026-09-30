@@ -52,6 +52,7 @@ type function struct {
 	logger               *slog.Logger
 	securityGroupsClient privatev1.SecurityGroupsClient
 	networkingHubReader  controllers.NetworkingHubReader
+	hubCache             controllers.HubCache
 	maskCalculator       *masks.Calculator
 }
 
@@ -115,6 +116,7 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 		logger:               b.logger,
 		securityGroupsClient: privatev1.NewSecurityGroupsClient(b.connection),
 		networkingHubReader:  networkingHubReader,
+		hubCache:             b.hubCache,
 		maskCalculator:       masks.NewCalculator().Build(),
 	}
 	result = object.run
@@ -177,10 +179,13 @@ func (t *task) update(ctx context.Context) error {
 		return err
 	}
 
-	// Select a hub:
+	// Select a hub and return immediately if it was just selected. This ensures the hub is
+	// persisted before any Kubernetes objects are created.
+	hubJustSelected := t.securityGroup.GetStatus().GetHub() == ""
 	if err := t.selectHub(ctx); err != nil {
 		return err
 	}
+	t.securityGroup.GetStatus().SetHub(t.hubId)
 
 	// Prepare the changes to the spec:
 	// Stored objects may predate the IPv4-only contract. Reject any legacy or incomplete
@@ -189,6 +194,9 @@ func (t *task) update(ctx context.Context) error {
 	spec, err := t.buildSpec()
 	if err != nil {
 		t.setFailed(err)
+		return nil
+	}
+	if hubJustSelected {
 		return nil
 	}
 
@@ -258,12 +266,25 @@ func (t *task) validateTenant() error {
 }
 
 func (t *task) delete(ctx context.Context) (err error) {
-	if err = t.selectHub(ctx); err != nil {
-		if errors.Is(err, controllers.ErrHubNotFound) || errors.Is(err, controllers.ErrCanonicalHubNotFound) {
-			controllers.RemoveFinalizerOnDecommissionedHub(ctx, t.r.logger, t.hubId, "security_group_id", t.securityGroup.GetId(), t.removeFinalizer)
-			return nil
+	// Delete from the Hub where this resource was created. Older security groups do not
+	// have a stored Hub assignment, so use the canonical Hub as a best-effort fallback.
+	t.hubId = t.securityGroup.GetStatus().GetHub()
+	if t.hubId == "" {
+		if err = t.selectHub(ctx); err != nil {
+			if errors.Is(err, controllers.ErrHubNotFound) || errors.Is(err, controllers.ErrCanonicalHubNotFound) {
+				controllers.RemoveFinalizerOnDecommissionedHub(ctx, t.r.logger, t.hubId, "security_group_id", t.securityGroup.GetId(), t.removeFinalizer)
+				return nil
+			}
+			return
 		}
-		return
+	} else {
+		if err = t.getHub(ctx); err != nil {
+			if errors.Is(err, controllers.ErrHubNotFound) {
+				controllers.RemoveFinalizerOnDecommissionedHub(ctx, t.r.logger, t.hubId, "security_group_id", t.securityGroup.GetId(), t.removeFinalizer)
+				return nil
+			}
+			return
+		}
 	}
 
 	// Check if the K8S object still exists:
@@ -309,7 +330,7 @@ func (t *task) delete(ctx context.Context) (err error) {
 }
 
 func (t *task) selectHub(ctx context.Context) error {
-	resolution, err := controllers.ResolveResourceNetworkingHub(ctx, t.r.networkingHubReader, "")
+	resolution, err := controllers.ResolveResourceNetworkingHub(ctx, t.r.networkingHubReader, t.securityGroup.GetStatus().GetHub())
 	t.hubId = resolution.HubID
 	if err != nil {
 		return err
@@ -321,6 +342,17 @@ func (t *task) selectHub(ctx context.Context) error {
 	)
 	t.hubNamespace = resolution.Namespace
 	t.hubClient = resolution.Client
+	return nil
+}
+
+func (t *task) getHub(ctx context.Context) error {
+	t.hubId = t.securityGroup.GetStatus().GetHub()
+	hubEntry, err := t.r.hubCache.Get(ctx, t.hubId)
+	if err != nil {
+		return err
+	}
+	t.hubNamespace = hubEntry.Namespace
+	t.hubClient = hubEntry.Client
 	return nil
 }
 

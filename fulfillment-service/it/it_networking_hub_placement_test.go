@@ -52,7 +52,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 		hubANamespace := hubAResponse.GetObject().GetSpec().GetNamespace()
 		Expect(hubANamespace).ToNot(BeEmpty())
 
-		hubBNamespace := createValidRoutingHub(ctx, hubsClient)
+		hubBID, hubBNamespace := createValidRoutingHub(ctx, hubsClient)
 
 		networkClassesClient := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
 		virtualNetworksClient := privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
@@ -178,6 +178,13 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func(cleanupCtx context.Context) {
 			_, _ = securityGroupsClient.Delete(cleanupCtx, privatev1.SecurityGroupsDeleteRequest_builder{Id: securityGroupID}.Build())
+		})
+		expectNetworkingResourceHub(ctx, hubId, func(getCtx context.Context) (string, error) {
+			response, getErr := securityGroupsClient.Get(getCtx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
+			if getErr != nil {
+				return "", getErr
+			}
+			return response.GetObject().GetStatus().GetHub(), nil
 		})
 		expectNetworkingCRInHub(ctx, hubANamespace, hubBNamespace, labels.SecurityGroupUuid, securityGroupID, func(namespace string) (int, error) {
 			list := &osacv1alpha1.SecurityGroupList{}
@@ -344,24 +351,42 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 			listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.NATGatewayUuid: natGatewayID})
 			return len(list.Items), listErr
 		})
+
+		By("preserving the SecurityGroup assignment if the canonical Hub changes")
+		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, hubBID)
+		Eventually(func(g Gomega) {
+			response, getErr := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
+			g.Expect(getErr).ToNot(HaveOccurred())
+			g.Expect(response.GetObject().GetStatus().GetHub()).To(Equal(hubId))
+			g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_FAILED))
+			g.Expect(response.GetObject().GetStatus().GetMessage()).To(ContainSubstring("assignment conflicts"))
+
+			countSecurityGroups := func(namespace string) (int, error) {
+				list := &osacv1alpha1.SecurityGroupList{}
+				listErr := tool.KubeClient().List(ctx, list, crclient.InNamespace(namespace), crclient.MatchingLabels{labels.SecurityGroupUuid: securityGroupID})
+				return len(list.Items), listErr
+			}
+			countA, listErr := countSecurityGroups(hubANamespace)
+			g.Expect(listErr).ToNot(HaveOccurred())
+			countB, listErr := countSecurityGroups(hubBNamespace)
+			g.Expect(listErr).ToNot(HaveOccurred())
+			g.Expect(countA).To(Equal(1))
+			g.Expect(countB).To(BeZero())
+		}, time.Minute, time.Second).Should(Succeed())
+		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, hubId)
 	})
 
 })
 
-func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient) string {
+func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient) (string, string) {
 	GinkgoHelper()
 	hubID := fmt.Sprintf("test-routing-hub-%s", uuid.New())
 	namespace := fmt.Sprintf("test-hub-%s", uuid.New()[24:])
-	err := tool.KubeClient().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		Expect(err).ToNot(HaveOccurred())
-	}
-	createdNamespace := err == nil
+	Expect(tool.KubeClient().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: namespace},
+	})).To(Succeed())
 	DeferCleanup(func(cleanupCtx context.Context) {
 		_, _ = hubsClient.Delete(cleanupCtx, privatev1.HubsDeleteRequest_builder{Id: hubID}.Build())
-		if !createdNamespace {
-			return
-		}
 		deleteErr := tool.KubeClient().Delete(cleanupCtx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
 		if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 			Expect(deleteErr).ToNot(HaveOccurred())
@@ -440,7 +465,7 @@ func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient)
 		}.Build(),
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
-	return namespace
+	return hubID, namespace
 }
 
 func expectNetworkingResourceHub(ctx context.Context, expectedHubID string, getHub func(context.Context) (string, error)) {
