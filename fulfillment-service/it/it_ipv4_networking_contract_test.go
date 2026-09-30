@@ -54,6 +54,68 @@ func newIPv4NetworkingContractFixture(ctx context.Context) *ipv4NetworkingContra
 		subnets:         privatev1.NewSubnetsClient(adminConn),
 		securityGroups:  privatev1.NewSecurityGroupsClient(adminConn),
 	}
+	DeferCleanup(func(cleanupCtx context.Context) {
+		if fixture.securityGroupID != "" {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, err := fixture.securityGroups.Delete(deleteCtx, privatev1.SecurityGroupsDeleteRequest_builder{
+						Id: fixture.securityGroupID,
+					}.Build())
+					return err
+				},
+				func(getCtx context.Context) error {
+					_, err := fixture.securityGroups.Get(getCtx, privatev1.SecurityGroupsGetRequest_builder{
+						Id: fixture.securityGroupID,
+					}.Build())
+					return err
+				})
+		}
+		if fixture.subnetID != "" {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, err := fixture.subnets.Delete(deleteCtx, privatev1.SubnetsDeleteRequest_builder{
+						Id: fixture.subnetID,
+					}.Build())
+					return err
+				},
+				func(getCtx context.Context) error {
+					_, err := fixture.subnets.Get(getCtx, privatev1.SubnetsGetRequest_builder{
+						Id: fixture.subnetID,
+					}.Build())
+					return err
+				})
+		}
+		if fixture.virtualNetworkID != "" {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, err := fixture.virtualNetworks.Delete(deleteCtx, privatev1.VirtualNetworksDeleteRequest_builder{
+						Id: fixture.virtualNetworkID,
+					}.Build())
+					return err
+				},
+				func(getCtx context.Context) error {
+					_, err := fixture.virtualNetworks.Get(getCtx, privatev1.VirtualNetworksGetRequest_builder{
+						Id: fixture.virtualNetworkID,
+					}.Build())
+					return err
+				})
+		}
+		if fixture.networkClassID != "" {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, err := fixture.networkClasses.Delete(deleteCtx, privatev1.NetworkClassesDeleteRequest_builder{
+						Id: fixture.networkClassID,
+					}.Build())
+					return err
+				},
+				func(getCtx context.Context) error {
+					_, err := fixture.networkClasses.Get(getCtx, privatev1.NetworkClassesGetRequest_builder{
+						Id: fixture.networkClassID,
+					}.Build())
+					return err
+				})
+		}
+	})
 
 	networkClassName := fmt.Sprintf("ipv4-contract-nc-%s", uuid.New()[24:])
 	networkClassResponse, err := fixture.networkClasses.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
@@ -68,6 +130,7 @@ func newIPv4NetworkingContractFixture(ctx context.Context) *ipv4NetworkingContra
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
 	fixture.networkClassID = networkClassResponse.GetObject().GetId()
+	waitForNetworkClassReady(ctx, fixture.networkClasses, fixture.networkClassID)
 
 	fixture.virtualNetworkID = fmt.Sprintf("ipv4-contract-vn-%s", uuid.New())
 	virtualNetworkName := fmt.Sprintf("ipv4-contract-vn-%s", uuid.New()[24:])
@@ -112,29 +175,6 @@ func newIPv4NetworkingContractFixture(ctx context.Context) *ipv4NetworkingContra
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
 	}.Build())
 	Expect(err).ToNot(HaveOccurred())
-
-	DeferCleanup(func() {
-		if fixture.securityGroupID != "" {
-			_, _ = fixture.securityGroups.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{
-				Id: fixture.securityGroupID,
-			}.Build())
-		}
-		if fixture.subnetID != "" {
-			_, _ = fixture.subnets.Delete(ctx, privatev1.SubnetsDeleteRequest_builder{
-				Id: fixture.subnetID,
-			}.Build())
-		}
-		if fixture.virtualNetworkID != "" {
-			_, _ = fixture.virtualNetworks.Delete(ctx, privatev1.VirtualNetworksDeleteRequest_builder{
-				Id: fixture.virtualNetworkID,
-			}.Build())
-		}
-		if fixture.networkClassID != "" {
-			_, _ = fixture.networkClasses.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{
-				Id: fixture.networkClassID,
-			}.Build())
-		}
-	})
 
 	return fixture
 }
