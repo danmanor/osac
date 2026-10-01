@@ -348,6 +348,7 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 		return
 	}
 	normalizeSoleBareMetalAttachmentPrimary(candidate.GetSpec().GetNetworkAttachments())
+	hubReferences := make([]networkingHubReference, 0, len(candidate.GetSpec().GetNetworkAttachments())*2)
 	for i, attachment := range candidate.GetSpec().GetNetworkAttachments() {
 		source := fmt.Sprintf(" in spec.network_attachments[%d]", i)
 		subnet, resolveErr := resolveAndCanonicalizeReference(ctx, s.subnetsDao, candidate.GetMetadata(), attachment.GetSubnet(), "subnet", grpccodes.InvalidArgument)
@@ -357,6 +358,11 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 		if err = validateResolvedSubnetReady(subnet, refKey(attachment.GetSubnet()), source); err != nil {
 			return
 		}
+		hubReferences = append(hubReferences, networkingHubReference{
+			resourceType: "Subnet",
+			id:           subnet.GetId(),
+			hubID:        subnet.GetStatus().GetHub(),
+		})
 		for _, ref := range attachment.GetSecurityGroups() {
 			group, resolveErr := resolveAndCanonicalizeReference(ctx, s.securityGroupsDao, candidate.GetMetadata(), ref, "security group", grpccodes.InvalidArgument)
 			if resolveErr != nil {
@@ -365,8 +371,22 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 			if err = validateResolvedSecurityGroup(group, refKey(ref), source, refKey(subnet.GetSpec().GetVirtualNetwork())); err != nil {
 				return
 			}
+			hubReferences = append(hubReferences, networkingHubReference{
+				resourceType: "SecurityGroup",
+				id:           group.GetId(),
+				hubID:        group.GetStatus().GetHub(),
+			})
 		}
 		if err = validateBareMetalSubnetFabricManager(ctx, subnet, fmt.Sprintf("network_attachments[%d]", i), s.virtualNetworksDao, s.networkClassesDao, s.logger); err != nil {
+			return
+		}
+	}
+	if len(hubReferences) > 0 {
+		canonicalHubID, resolveErr := canonicalNetworkingHubID(ctx, s.networkClassesDao)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if err = validateNetworkingHubReferences(canonicalHubID, hubReferences...); err != nil {
 			return
 		}
 	}
