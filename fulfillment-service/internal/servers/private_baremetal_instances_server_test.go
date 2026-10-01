@@ -2668,7 +2668,11 @@ var _ = Describe("Private bare metal instances server", func() {
 
 		// createSubnet creates a NetworkClass with the given managers, a VirtualNetwork referencing
 		// it, and a Subnet referencing that VirtualNetwork, via the DAOs directly.
-		createSubnet := func(fabricManager, k8sManager *string) string {
+		createSubnet := func(fabricManager, k8sManager *string, hubIDs ...string) string {
+			hubID := "network-hub-a"
+			if len(hubIDs) > 0 {
+				hubID = hubIDs[0]
+			}
 			ncResp, err := networkClassDao.Create().SetObject(
 				privatev1.NetworkClass_builder{
 					FabricManager: fabricManager,
@@ -2676,6 +2680,10 @@ var _ = Describe("Private bare metal instances server", func() {
 					Metadata: privatev1.Metadata_builder{
 						Tenant: testTenant,
 						Name:   uuid.NewString(),
+					}.Build(),
+					Status: privatev1.NetworkClassStatus_builder{
+						State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+						Hub:   "network-hub-a",
 					}.Build(),
 				}.Build(),
 			).Do(ctx)
@@ -2696,7 +2704,7 @@ var _ = Describe("Private bare metal instances server", func() {
 
 			subnetResp, err := subnetDao.Create().SetObject(
 				privatev1.Subnet_builder{
-					Status: privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build(),
+					Status: privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY, Hub: hubID}.Build(),
 					Metadata: privatev1.Metadata_builder{
 						Tenant: testTenant,
 						Name:   uuid.NewString(),
@@ -2752,6 +2760,49 @@ var _ = Describe("Private bare metal instances server", func() {
 				}.Build(),
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("rejects Create when a security group is assigned to a different Hub than its subnet", func() {
+			subnetID := createSubnet(new("netris"), nil, "network-hub-a")
+			subnet, err := subnetDao.Get().SetId(subnetID).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			groupsDao, err := dao.NewGenericDAO[*privatev1.SecurityGroup]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			group, err := groupsDao.Create().SetObject(privatev1.SecurityGroup_builder{
+				Metadata: privatev1.Metadata_builder{Tenant: testTenant, Name: "hub-compat-sg"}.Build(),
+				Spec: privatev1.SecurityGroupSpec_builder{
+					VirtualNetwork: subnet.GetObject().GetSpec().GetVirtualNetwork(),
+				}.Build(),
+				Status: privatev1.SecurityGroupStatus_builder{State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY, Hub: "network-hub-b"}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			name := fmt.Sprintf("hub-compat-%s", uuid.NewString()[:8])
+			response, err := server.Create(ctx, privatev1.BareMetalInstancesCreateRequest_builder{
+				Object: privatev1.BareMetalInstance_builder{
+					Metadata: privatev1.Metadata_builder{Name: name}.Build(),
+					Spec: privatev1.BareMetalInstanceSpec_builder{
+						CatalogItem:  privatev1.BareMetalInstanceCatalogItemReference_builder{Id: catID}.Build(),
+						SshPublicKey: new(testSSHPublicKey),
+						NetworkAttachments: []*privatev1.BareMetalNetworkAttachment{
+							privatev1.BareMetalNetworkAttachment_builder{
+								Subnet:         privatev1.SubnetLocalReference_builder{Id: subnetID}.Build(),
+								SecurityGroups: []*privatev1.SecurityGroupLocalReference{privatev1.SecurityGroupLocalReference_builder{Id: group.GetObject().GetId()}.Build()},
+							}.Build(),
+						},
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(response).To(BeNil())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("network-hub-a"))
+			Expect(err.Error()).To(ContainSubstring("network-hub-b"))
+
+			instancesDao, err := dao.NewGenericDAO[*privatev1.BareMetalInstance]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			stored, err := instancesDao.List().SetFilter(fmt.Sprintf("this.metadata.name == %q", name)).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(stored.GetItems()).To(BeEmpty())
 		})
 
 		It("preserves compatibility when fabric dependencies are missing", func() {
