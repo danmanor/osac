@@ -15,6 +15,8 @@ package project
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -24,10 +26,23 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers/defaultnetworking"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/finalizers"
 	"github.com/osac-project/osac/fulfillment-service/internal/idp"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
+
+type fakeDefaultNetworkingManager struct {
+	deleteError error
+}
+
+func (m *fakeDefaultNetworkingManager) Ensure(context.Context, string) (*privatev1.NetworkDefaults, error) {
+	return nil, nil
+}
+
+func (m *fakeDefaultNetworkingManager) Delete(context.Context, string) error {
+	return m.deleteError
+}
 
 var _ = Describe("Finalizer Management", func() {
 	It("should add finalizer on first call", func() {
@@ -1208,6 +1223,34 @@ var _ = Describe("Deletion Cleanup", func() {
 		err := task.delete(ctx)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(project.GetMetadata().GetFinalizers()).ToNot(ContainElement(finalizers.Controller))
+	})
+
+	It("should requeue root project deletion while default networking is still deleting", func() {
+		project := privatev1.Project_builder{
+			Id: "project-1",
+			Metadata: privatev1.Metadata_builder{
+				Tenant:     "acme",
+				Finalizers: []string{finalizers.Controller},
+			}.Build(),
+		}.Build()
+
+		mockClient.EXPECT().
+			List(gomock.Any(), gomock.Any()).
+			Return(privatev1.ProjectsListResponse_builder{Size: 0}.Build(), nil)
+		mockProjectMembershipsClient.EXPECT().
+			List(gomock.Any(), gomock.Any()).
+			Return(privatev1.ProjectMembershipsListResponse_builder{Size: 0}.Build(), nil)
+		functionObj.defaultNetwork = &fakeDefaultNetworkingManager{
+			deleteError: defaultnetworking.ErrResourcesDeleting,
+		}
+
+		task := &task{r: functionObj, project: project}
+		err := task.delete(ctx)
+
+		Expect(errors.Is(err, defaultnetworking.ErrResourcesDeleting)).To(BeTrue())
+		var retryable interface{ RequeueAfter() time.Duration }
+		Expect(errors.As(err, &retryable)).To(BeTrue())
+		Expect(retryable.RequeueAfter()).To(Equal(defaultNetworkingDeleteRetryDelay))
 	})
 
 	It("should return error if querying for children fails", func() {
