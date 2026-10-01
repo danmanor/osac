@@ -595,6 +595,76 @@ var _ = Describe("Private clusters server", func() {
 			Expect(err.Error()).To(ContainSubstring("IP_FAMILY_IPV4"))
 		})
 
+		It("rejects a cluster whose subnet and security group are assigned to different Hubs", func() {
+			networkClassesDao, err := dao.NewGenericDAO[*privatev1.NetworkClass]().
+				SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			_, err = networkClassesDao.Create().SetObject(privatev1.NetworkClass_builder{
+				Metadata: privatev1.Metadata_builder{Name: "hub-compat-network-class", Tenant: testTenant}.Build(),
+				Status:   privatev1.NetworkClassStatus_builder{State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY, Hub: "network-hub-a"}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			virtualNetworksDao, err := dao.NewGenericDAO[*privatev1.VirtualNetwork]().
+				SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			networkClasses, err := networkClassesDao.List().SetLimit(1).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			virtualNetwork, err := virtualNetworksDao.Create().SetObject(privatev1.VirtualNetwork_builder{
+				Metadata: privatev1.Metadata_builder{Name: "hub-compat-vn", Tenant: testTenant}.Build(),
+				Spec: privatev1.VirtualNetworkSpec_builder{
+					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClasses.GetItems()[0].GetId()}.Build(),
+				}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			subnetsDao, err := dao.NewGenericDAO[*privatev1.Subnet]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			subnet, err := subnetsDao.Create().SetObject(privatev1.Subnet_builder{
+				Metadata: privatev1.Metadata_builder{Name: "hub-compat-subnet", Tenant: testTenant}.Build(),
+				Spec: privatev1.SubnetSpec_builder{
+					VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: virtualNetwork.GetObject().GetId()}.Build(),
+				}.Build(),
+				Status: privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY, Hub: "network-hub-a"}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			securityGroupsDao, err := dao.NewGenericDAO[*privatev1.SecurityGroup]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			group, err := securityGroupsDao.Create().SetObject(privatev1.SecurityGroup_builder{
+				Metadata: privatev1.Metadata_builder{Name: "hub-compat-sg", Tenant: testTenant}.Build(),
+				Spec: privatev1.SecurityGroupSpec_builder{
+					VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: virtualNetwork.GetObject().GetId()}.Build(),
+				}.Build(),
+				Status: privatev1.SecurityGroupStatus_builder{State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY, Hub: "network-hub-b"}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			name := fmt.Sprintf("test-%s", uuid.New()[24:32])
+			response, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
+				Object: privatev1.Cluster_builder{
+					Metadata: privatev1.Metadata_builder{Name: name}.Build(),
+					Spec: privatev1.ClusterSpec_builder{
+						Template: privatev1.ClusterTemplateReference_builder{Id: "my-template-id"}.Build(),
+						NetworkAttachment: privatev1.ClusterNetworkAttachment_builder{
+							Subnet:         privatev1.SubnetLocalReference_builder{Id: subnet.GetObject().GetId()}.Build(),
+							SecurityGroups: []*privatev1.SecurityGroupLocalReference{privatev1.SecurityGroupLocalReference_builder{Id: group.GetObject().GetId()}.Build()},
+						}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(response).To(BeNil())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("network-hub-a"))
+			Expect(err.Error()).To(ContainSubstring("network-hub-b"))
+
+			clustersDao, err := dao.NewGenericDAO[*privatev1.Cluster]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			stored, err := clustersDao.List().SetFilter(fmt.Sprintf("this.metadata.name == %q", name)).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(stored.GetItems()).To(BeEmpty())
+		})
+
 		It("Preserves direct add-on operators through create and get", func() {
 			operators := []*privatev1.AddOnOperatorReference{
 				privatev1.AddOnOperatorReference_builder{Id: "operator-1", Name: "operator-one"}.Build(),
