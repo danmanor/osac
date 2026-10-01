@@ -85,14 +85,16 @@ type FunctionBuilder struct {
 }
 
 type function struct {
-	logger                       *slog.Logger
-	hubCache                     controllers.HubCache
-	bareMetalInstancesClient     privatev1.BareMetalInstancesClient
-	bareMetalInstanceTypesClient privatev1.BareMetalInstanceTypesClient
-	hubsClient                   privatev1.HubsClient
-	secretsClient                privatev1.SecretsClient
-	diskImagesClient             privatev1.DiskImagesClient
-	maskCalculator               *masks.Calculator
+	logger                           *slog.Logger
+	hubCache                         controllers.HubCache
+	networkingHubReader              controllers.NetworkingHubReader
+	bareMetalInstancesClient         privatev1.BareMetalInstancesClient
+	bareMetalInstanceTypesClient     privatev1.BareMetalInstanceTypesClient
+	bareMetalInstanceTemplatesClient privatev1.BareMetalInstanceTemplatesClient
+	hubsClient                       privatev1.HubsClient
+	secretsClient                    privatev1.SecretsClient
+	diskImagesClient                 privatev1.DiskImagesClient
+	maskCalculator                   *masks.Calculator
 }
 
 type task struct {
@@ -143,14 +145,22 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 	}
 
 	object := &function{
-		logger:                       b.logger,
-		bareMetalInstancesClient:     privatev1.NewBareMetalInstancesClient(b.connection),
-		bareMetalInstanceTypesClient: privatev1.NewBareMetalInstanceTypesClient(b.connection),
-		hubsClient:                   privatev1.NewHubsClient(b.connection),
-		secretsClient:                privatev1.NewSecretsClient(b.connection),
-		diskImagesClient:             privatev1.NewDiskImagesClient(b.connection),
-		hubCache:                     b.hubCache,
-		maskCalculator:               masks.NewCalculator().Build(),
+		logger:                           b.logger,
+		bareMetalInstancesClient:         privatev1.NewBareMetalInstancesClient(b.connection),
+		bareMetalInstanceTypesClient:     privatev1.NewBareMetalInstanceTypesClient(b.connection),
+		bareMetalInstanceTemplatesClient: privatev1.NewBareMetalInstanceTemplatesClient(b.connection),
+		hubsClient:                       privatev1.NewHubsClient(b.connection),
+		secretsClient:                    privatev1.NewSecretsClient(b.connection),
+		diskImagesClient:                 privatev1.NewDiskImagesClient(b.connection),
+		hubCache:                         b.hubCache,
+		maskCalculator:                   masks.NewCalculator().Build(),
+	}
+	object.networkingHubReader, err = controllers.NewNetworkingHubReader().
+		SetNetworkClassesClient(privatev1.NewNetworkClassesClient(b.connection)).
+		SetHubCache(b.hubCache).
+		Build()
+	if err != nil {
+		return nil, err
 	}
 	result = object.run
 	return
@@ -168,8 +178,15 @@ func (r *function) run(ctx context.Context, bareMetalInstance *privatev1.BareMet
 	} else {
 		err = t.update(ctx)
 	}
+	var hubResolutionRetryErr error
 	if err != nil {
-		return err
+		handled, retry := controllers.HandleResourceNetworkingHubResolutionError(err, t.setPending, t.setFailed)
+		if !handled {
+			return err
+		}
+		if retry {
+			hubResolutionRetryErr = err
+		}
 	}
 	updateMask := r.maskCalculator.Calculate(oldBareMetalInstance, bareMetalInstance)
 
@@ -177,8 +194,10 @@ func (r *function) run(ctx context.Context, bareMetalInstance *privatev1.BareMet
 		Object:     bareMetalInstance,
 		UpdateMask: updateMask,
 	}.Build())
-
-	return err
+	if err != nil {
+		return err
+	}
+	return hubResolutionRetryErr
 }
 
 func (t *task) update(ctx context.Context) error {
@@ -344,6 +363,20 @@ func (t *task) delete(ctx context.Context) (err error) {
 
 func (t *task) selectHub(ctx context.Context) error {
 	t.hubId = t.bareMetalInstance.GetStatus().GetHub()
+	if len(t.bareMetalInstance.GetSpec().GetNetworkAttachments()) > 0 {
+		if t.r.networkingHubReader == nil {
+			return controllers.ErrCanonicalHubUnavailable
+		}
+		resolution, err := controllers.ResolveResourceNetworkingHub(ctx, t.r.networkingHubReader, t.hubId)
+		if err != nil {
+			return err
+		}
+		t.hubId = resolution.HubID
+		t.hubNamespace = resolution.Namespace
+		t.hubClient = resolution.Client
+		t.r.logger.DebugContext(ctx, "Selected canonical networking hub", slog.String("id", t.hubId))
+		return nil
+	}
 	if t.hubId == "" {
 		response, err := t.r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{}.Build())
 		if err != nil {
@@ -441,6 +474,18 @@ func (t *task) setFailed(err error) {
 		privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_CONFIGURATION_APPLIED,
 		privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
 		"ValidationFailed",
+		err.Error(),
+	)
+}
+
+func (t *task) setPending(err error) {
+	if !t.bareMetalInstance.HasStatus() {
+		t.bareMetalInstance.SetStatus(&privatev1.BareMetalInstanceStatus{})
+	}
+	t.updateCondition(
+		privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_PROVISIONED,
+		privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
+		"ResourcesUnavailable",
 		err.Error(),
 	)
 }
