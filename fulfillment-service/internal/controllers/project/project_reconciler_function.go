@@ -25,18 +25,22 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/defaultnetworking"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/finalizers"
 	"github.com/osac-project/osac/fulfillment-service/internal/idp"
 	"github.com/osac-project/osac/fulfillment-service/internal/masks"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
+
+const defaultNetworkingDeleteRetryDelay = time.Second
 
 // FunctionBuilder contains the data needed to build instances of the reconciler function.
 type FunctionBuilder struct {
@@ -399,7 +403,11 @@ func (t *task) delete(ctx context.Context) error {
 	// ordinary API callers remain blocked by the system-managed protection.
 	if t.project.GetMetadata().GetName() == "" && t.r.defaultNetwork != nil {
 		if err := t.r.defaultNetwork.Delete(ctx, t.project.GetMetadata().GetTenant()); err != nil {
-			return fmt.Errorf("failed to delete default networking resources: %w", err)
+			wrapped := fmt.Errorf("failed to delete default networking resources: %w", err)
+			if errors.Is(err, defaultnetworking.ErrResourcesDeleting) {
+				return controllers.RequeueAfter(wrapped, defaultNetworkingDeleteRetryDelay)
+			}
+			return wrapped
 		}
 	}
 
