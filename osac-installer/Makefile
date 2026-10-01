@@ -455,11 +455,11 @@ csi-render-test: helm-deps ## Verify CSI and storage-provider chart rendering
 		helm template osac $(OSAC_CHART) \
 			--values $(OSAC_CHART)/ci/default-values.yaml > "$$default_operator_render"; \
 		! rg -q 'name: OSAC_VENDOR_CONTROLLERS' "$$default_operator_render"; \
-		assert_helm_failure "at '/operator/vendorControllers/lvms'" \
+		assert_helm_failure "operator.vendorControllers.lvms: String length must be greater than or equal to 1" \
 			helm template osac $(OSAC_CHART) \
 			--values $(OSAC_CHART)/ci/default-values.yaml \
 			--set-string operator.vendorControllers.lvms=; \
-		assert_helm_failure "at '/operator/vendorControllers/lvms'" \
+		assert_helm_failure "operator.vendorControllers.lvms: Invalid type. Expected: string, given: integer" \
 			helm template osac $(OSAC_CHART) \
 			--values $(OSAC_CHART)/ci/default-values.yaml \
 			--set operator.vendorControllers.lvms=42; \
