@@ -188,39 +188,6 @@ func (l *externalIPLifecycle) lockAttachmentTarget(ctx context.Context, attachme
 	}
 }
 
-func (l *externalIPLifecycle) lockNewAttachmentReferences(ctx context.Context, externalIPID string, targetID string, targetDAO *dao.GenericDAO[*privatev1.ComputeInstance]) error {
-	if _, err := l.externalIPDao.Get().SetId(externalIPID).SetLock(true).Do(ctx); err != nil {
-		return err
-	}
-	if targetDAO == nil {
-		return errors.New("attachment target DAO is not configured")
-	}
-	_, err := targetDAO.Get().SetId(targetID).SetLock(true).Do(ctx)
-	return err
-}
-
-func (l *externalIPLifecycle) lockNewClusterAttachmentReferences(ctx context.Context, externalIPID, targetID string) error {
-	if _, err := l.externalIPDao.Get().SetId(externalIPID).SetLock(true).Do(ctx); err != nil {
-		return err
-	}
-	if l.clusterDao == nil {
-		return errors.New("cluster DAO is not configured")
-	}
-	_, err := l.clusterDao.Get().SetId(targetID).SetLock(true).Do(ctx)
-	return err
-}
-
-func (l *externalIPLifecycle) lockNewBareMetalAttachmentReferences(ctx context.Context, externalIPID, targetID string) error {
-	if _, err := l.externalIPDao.Get().SetId(externalIPID).SetLock(true).Do(ctx); err != nil {
-		return err
-	}
-	if l.bareMetalInstanceDao == nil {
-		return errors.New("bare metal instance DAO is not configured")
-	}
-	_, err := l.bareMetalInstanceDao.Get().SetId(targetID).SetLock(true).Do(ctx)
-	return err
-}
-
 func (l *externalIPLifecycle) lockNATGateway(ctx context.Context, id string) (*privatev1.ExternalIP, *privatev1.NATGateway, error) {
 	initialResponse, err := l.natGatewayDao.Get().SetId(id).Do(ctx)
 	if err != nil {

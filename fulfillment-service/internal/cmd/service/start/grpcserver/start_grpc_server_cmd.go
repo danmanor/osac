@@ -197,8 +197,6 @@ func Cmd() *cobra.Command {
 		emergencyServiceAccountsFlagHelp,
 	)
 	vault.AddBaseFlags(flags)
-	flags.BoolVar(&runner.args.deferredAutoExternalIPAttachments, "deferred-auto-external-ip-attachments", false,
-		"defer auto-created ExternalIPAttachments until the ExternalIP and target are ready")
 	network.AddGrpcKeepaliveFlags(flags)
 	runner.args.services = services.RegisterFlags(flags)
 	return command
@@ -209,20 +207,19 @@ type runnerContext struct {
 	logger *slog.Logger
 	flags  *pflag.FlagSet
 	args   struct {
-		caFiles                           []string
-		kafkaTopicPrefix                  string
-		authType                          string
-		externalAuthAddress               string
-		trustedTokenIssuers               []string
-		tenancyLogic                      string
-		tokenSignerCrt                    string
-		tokenSignerKey                    string
-		tokenEncryptionCrt                string
-		tokenIssuer                       string
-		emergencyServiceAccounts          []string
-		vaultBase                         vault.BaseConfig
-		services                          *services.Flags
-		deferredAutoExternalIPAttachments bool
+		caFiles                  []string
+		kafkaTopicPrefix         string
+		authType                 string
+		externalAuthAddress      string
+		trustedTokenIssuers      []string
+		tenancyLogic             string
+		tokenSignerCrt           string
+		tokenSignerKey           string
+		tokenEncryptionCrt       string
+		tokenIssuer              string
+		emergencyServiceAccounts []string
+		vaultBase                vault.BaseConfig
+		services                 *services.Flags
 	}
 }
 
@@ -711,17 +708,16 @@ func (c *runnerContext) run(cmd *cobra.Command, argv []string) error { //nolint:
 
 	// Register all filterable resources' public and private servers:
 	resourceServers, err := RegisterResourceServers(ctx, grpcServer, ResourceServerDeps{
-		Logger:                            c.logger,
-		PrivateAttributionLogic:           privateAttributionLogic,
-		PublicAttributionLogic:            publicAttributionLogic,
-		TenancyLogic:                      tenancyLogic,
-		MetricsRegisterer:                 metricsRegisterer,
-		HubScheme:                         hubScheme,
-		SecretStore:                       secretStore,
-		TierResolver:                      tierResolver,
-		PrivateUsersServer:                privateUsersServer,
-		Services:                          c.args.services,
-		DeferredAutoExternalIPAttachments: c.args.deferredAutoExternalIPAttachments,
+		Logger:                  c.logger,
+		PrivateAttributionLogic: privateAttributionLogic,
+		PublicAttributionLogic:  publicAttributionLogic,
+		TenancyLogic:            tenancyLogic,
+		MetricsRegisterer:       metricsRegisterer,
+		HubScheme:               hubScheme,
+		SecretStore:             secretStore,
+		TierResolver:            tierResolver,
+		PrivateUsersServer:      privateUsersServer,
+		Services:                c.args.services,
 	})
 	if err != nil {
 		return err

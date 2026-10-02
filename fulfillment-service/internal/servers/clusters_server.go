@@ -29,11 +29,10 @@ import (
 )
 
 type ClustersServerBuilder struct {
-	logger                            *slog.Logger
-	attributionLogic                  auth.AttributionLogic
-	tenancyLogic                      auth.TenancyLogic
-	metricsRegisterer                 prometheus.Registerer
-	deferredAutoExternalIPAttachments bool
+	logger            *slog.Logger
+	attributionLogic  auth.AttributionLogic
+	tenancyLogic      auth.TenancyLogic
+	metricsRegisterer prometheus.Registerer
 }
 
 var _ publicv1.ClustersServer = (*ClustersServer)(nil)
@@ -73,12 +72,6 @@ func (b *ClustersServerBuilder) SetTenancyLogic(value auth.TenancyLogic) *Cluste
 // access objects. This is optional. If not set, no metrics will be recorded.
 func (b *ClustersServerBuilder) SetMetricsRegisterer(value prometheus.Registerer) *ClustersServerBuilder {
 	b.metricsRegisterer = value
-	return b
-}
-
-// SetDeferredAutoExternalIPAttachments defers auto-created ExternalIPAttachments until both resources are ready.
-func (b *ClustersServerBuilder) SetDeferredAutoExternalIPAttachments(value bool) *ClustersServerBuilder {
-	b.deferredAutoExternalIPAttachments = value
 	return b
 }
 
@@ -127,7 +120,6 @@ func (b *ClustersServerBuilder) Build() (result *ClustersServer, err error) {
 		SetAttributionLogic(b.attributionLogic).
 		SetTenancyLogic(b.tenancyLogic).
 		SetMetricsRegisterer(b.metricsRegisterer).
-		SetDeferredAutoExternalIPAttachments(b.deferredAutoExternalIPAttachments).
 		SetAddOnOperatorResolverFactory(newPublishedScopedAddOnOperatorResourceResolver).
 		SetFilterDesc(objectDesc).
 		Build()
