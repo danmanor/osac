@@ -125,11 +125,7 @@ var _ = Describe("Private NAT gateways server", func() {
 		return nc
 	}
 
-	createVirtualNetwork := func(hubIDs ...string) string {
-		hubID := "network-hub-a"
-		if len(hubIDs) > 0 {
-			hubID = hubIDs[0]
-		}
+	createVirtualNetwork := func() string {
 		nc := createNetworkClass(new("netris"), nil)
 		resp, err := vnDao.Create().SetObject(
 			privatev1.VirtualNetwork_builder{
@@ -140,7 +136,7 @@ var _ = Describe("Private NAT gateways server", func() {
 				Spec: privatev1.VirtualNetworkSpec_builder{
 					NetworkClass: privatev1.NetworkClassReference_builder{Id: nc.GetId()}.Build(),
 				}.Build(),
-				Status: privatev1.VirtualNetworkStatus_builder{Hub: hubID}.Build(),
+				Status: privatev1.VirtualNetworkStatus_builder{Hub: "network-hub-a"}.Build(),
 			}.Build(),
 		).Do(ctx)
 		Expect(err).ToNot(HaveOccurred())
@@ -660,7 +656,7 @@ var _ = Describe("Private NAT gateways server", func() {
 		})
 
 		It("rejects Create when VirtualNetwork and ExternalIP belong to different Hubs", func() {
-			vnID := createVirtualNetwork("network-hub-a")
+			vnID := createVirtualNetwork()
 			eip := createExternalIPInState(ctx, externalIPDao, sharedPool.GetId(),
 				privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED, false, "network-hub-b")
 			name := fmt.Sprintf("test-%s", uuid.NewString()[:8])
@@ -676,8 +672,9 @@ var _ = Describe("Private NAT gateways server", func() {
 			}.Build())
 			Expect(response).To(BeNil())
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-			Expect(err.Error()).To(ContainSubstring("network-hub-a"))
-			Expect(err.Error()).To(ContainSubstring("network-hub-b"))
+			Expect(err.Error()).To(ContainSubstring("different Hub than the canonical networking Hub"))
+			Expect(err.Error()).ToNot(ContainSubstring("network-hub-a"))
+			Expect(err.Error()).ToNot(ContainSubstring("network-hub-b"))
 
 			natGatewaysDao, err := dao.NewGenericDAO[*privatev1.NATGateway]().
 				SetLogger(logger).SetTenancyLogic(tenancy).Build()
