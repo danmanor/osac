@@ -174,6 +174,10 @@ func seedTenantDefaultNetworking(tenant, project string, fabricManager *string) 
 				Name:   fmt.Sprintf("default-nc-%s", uuid.NewString()[:8]),
 				Tenant: tenant,
 			}.Build(),
+			Status: privatev1.NetworkClassStatus_builder{
+				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+				Hub:   "network-hub-a",
+			}.Build(),
 		}.Build()).Do(ctx)
 		ExpectWithOffset(1, createErr).ToNot(HaveOccurred())
 		ncID = ncResp.GetObject().GetId()
@@ -195,6 +199,10 @@ func seedTenantDefaultNetworking(tenant, project string, fabricManager *string) 
 		}.Build(),
 		Spec: privatev1.VirtualNetworkSpec_builder{
 			NetworkClass: privatev1.NetworkClassReference_builder{Id: ncID}.Build(),
+		}.Build(),
+		Status: privatev1.VirtualNetworkStatus_builder{
+			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
+			Hub:   "network-hub-a",
 		}.Build(),
 	}.Build()).Do(ctx)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -221,6 +229,7 @@ func seedTenantDefaultNetworking(tenant, project string, fabricManager *string) 
 		}.Build(),
 		Status: privatev1.SubnetStatus_builder{
 			State: privatev1.SubnetState_SUBNET_STATE_READY,
+			Hub:   "network-hub-a",
 		}.Build(),
 	}.Build()).Do(ctx)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -245,6 +254,7 @@ func seedTenantDefaultNetworking(tenant, project string, fabricManager *string) 
 		}.Build(),
 		Status: privatev1.SecurityGroupStatus_builder{
 			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+			Hub:   "network-hub-a",
 		}.Build(),
 	}.Build()).Do(ctx)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
