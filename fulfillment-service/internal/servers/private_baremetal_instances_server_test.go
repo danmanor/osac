@@ -1874,6 +1874,10 @@ var _ = Describe("Private bare metal instances server", func() {
 				Metadata: privatev1.Metadata_builder{
 					Tenant: testTenant,
 				}.Build(),
+				Status: privatev1.NetworkClassStatus_builder{
+					State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+					Hub:   "network-hub-a",
+				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -1889,6 +1893,10 @@ var _ = Describe("Private bare metal instances server", func() {
 				Spec: privatev1.VirtualNetworkSpec_builder{
 					NetworkClass: privatev1.NetworkClassReference_builder{Id: ncResp.GetObject().GetId()}.Build(),
 				}.Build(),
+				Status: privatev1.VirtualNetworkStatus_builder{
+					State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
+					Hub:   "network-hub-a",
+				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -1897,8 +1905,11 @@ var _ = Describe("Private bare metal instances server", func() {
 			for _, id := range []string{"sg-1", "sg-2"} {
 				_, err = groups.Create().SetObject(privatev1.SecurityGroup_builder{
 					Id: id, Metadata: privatev1.Metadata_builder{Name: id, Tenant: testTenant}.Build(),
-					Spec:   privatev1.SecurityGroupSpec_builder{VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: vnResp.GetObject().GetId()}.Build()}.Build(),
-					Status: privatev1.SecurityGroupStatus_builder{State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY}.Build(),
+					Spec: privatev1.SecurityGroupSpec_builder{VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: vnResp.GetObject().GetId()}.Build()}.Build(),
+					Status: privatev1.SecurityGroupStatus_builder{
+						State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+						Hub:   "network-hub-a",
+					}.Build(),
 				}.Build()).Do(ctx)
 				Expect(err).ToNot(HaveOccurred())
 			}
@@ -1920,6 +1931,7 @@ var _ = Describe("Private bare metal instances server", func() {
 					}.Build(),
 					Status: privatev1.SubnetStatus_builder{
 						State: privatev1.SubnetState_SUBNET_STATE_READY,
+						Hub:   "network-hub-a",
 					}.Build(),
 				}.Build()).Do(ctx)
 				Expect(createErr).ToNot(HaveOccurred())
@@ -3043,6 +3055,10 @@ var _ = Describe("Private bare metal instances server", func() {
 					Tenant: "system",
 				}.Build(),
 				FabricManager: &fabricMgr,
+				Status: privatev1.NetworkClassStatus_builder{
+					State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+					Hub:   "network-hub-a",
+				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			ncID := ncResp.GetObject().GetId()
@@ -3063,6 +3079,10 @@ var _ = Describe("Private bare metal instances server", func() {
 				}.Build(),
 				Spec: privatev1.VirtualNetworkSpec_builder{
 					NetworkClass: privatev1.NetworkClassReference_builder{Id: ncID}.Build(),
+				}.Build(),
+				Status: privatev1.VirtualNetworkStatus_builder{
+					State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -3090,6 +3110,7 @@ var _ = Describe("Private bare metal instances server", func() {
 				}.Build(),
 				Status: privatev1.SubnetStatus_builder{
 					State: privatev1.SubnetState_SUBNET_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -3114,6 +3135,7 @@ var _ = Describe("Private bare metal instances server", func() {
 				}.Build(),
 				Status: privatev1.SecurityGroupStatus_builder{
 					State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -3129,6 +3151,7 @@ var _ = Describe("Private bare metal instances server", func() {
 				}.Build(),
 				Status: privatev1.SubnetStatus_builder{
 					State: privatev1.SubnetState_SUBNET_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
