@@ -314,6 +314,34 @@ func (l *externalIPLifecycle) lockExternalIPConsumers(ctx context.Context, exter
 	return nil
 }
 
+func (l *externalIPLifecycle) ensureExternalIPChildrenFinalized(ctx context.Context, externalIPID string) error {
+	filter := fmt.Sprintf(
+		"this.spec.external_ip.id == %s || this.spec.external_ip.name == %s",
+		strconv.Quote(externalIPID), strconv.Quote(externalIPID),
+	)
+	if l.externalIPAttachmentDao != nil {
+		response, err := l.externalIPAttachmentDao.List().SetFilter(filter).SetLimit(1).Do(ctx)
+		if err != nil {
+			return err
+		}
+		if response.GetTotal() > 0 {
+			return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+				"ExternalIP '%s' still has an ExternalIPAttachment", externalIPID)
+		}
+	}
+	if l.natGatewayDao != nil {
+		response, err := l.natGatewayDao.List().SetFilter(filter).SetLimit(1).Do(ctx)
+		if err != nil {
+			return err
+		}
+		if response.GetTotal() > 0 {
+			return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+				"ExternalIP '%s' still has a NATGateway", externalIPID)
+		}
+	}
+	return nil
+}
+
 func (l *externalIPLifecycle) ensureExternalIPAvailable(ctx context.Context, externalIPID string) error {
 	filter := fmt.Sprintf(
 		"(this.spec.external_ip.id == %s || this.spec.external_ip.name == %s) && !has(this.metadata.deletion_timestamp)",
