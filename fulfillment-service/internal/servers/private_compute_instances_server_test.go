@@ -3788,7 +3788,7 @@ var _ = Describe("Private compute instances server", func() {
 			}.Build()
 		}
 
-		It("Auto-provisions ExternalIP and ExternalIPAttachment on create", func() {
+		It("Auto-provisions an ExternalIP and defers its attachment until ready", func() {
 			createPool("pool-1", 5)
 
 			response, err := server.Create(ctx, createRequest(true))
@@ -3806,20 +3806,17 @@ var _ = Describe("Private compute instances server", func() {
 
 			eip := eipList.GetItems()[0]
 			Expect(eip.GetMetadata().GetLabels()[autoCreatedLabel]).To(Equal("true"))
+			Expect(eip.GetMetadata().GetLabels()[autoAttachmentDeferredLabel]).To(Equal("true"))
+			Expect(eip.GetMetadata().GetLabels()[autoCreatedKindLabel]).To(Equal("compute_instance"))
 			Expect(eip.GetSpec().GetPool().GetId()).To(Equal("pool-1"))
 			Expect(eip.GetStatus().GetAttached()).To(BeFalse())
 
-			// Verify ExternalIPAttachment was created
+			// The workload is still provisioning, so the attachment must be deferred.
 			eiaList, err := externalIPAttachmentDao.List().
 				SetFilter(fmt.Sprintf("this.metadata.labels['%s'] == '%s'", autoCreatedForLabel, ciID)).
 				Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(eiaList.GetItems()).To(HaveLen(1))
-
-			eia := eiaList.GetItems()[0]
-			Expect(eia.GetMetadata().GetLabels()[autoCreatedLabel]).To(Equal("true"))
-			Expect(eia.GetSpec().GetExternalIp().GetId()).To(Equal(eip.GetId()))
-			Expect(eia.GetSpec().GetComputeInstance().GetId()).To(Equal(ciID))
+			Expect(eiaList.GetItems()).To(BeEmpty())
 
 			// Verify pool capacity was updated
 			poolResp, err := externalIPPoolDao.Get().SetId("pool-1").Do(ctx)
@@ -3832,15 +3829,7 @@ var _ = Describe("Private compute instances server", func() {
 		It("Defers the automatic attachment and cleans up an unattached ExternalIP", func() {
 			createPool("pool-1", 5)
 
-			deferredServer, err := NewPrivateComputeInstancesServer().
-				SetLogger(logger).
-				SetAttributionLogic(attribution).
-				SetTenancyLogic(tenancy).
-				SetDeferredAutoExternalIPAttachments(true).
-				Build()
-			Expect(err).ToNot(HaveOccurred())
-
-			response, err := deferredServer.Create(ctx, createRequest(true))
+			response, err := server.Create(ctx, createRequest(true))
 			Expect(err).ToNot(HaveOccurred())
 			ciID := response.GetObject().GetId()
 
@@ -3863,7 +3852,7 @@ var _ = Describe("Private compute instances server", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(eiaList.GetItems()).To(BeEmpty())
 
-			_, err = deferredServer.Delete(ctx, privatev1.ComputeInstancesDeleteRequest_builder{Id: ciID}.Build())
+			_, err = server.Delete(ctx, privatev1.ComputeInstancesDeleteRequest_builder{Id: ciID}.Build())
 			Expect(err).ToNot(HaveOccurred())
 			eipList, err = externalIPDao.List().
 				SetFilter(fmt.Sprintf("this.metadata.labels['%s'] == '%s'", autoCreatedForLabel, ciID)).

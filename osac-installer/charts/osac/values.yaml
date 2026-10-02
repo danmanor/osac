@@ -43,8 +43,6 @@ global:
     # Reserved fabric managers (cudn_net, vlan) fail during render.
     fabricManager: ""
     k8sManager: k8s_only
-    # Keep synchronous auto ExternalIPAttachment creation until OSAC-5749 operator cleanup ships.
-    deferredAutoExternalIPAttachments: false
     netris:
       controllerUrl: ""
       credentials:

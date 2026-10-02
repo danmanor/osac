@@ -497,15 +497,7 @@ var _ = Describe("Private clusters server", func() {
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 
-			deferredServer, err := NewPrivateClustersServer().
-				SetLogger(logger).
-				SetAttributionLogic(attribution).
-				SetTenancyLogic(tenancy).
-				SetDeferredAutoExternalIPAttachments(true).
-				Build()
-			Expect(err).ToNot(HaveOccurred())
-
-			response, err := deferredServer.Create(ctx, privatev1.ClustersCreateRequest_builder{
+			response, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
 				Object: privatev1.Cluster_builder{
 					Metadata: privatev1.Metadata_builder{Name: fmt.Sprintf("deferred-%s", uuid.New()[24:32])}.Build(),
 					Spec: privatev1.ClusterSpec_builder{
@@ -540,7 +532,7 @@ var _ = Describe("Private clusters server", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(eiaList.GetItems()).To(BeEmpty())
 
-			_, err = deferredServer.Delete(ctx, privatev1.ClustersDeleteRequest_builder{Id: clusterID}.Build())
+			_, err = server.Delete(ctx, privatev1.ClustersDeleteRequest_builder{Id: clusterID}.Build())
 			Expect(err).ToNot(HaveOccurred())
 			eipList, err = eipDao.List().SetFilter(filter).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())

@@ -20,7 +20,6 @@ specific language governing permissions and limitations under the License.
 {{- $vaultClientID := required "vault.keycloakClientId is required" .Values.vault.keycloakClientId }}
 {{- $globalValues := index .Values "global" | default dict }}
 {{- $networkingValues := index $globalValues "networking" | default dict }}
-{{- $deferredAutoExternalIPAttachments := index $networkingValues "deferredAutoExternalIPAttachments" | default false }}
 
 apiVersion: apps/v1
 kind: Deployment
@@ -206,9 +205,6 @@ spec:
         - --token-encryption-crt=/etc/fulfillment-token-encryption/tls.crt
         - --token-issuer={{ include "fulfillment-api.tokenIssuerUrl" . }}
         - --metrics-listener-address=0.0.0.0:8002
-        {{- if $deferredAutoExternalIPAttachments }}
-        - --deferred-auto-external-ip-attachments=true
-        {{- end }}
         {{- if include "fulfillment-service.serviceEnabled" (list . "caas") }}
         - --enable-caas
         {{- end }}

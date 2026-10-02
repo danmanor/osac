@@ -48,8 +48,7 @@ type ResourceServerDeps struct {
 	// called. It's threaded through here so registration still happens in one place.
 	PrivateUsersServer privatev1.UsersServer
 
-	Services                          *services.Flags
-	DeferredAutoExternalIPAttachments bool
+	Services *services.Flags
 }
 
 // ResourceServers exposes the constructed servers and shared infrastructure that code outside the
@@ -178,7 +177,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetAttributionLogic(deps.PublicAttributionLogic).
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create clusters server: %w", err)
@@ -191,7 +189,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetAttributionLogic(deps.PrivateAttributionLogic).
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create private clusters server: %w", err)
@@ -261,7 +258,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
 			SetSecretStore(deps.SecretStore).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create compute instances server: %w", err)
@@ -275,7 +271,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
 			SetSecretStore(deps.SecretStore).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create private compute instances server: %w", err)
@@ -342,7 +337,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
 			SetSecretStore(deps.SecretStore).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create bare metal instances server: %w", err)
@@ -380,7 +374,6 @@ func RegisterResourceServers(ctx context.Context, registrar grpc.ServiceRegistra
 			SetTenancyLogic(deps.TenancyLogic).
 			SetMetricsRegisterer(deps.MetricsRegisterer).
 			SetSecretStore(deps.SecretStore).
-			SetDeferredAutoExternalIPAttachments(deps.DeferredAutoExternalIPAttachments).
 			Build()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create private bare metal instances server: %w", err)
