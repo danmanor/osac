@@ -68,12 +68,7 @@ func createExternalIPInState(
 func createClusterInState(
 	ctx context.Context,
 	clusterDao *dao.GenericDAO[*privatev1.Cluster],
-	hubIDs ...string,
 ) *privatev1.Cluster {
-	hubID := "network-hub-a"
-	if len(hubIDs) > 0 {
-		hubID = hubIDs[0]
-	}
 	resp, err := clusterDao.Create().SetObject(
 		privatev1.Cluster_builder{
 			Metadata: privatev1.Metadata_builder{
@@ -83,7 +78,7 @@ func createClusterInState(
 			Spec: privatev1.ClusterSpec_builder{
 				Template: privatev1.ClusterTemplateReference_builder{Id: "ocp_small"}.Build(),
 			}.Build(),
-			Status: privatev1.ClusterStatus_builder{Hub: hubID}.Build(),
+			Status: privatev1.ClusterStatus_builder{Hub: "network-hub-a"}.Build(),
 		}.Build(),
 	).Do(ctx)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -93,12 +88,7 @@ func createClusterInState(
 func createBareMetalInstanceInState(
 	ctx context.Context,
 	bareMetalInstanceDao *dao.GenericDAO[*privatev1.BareMetalInstance],
-	hubIDs ...string,
 ) *privatev1.BareMetalInstance {
-	hubID := "network-hub-a"
-	if len(hubIDs) > 0 {
-		hubID = hubIDs[0]
-	}
 	resp, err := bareMetalInstanceDao.Create().SetObject(
 		privatev1.BareMetalInstance_builder{
 			Metadata: privatev1.Metadata_builder{
@@ -108,7 +98,7 @@ func createBareMetalInstanceInState(
 			Spec: privatev1.BareMetalInstanceSpec_builder{
 				CatalogItem: privatev1.BareMetalInstanceCatalogItemReference_builder{Id: "bcm_h100"}.Build(),
 			}.Build(),
-			Status: privatev1.BareMetalInstanceStatus_builder{Hub: hubID}.Build(),
+			Status: privatev1.BareMetalInstanceStatus_builder{Hub: "network-hub-a"}.Build(),
 		}.Build(),
 	).Do(ctx)
 	ExpectWithOffset(1, err).ToNot(HaveOccurred())
@@ -504,8 +494,9 @@ var _ = Describe("Private external IP attachments server", func() {
 			}.Build())
 			Expect(response).To(BeNil())
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-			Expect(err.Error()).To(ContainSubstring("network-hub-a"))
-			Expect(err.Error()).To(ContainSubstring("workload-hub-b"))
+			Expect(err.Error()).To(ContainSubstring("different Hub than the canonical networking Hub"))
+			Expect(err.Error()).ToNot(ContainSubstring("network-hub-a"))
+			Expect(err.Error()).ToNot(ContainSubstring("workload-hub-b"))
 
 			stored, err := server.externalIPAttachmentDao.List().
 				SetFilter(fmt.Sprintf("this.metadata.name == %q", name)).Do(ctx)

@@ -18,6 +18,7 @@ package servers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -51,25 +52,20 @@ func canonicalNetworkingHubID(
 	ctx context.Context,
 	networkClassesDao *dao.GenericDAO[*privatev1.NetworkClass],
 ) (string, error) {
-	response, err := networkClassesDao.List().
-		SetFilter("!has(this.metadata.deletion_timestamp)").
-		SetLimit(2).
-		Do(ctx)
+	networkClass, err := findSingletonNetworkClass(ctx, networkClassesDao)
 	if err != nil {
+		if errors.Is(err, errMultipleActiveNetworkClasses) {
+			return "", status.Error(codes.FailedPrecondition, err.Error())
+		}
 		return "", status.Error(codes.Internal, "failed to resolve the canonical networking Hub")
 	}
-	items := response.GetItems()
-	if len(items) == 0 {
+	if networkClass == nil {
 		return "", status.Error(codes.FailedPrecondition, "no active NetworkClass is available to resolve the canonical networking Hub")
 	}
-	if len(items) != 1 {
-		return "", status.Errorf(codes.FailedPrecondition,
-			"expected one active NetworkClass to resolve the canonical networking Hub, found %d", len(items))
-	}
-	hubID := items[0].GetStatus().GetHub()
+	hubID := networkClass.GetStatus().GetHub()
 	if hubID == "" {
-		return "", status.Errorf(codes.FailedPrecondition,
-			"NetworkClass %q has no canonical Hub assignment yet; retry after Hub assignment completes", items[0].GetId())
+		return "", status.Error(codes.FailedPrecondition,
+			"canonical networking Hub assignment is pending; retry after Hub assignment completes")
 	}
 	return hubID, nil
 }
@@ -81,13 +77,13 @@ func validateNetworkingHubReferences(canonicalHubID string, references ...networ
 	for _, reference := range references {
 		if reference.hubID == "" {
 			return status.Errorf(codes.FailedPrecondition,
-				"networking reference %s %q has no Hub assignment; retry after it is assigned to canonical Hub %q",
-				reference.resourceType, reference.id, canonicalHubID)
+				"networking reference %s %q has no Hub assignment; retry after it is assigned to the canonical networking Hub",
+				reference.resourceType, reference.id)
 		}
 		if reference.hubID != canonicalHubID {
 			return status.Errorf(codes.FailedPrecondition,
-				"networking reference %s %q uses Hub %q, but canonical networking Hub is %q",
-				reference.resourceType, reference.id, reference.hubID, canonicalHubID)
+				"networking reference %s %q is assigned to a different Hub than the canonical networking Hub",
+				reference.resourceType, reference.id)
 		}
 	}
 	return nil
