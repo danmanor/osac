@@ -1519,7 +1519,10 @@ var _ = Describe("Root project deletion during tenant deletion", func() {
 				}.Build(), nil),
 			mockProjectsClient.EXPECT().
 				List(gomock.Any(), gomock.Any()).
-				Return(privatev1.ProjectsListResponse_builder{Total: 1}.Build(), nil),
+				DoAndReturn(func(_ context.Context, request *privatev1.ProjectsListRequest, _ ...grpc.CallOption) (*privatev1.ProjectsListResponse, error) {
+					Expect(request.GetFilter()).To(Equal(`this.metadata.tenant == "test-org"`))
+					return privatev1.ProjectsListResponse_builder{Total: 1}.Build(), nil
+				}),
 		)
 
 		t := &task{r: reconciler, tenant: tenant}

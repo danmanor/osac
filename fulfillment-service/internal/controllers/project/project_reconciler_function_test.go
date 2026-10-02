@@ -1179,7 +1179,7 @@ var _ = Describe("Deletion Cleanup", func() {
 				Tenant:            "acme",
 				Finalizers:        []string{finalizers.Controller},
 				DeletionTimestamp: timestamppb.Now(),
-				// Empty name = root project
+				// Empty name = root project.
 			}.Build(),
 		}.Build()
 
@@ -1195,7 +1195,7 @@ var _ = Describe("Deletion Cleanup", func() {
 			List(gomock.Any(), gomock.Any()).
 			Return(&privatev1.ProjectMembershipsListResponse{}, nil)
 
-		// Default project groups live at /system:viewers and /system:managers
+		// Default project groups live at /system:viewers and /system:managers.
 		mockIdpClient.EXPECT().
 			GetGroupIDByPath(gomock.Any(), "acme", "/system:viewers").
 			Return("", &idp.ErrNotFound{Kind: "group", Name: "system:viewers"})
@@ -1224,6 +1224,51 @@ var _ = Describe("Deletion Cleanup", func() {
 
 		functionObj.maskCalculator = masks.NewCalculator().Build()
 
+		err := functionObj.Run(ctx, project)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(project.GetMetadata().GetFinalizers()).ToNot(ContainElement(finalizers.Controller))
+	})
+
+	It("should signal the tenant after a child project has been archived", func() {
+		project := privatev1.Project_builder{
+			Id: "project-1",
+			Metadata: privatev1.Metadata_builder{
+				Name:              "test-project",
+				Tenant:            "acme",
+				Finalizers:        []string{finalizers.Controller},
+				DeletionTimestamp: timestamppb.Now(),
+			}.Build(),
+		}.Build()
+
+		mockClient.EXPECT().
+			List(gomock.Any(), gomock.Any()).
+			Return(&privatev1.ProjectsListResponse{Size: 0}, nil)
+		mockProjectMembershipsClient.EXPECT().
+			List(gomock.Any(), gomock.Any()).
+			Return(&privatev1.ProjectMembershipsListResponse{}, nil)
+		mockIdpClient.EXPECT().
+			GetGroupIDByPath(gomock.Any(), "acme", "/test-project").
+			Return("project-group-id", nil)
+		mockIdpClient.EXPECT().
+			DeleteGroup(gomock.Any(), "acme", "project-group-id").
+			Return(nil)
+
+		gomock.InOrder(
+			mockClient.EXPECT().
+				Update(gomock.Any(), gomock.Any()).
+				Return(privatev1.ProjectsUpdateResponse_builder{}.Build(), nil),
+			mockTenantsClient.EXPECT().
+				List(gomock.Any(), gomock.Any()).
+				Return(privatev1.TenantsListResponse_builder{
+					Items: []*privatev1.Tenant{privatev1.Tenant_builder{Id: "tenant-id-1"}.Build()},
+					Size:  1,
+				}.Build(), nil),
+			mockTenantsClient.EXPECT().
+				Signal(gomock.Any(), gomock.Any()).
+				Return(privatev1.TenantsSignalResponse_builder{}.Build(), nil),
+		)
+
+		functionObj.maskCalculator = masks.NewCalculator().Build()
 		err := functionObj.Run(ctx, project)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(project.GetMetadata().GetFinalizers()).ToNot(ContainElement(finalizers.Controller))
