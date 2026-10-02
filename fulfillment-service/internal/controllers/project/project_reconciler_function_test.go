@@ -29,6 +29,7 @@ import (
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/defaultnetworking"
 	"github.com/osac-project/osac/fulfillment-service/internal/controllers/finalizers"
 	"github.com/osac-project/osac/fulfillment-service/internal/idp"
+	"github.com/osac-project/osac/fulfillment-service/internal/masks"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
@@ -1171,12 +1172,13 @@ var _ = Describe("Deletion Cleanup", func() {
 		Expect(project.GetMetadata().GetFinalizers()).To(ContainElement(finalizers.Controller))
 	})
 
-	It("should delete default project Keycloak groups and signal tenant for root project deletion", func() {
+	It("should signal the tenant after the root project has been archived", func() {
 		project := privatev1.Project_builder{
 			Id: "project-1",
 			Metadata: privatev1.Metadata_builder{
-				Tenant:     "acme",
-				Finalizers: []string{finalizers.Controller},
+				Tenant:            "acme",
+				Finalizers:        []string{finalizers.Controller},
+				DeletionTimestamp: timestamppb.Now(),
 				// Empty name = root project
 			}.Build(),
 		}.Build()
@@ -1201,26 +1203,28 @@ var _ = Describe("Deletion Cleanup", func() {
 			GetGroupIDByPath(gomock.Any(), "acme", "/system:managers").
 			Return("", &idp.ErrNotFound{Kind: "group", Name: "system:managers"})
 
-		// Root project triggers tenant signal after finalizer removal
-		mockTenantsClient.EXPECT().
-			List(gomock.Any(), gomock.Any()).
-			Return(privatev1.TenantsListResponse_builder{
-				Items: []*privatev1.Tenant{
-					privatev1.Tenant_builder{Id: "tenant-id-1"}.Build(),
-				},
-				Size: 1,
-			}.Build(), nil)
+		// Archiving the project removes its tenant foreign-key reference. Signal only
+		// after that update commits so tenant deletion cannot race the project row.
+		gomock.InOrder(
+			mockClient.EXPECT().
+				Update(gomock.Any(), gomock.Any()).
+				Return(privatev1.ProjectsUpdateResponse_builder{}.Build(), nil),
+			mockTenantsClient.EXPECT().
+				List(gomock.Any(), gomock.Any()).
+				Return(privatev1.TenantsListResponse_builder{
+					Items: []*privatev1.Tenant{
+						privatev1.Tenant_builder{Id: "tenant-id-1"}.Build(),
+					},
+					Size: 1,
+				}.Build(), nil),
+			mockTenantsClient.EXPECT().
+				Signal(gomock.Any(), gomock.Any()).
+				Return(privatev1.TenantsSignalResponse_builder{}.Build(), nil),
+		)
 
-		mockTenantsClient.EXPECT().
-			Signal(gomock.Any(), gomock.Any()).
-			Return(privatev1.TenantsSignalResponse_builder{}.Build(), nil)
+		functionObj.maskCalculator = masks.NewCalculator().Build()
 
-		task := &task{
-			r:       functionObj,
-			project: project,
-		}
-
-		err := task.delete(ctx)
+		err := functionObj.Run(ctx, project)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(project.GetMetadata().GetFinalizers()).ToNot(ContainElement(finalizers.Controller))
 	})

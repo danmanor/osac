@@ -158,9 +158,22 @@ func (r *function) Run(ctx context.Context, project *privatev1.Project) error {
 			Object:     project,
 			UpdateMask: updateMask,
 		}.Build())
+		if err != nil {
+			return err
+		}
 	}
 
-	return err
+	// Updating a deleting project with no finalizers archives it. Signal the
+	// tenant only after that update succeeds so tenant deletion cannot race the
+	// project's tenant foreign-key reference.
+	if oldProject.HasMetadata() && oldProject.GetMetadata().GetName() == "" &&
+		oldProject.GetMetadata().HasDeletionTimestamp() &&
+		slices.Contains(oldProject.GetMetadata().GetFinalizers(), finalizers.Controller) &&
+		!slices.Contains(project.GetMetadata().GetFinalizers(), finalizers.Controller) {
+		task.signalTenant(ctx)
+	}
+
+	return nil
 }
 
 // task contains the data needed to reconcile a single project.
@@ -426,13 +439,6 @@ func (t *task) delete(ctx context.Context) error {
 	}
 
 	t.removeFinalizer()
-
-	// When the root project (empty name) is deleted, signal the parent tenant
-	// so it re-reconciles and can proceed with its own deletion.
-	if t.project.GetMetadata().GetName() == "" {
-		t.signalTenant(ctx)
-	}
-
 	return nil
 }
 
