@@ -579,14 +579,12 @@ func (t *task) breakGlassSecretIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// countRemainingProjects returns the number of projects that still belong to
-// this tenant. The tenant reconciler blocks deletion until this returns 0 —
-// it is the administrator's responsibility to delete all projects first.
+// countRemainingProjects returns the number of project rows that still belong
+// to this tenant, including projects whose deletion is still in progress. The
+// tenant reconciler must retain the IdP organization until those projects are
+// archived because their controllers may still need it to remove project groups.
 func (t *task) countRemainingProjects(ctx context.Context) (int32, error) {
-	listFilter := fmt.Sprintf(
-		"this.metadata.tenant == %q && !has(this.metadata.deletion_timestamp)",
-		t.tenant.GetMetadata().GetName(),
-	)
+	listFilter := fmt.Sprintf("this.metadata.tenant == %q", t.tenant.GetMetadata().GetName())
 	listResp, err := t.r.projectsClient.List(ctx, privatev1.ProjectsListRequest_builder{
 		Filter: new(listFilter),
 		Limit:  new(int32(0)),

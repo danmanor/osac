@@ -164,9 +164,9 @@ func (r *function) Run(ctx context.Context, project *privatev1.Project) error {
 	}
 
 	// Updating a deleting project with no finalizers archives it. Signal the
-	// tenant only after that update succeeds so tenant deletion cannot race the
-	// project's tenant foreign-key reference.
-	if oldProject.HasMetadata() && oldProject.GetMetadata().GetName() == "" &&
+	// tenant only after that update succeeds so tenant deletion waits until the
+	// project's tenant foreign-key reference is gone.
+	if oldProject.HasMetadata() &&
 		oldProject.GetMetadata().HasDeletionTimestamp() &&
 		slices.Contains(oldProject.GetMetadata().GetFinalizers(), finalizers.Controller) &&
 		!slices.Contains(project.GetMetadata().GetFinalizers(), finalizers.Controller) {
@@ -552,8 +552,7 @@ func (t *task) removeFinalizer() {
 }
 
 // signalTenant looks up the parent tenant by name and signals it so that the
-// tenant reconciler re-runs. This is used when the root project is deleted to
-// unblock the tenant's own deletion.
+// tenant reconciler re-runs after this project has been archived.
 func (t *task) signalTenant(ctx context.Context) {
 	tenantName := t.project.GetMetadata().GetTenant()
 	listResp, err := t.r.tenantsClient.List(ctx, privatev1.TenantsListRequest_builder{
@@ -575,7 +574,7 @@ func (t *task) signalTenant(ctx context.Context) {
 		Id: items[0].GetId(),
 	}.Build())
 	if err != nil {
-		t.r.logger.WarnContext(ctx, "Failed to signal tenant after root project deletion",
+		t.r.logger.WarnContext(ctx, "Failed to signal tenant after project deletion",
 			slog.String("tenant_id", items[0].GetId()),
 			slog.Any("error", err),
 		)
