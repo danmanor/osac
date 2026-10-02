@@ -2321,8 +2321,9 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(response).To(BeNil())
 				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
 				Expect(err.Error()).To(ContainSubstring("Subnet"))
-				Expect(err.Error()).To(ContainSubstring(subnetHub))
-				Expect(err.Error()).To(ContainSubstring(canonicalHub))
+				Expect(err.Error()).To(ContainSubstring("different Hub than the canonical networking Hub"))
+				Expect(err.Error()).ToNot(ContainSubstring(subnetHub))
+				Expect(err.Error()).ToNot(ContainSubstring(canonicalHub))
 
 				stored, err := server.generic.dao.List().SetFilter(fmt.Sprintf("this.metadata.name == %q", name)).Do(ctx)
 				Expect(err).ToNot(HaveOccurred())
@@ -2374,8 +2375,9 @@ var _ = Describe("Private compute instances server", func() {
 
 				Expect(response).To(BeNil())
 				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-				Expect(err.Error()).To(ContainSubstring(expectedHub))
-				Expect(err.Error()).To(ContainSubstring(actualHub))
+				Expect(err.Error()).To(ContainSubstring("different Hub than the canonical networking Hub"))
+				Expect(err.Error()).ToNot(ContainSubstring(expectedHub))
+				Expect(err.Error()).ToNot(ContainSubstring(actualHub))
 
 				instancesDao, daoErr := dao.NewGenericDAO[*privatev1.ComputeInstance]().
 					SetLogger(logger).

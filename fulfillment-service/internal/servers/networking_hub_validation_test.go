@@ -26,11 +26,12 @@ import (
 
 func TestValidateNetworkingHubReferences(t *testing.T) {
 	tests := []struct {
-		name         string
-		canonicalHub string
-		references   []networkingHubReference
-		wantCode     grpccodes.Code
-		wantMessage  []string
+		name           string
+		canonicalHub   string
+		references     []networkingHubReference
+		wantCode       grpccodes.Code
+		wantMessage    []string
+		notWantMessage []string
 	}{
 		{
 			name:         "same hub references are accepted",
@@ -47,8 +48,9 @@ func TestValidateNetworkingHubReferences(t *testing.T) {
 				{resourceType: "Subnet", id: "subnet-a", hubID: "hub-a"},
 				{resourceType: "SecurityGroup", id: "sg-b", hubID: "hub-b"},
 			},
-			wantCode:    grpccodes.FailedPrecondition,
-			wantMessage: []string{"SecurityGroup", "sg-b", "hub-b", "canonical networking Hub", "hub-a"},
+			wantCode:       grpccodes.FailedPrecondition,
+			wantMessage:    []string{"SecurityGroup", "sg-b", "different Hub than the canonical networking Hub"},
+			notWantMessage: []string{"hub-a", "hub-b"},
 		},
 		{
 			name:         "a single reference outside the canonical hub is rejected",
@@ -56,8 +58,9 @@ func TestValidateNetworkingHubReferences(t *testing.T) {
 			references: []networkingHubReference{
 				{resourceType: "Subnet", id: "subnet-b", hubID: "hub-b"},
 			},
-			wantCode:    grpccodes.FailedPrecondition,
-			wantMessage: []string{"Subnet", "subnet-b", "hub-b", "canonical networking Hub", "hub-a"},
+			wantCode:       grpccodes.FailedPrecondition,
+			wantMessage:    []string{"Subnet", "subnet-b", "different Hub than the canonical networking Hub"},
+			notWantMessage: []string{"hub-a", "hub-b"},
 		},
 		{
 			name:         "unassigned references are rejected",
@@ -65,8 +68,9 @@ func TestValidateNetworkingHubReferences(t *testing.T) {
 			references: []networkingHubReference{
 				{resourceType: "Subnet", id: "subnet-a"},
 			},
-			wantCode:    grpccodes.FailedPrecondition,
-			wantMessage: []string{"Subnet", "subnet-a", "no Hub assignment", "hub-a"},
+			wantCode:       grpccodes.FailedPrecondition,
+			wantMessage:    []string{"Subnet", "subnet-a", "no Hub assignment", "canonical networking Hub"},
+			notWantMessage: []string{"hub-a"},
 		},
 		{
 			name:        "missing canonical hub is rejected",
@@ -90,6 +94,11 @@ func TestValidateNetworkingHubReferences(t *testing.T) {
 			for _, fragment := range test.wantMessage {
 				if !strings.Contains(err.Error(), fragment) {
 					t.Errorf("expected error %q to contain %q", err, fragment)
+				}
+			}
+			for _, fragment := range test.notWantMessage {
+				if strings.Contains(err.Error(), fragment) {
+					t.Errorf("expected error %q not to contain %q", err, fragment)
 				}
 			}
 		})
