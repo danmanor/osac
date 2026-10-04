@@ -53,6 +53,13 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 		Expect(hubANamespace).ToNot(BeEmpty())
 
 		hubBID, hubBNamespace := createValidRoutingHub(ctx, hubsClient)
+		By("synchronizing existing tenants to the alternate Hub")
+		Eventually(func(g Gomega) {
+			g.Expect(tool.KubeClient().Get(ctx, crclient.ObjectKey{
+				Namespace: hubBNamespace,
+				Name:      "engineering",
+			}, &osacv1alpha1.Tenant{})).To(Succeed())
+		}, 30*time.Second, time.Second).Should(Succeed())
 
 		networkClassesClient := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
 		virtualNetworksClient := privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
@@ -413,6 +420,7 @@ func createValidRoutingHub(ctx context.Context, hubsClient privatev1.HubsClient)
 		Rules: []rbacv1.PolicyRule{{
 			APIGroups: []string{osacv1alpha1.GroupVersion.Group},
 			Resources: []string{
+				"tenants",
 				"virtualnetworks",
 				"subnets",
 				"securitygroups",
