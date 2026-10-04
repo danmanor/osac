@@ -40,7 +40,7 @@ func uniqueCIDR() string {
 	return fmt.Sprintf("10.%d.%d.0/28", 20+(n/256)%200, n%256)
 }
 
-func createReadyExternalIPNetworkClass(ctx context.Context, client privatev1.NetworkClassesClient) {
+func createReadyExternalIPNetworkClass(ctx context.Context, client privatev1.NetworkClassesClient) string {
 	id := createDefaultNetworkClass(
 		ctx,
 		client,
@@ -68,6 +68,7 @@ func createReadyExternalIPNetworkClass(ctx context.Context, client privatev1.Net
 		g.Expect(response.GetObject().GetStatus().GetState()).To(
 			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
 	}, time.Minute, time.Second).Should(Succeed())
+	return id
 }
 
 var _ = Describe("Private ExternalIPPool CRUD", func() {
@@ -607,36 +608,49 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		ctx                      context.Context
 		networkClassesClient     privatev1.NetworkClassesClient
 		poolsClient              privatev1.ExternalIPPoolsClient
+		virtualNetworksClient    privatev1.VirtualNetworksClient
+		subnetsClient            privatev1.SubnetsClient
 		externalIPsClient        publicv1.ExternalIPsClient
 		privateExternalIPsClient privatev1.ExternalIPsClient
 		attachmentsClient        publicv1.ExternalIPAttachmentsClient
 		privateAttachmentsClient privatev1.ExternalIPAttachmentsClient
 		clustersClient           publicv1.ClustersClient
+		privateClustersClient    privatev1.ClustersClient
 		instanceTypesClient      privatev1.BareMetalInstanceTypesClient
 		clusterTemplatesClient   privatev1.ClusterTemplatesClient
 
-		poolId       string
-		externalIPId string
-		clusterId    string
-		bmitName     string
-		templateId   string
+		poolId            string
+		externalIPId      string
+		clusterId         string
+		bmitName          string
+		templateId        string
+		networkClassHubID string
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		networkClassesClient = privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
 		poolsClient = privatev1.NewExternalIPPoolsClient(tool.InternalView().AdminConn())
+		virtualNetworksClient = privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
+		subnetsClient = privatev1.NewSubnetsClient(tool.InternalView().AdminConn())
 		externalIPsClient = publicv1.NewExternalIPsClient(tool.ExternalView().UserConn())
 		privateExternalIPsClient = privatev1.NewExternalIPsClient(tool.InternalView().AdminConn())
 		attachmentsClient = publicv1.NewExternalIPAttachmentsClient(tool.ExternalView().UserConn())
 		privateAttachmentsClient = privatev1.NewExternalIPAttachmentsClient(tool.InternalView().AdminConn())
 		clustersClient = publicv1.NewClustersClient(tool.ExternalView().UserConn())
+		privateClustersClient = privatev1.NewClustersClient(tool.InternalView().AdminConn())
 		instanceTypesClient = privatev1.NewBareMetalInstanceTypesClient(tool.InternalView().AdminConn())
 		clusterTemplatesClient = privatev1.NewClusterTemplatesClient(tool.InternalView().AdminConn())
-		createReadyExternalIPNetworkClass(ctx, networkClassesClient)
+		networkClassID := createReadyExternalIPNetworkClass(ctx, networkClassesClient)
+		networkClassResponse, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{
+			Id: networkClassID,
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		networkClassHubID = networkClassResponse.GetObject().GetStatus().GetHub()
+		Expect(networkClassHubID).ToNot(BeEmpty())
 
 		poolId = fmt.Sprintf("test-pool-%s", uuid.New())
-		_, err := poolsClient.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
+		_, err = poolsClient.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
 			Object: privatev1.ExternalIPPool_builder{
 				Id: poolId,
 				Metadata: privatev1.Metadata_builder{
@@ -699,6 +713,13 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		Eventually(func(g Gomega) {
+			resp, err := privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
+				Id: externalIPId,
+			}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetHub()).To(Equal(networkClassHubID))
+		}, time.Minute, time.Second).Should(Succeed())
 
 		// State promotion requires private API (admin-only)
 		ipGetResp, err := privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
@@ -754,6 +775,71 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 
+		// This Cluster is a networked target, so select its Hub from a real subnet
+		// attachment and wait until that Hub matches the ExternalIP's canonical Hub.
+		virtualNetworkID := fmt.Sprintf("test-vnet-%s", uuid.New())
+		_, err = virtualNetworksClient.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{
+			Object: privatev1.VirtualNetwork_builder{
+				Id: virtualNetworkID,
+				Metadata: privatev1.Metadata_builder{
+					Name:   fmt.Sprintf("test-vnet-%s", uuid.New()[24:32]),
+					Tenant: usersGroup,
+				}.Build(),
+				Spec: privatev1.VirtualNetworkSpec_builder{
+					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassID}.Build(),
+					Region:       "us-east-1",
+					Ipv4Cidr:     new("10.230.0.0/16"),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			_, _ = virtualNetworksClient.Delete(cleanupCtx, privatev1.VirtualNetworksDeleteRequest_builder{
+				Id: virtualNetworkID,
+			}.Build())
+		})
+		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
+			resp, getErr := virtualNetworksClient.Get(getCtx, privatev1.VirtualNetworksGetRequest_builder{
+				Id: virtualNetworkID,
+			}.Build())
+			if getErr != nil {
+				return "", getErr
+			}
+			return resp.GetObject().GetStatus().GetHub(), nil
+		})
+		setRoutingVirtualNetworkReady(ctx, virtualNetworksClient, virtualNetworkID)
+
+		subnetID := fmt.Sprintf("test-subnet-%s", uuid.New())
+		_, err = subnetsClient.Create(ctx, privatev1.SubnetsCreateRequest_builder{
+			Object: privatev1.Subnet_builder{
+				Id: subnetID,
+				Metadata: privatev1.Metadata_builder{
+					Name:   fmt.Sprintf("test-subnet-%s", uuid.New()[24:32]),
+					Tenant: usersGroup,
+				}.Build(),
+				Spec: privatev1.SubnetSpec_builder{
+					VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: virtualNetworkID}.Build(),
+					Ipv4Cidr:       new("10.230.1.0/24"),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			_, _ = subnetsClient.Delete(cleanupCtx, privatev1.SubnetsDeleteRequest_builder{
+				Id: subnetID,
+			}.Build())
+		})
+		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
+			resp, getErr := subnetsClient.Get(getCtx, privatev1.SubnetsGetRequest_builder{
+				Id: subnetID,
+			}.Build())
+			if getErr != nil {
+				return "", getErr
+			}
+			return resp.GetObject().GetStatus().GetHub(), nil
+		})
+		setRoutingSubnetReady(ctx, subnetsClient, subnetID)
+
 		createClusterResp, err := clustersClient.Create(ctx, publicv1.ClustersCreateRequest_builder{
 			Object: publicv1.Cluster_builder{
 				Metadata: publicv1.Metadata_builder{
@@ -764,11 +850,23 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 					NodeSets: map[string]*publicv1.ClusterNodeSet{"workers": publicv1.ClusterNodeSet_builder{
 						Size: new(int32(1)), BaremetalInstanceType: publicv1.BareMetalInstanceTypeReference_builder{Id: bmitName}.Build(),
 					}.Build()},
+					NetworkAttachment: publicv1.ClusterNetworkAttachment_builder{
+						Subnet: publicv1.SubnetLocalReference_builder{Id: subnetID}.Build(),
+					}.Build(),
 				}.Build(),
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		clusterId = createClusterResp.GetObject().GetId()
+		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
+			resp, getErr := privateClustersClient.Get(getCtx, privatev1.ClustersGetRequest_builder{
+				Id: clusterId,
+			}.Build())
+			if getErr != nil {
+				return "", getErr
+			}
+			return resp.GetObject().GetStatus().GetHub(), nil
+		})
 	})
 
 	AfterEach(func() {
@@ -921,6 +1019,13 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		Eventually(func(g Gomega) {
+			resp, err := privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
+				Id: pendingIPId,
+			}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetHub()).To(Equal(networkClassHubID))
+		}, time.Minute, time.Second).Should(Succeed())
 
 		attachmentId := fmt.Sprintf("test-att-%s", uuid.New())
 		_, err = attachmentsClient.Create(ctx, publicv1.ExternalIPAttachmentsCreateRequest_builder{
