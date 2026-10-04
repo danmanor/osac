@@ -188,9 +188,10 @@ var _ = Describe("Private events server", Ordered, func() {
 	})
 
 	It("discovers an events topic created after Watch starts", func() {
-		client := newClient()
-		eventsClient := startServer(client)
-		producer, err := sarama.NewSyncProducerFromClient(client)
+		serverClient := newClient()
+		eventsClient := startServer(serverClient)
+		producerAdminClient := newClient()
+		producer, err := sarama.NewSyncProducerFromClient(producerAdminClient)
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(producer.Close)
 
@@ -210,14 +211,14 @@ var _ = Describe("Private events server", Ordered, func() {
 		}()
 
 		topic := servers.DefaultEventTopicPrefix + "private-watch-new-" + uuid.New()
-		admin, err := sarama.NewClusterAdminFromClient(client)
+		admin, err := sarama.NewClusterAdminFromClient(producerAdminClient)
 		Expect(err).ToNot(HaveOccurred())
-		// The admin shares the client; its registered cleanup owns the underlying connection.
+		// Keep topic creation and production separate from the server client so its watcher must discover the topic.
 		Expect(admin.CreateTopic(topic, &sarama.TopicDetail{
 			NumPartitions:     1,
 			ReplicationFactor: 1,
 		}, false)).To(Succeed())
-		Expect(client.RefreshMetadata(topic)).To(Succeed())
+		Expect(producerAdminClient.RefreshMetadata(topic)).To(Succeed())
 
 		event := privatev1.Event_builder{
 			Cluster: privatev1.Cluster_builder{Id: "new-topic"}.Build(),
