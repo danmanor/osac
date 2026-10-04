@@ -44,24 +44,36 @@ func RequeueAfter(err error, delay time.Duration) error {
 	if err == nil || delay <= 0 {
 		return err
 	}
-	return &requeueAfterError{cause: err, delay: delay}
+	return &requeueAfterError{cause: err, delay: delay, exponentialBackoff: true}
+}
+
+// RequeueAtInterval marks an error as retryable and asks the reconciler to retry
+// the object at the same interval after each failed retry. The original error
+// remains available through errors.Is and errors.As.
+func RequeueAtInterval(err error, interval time.Duration) error {
+	if err == nil || interval <= 0 {
+		return err
+	}
+	return &requeueAfterError{cause: err, delay: interval}
 }
 
 // RequeueAfterKubernetesDeletion retries a resource after requesting deletion
 // of its Kubernetes object. Kubernetes finalizers complete asynchronously, and
 // the fulfillment event stream does not observe those Kubernetes changes.
 func RequeueAfterKubernetesDeletion(resource string) error {
-	return RequeueAfter(fmt.Errorf("kubernetes %s deletion is still in progress", resource), time.Second)
+	return RequeueAtInterval(fmt.Errorf("kubernetes %s deletion is still in progress", resource), time.Second)
 }
 
 type requeueAfterError struct {
-	cause error
-	delay time.Duration
+	cause              error
+	delay              time.Duration
+	exponentialBackoff bool
 }
 
 func (e *requeueAfterError) Error() string               { return e.cause.Error() }
 func (e *requeueAfterError) Unwrap() error               { return e.cause }
 func (e *requeueAfterError) RequeueAfter() time.Duration { return e.delay }
+func (e *requeueAfterError) UseExponentialBackoff() bool { return e.exponentialBackoff }
 
 type scheduledRetry struct {
 	timer  *time.Timer
@@ -522,10 +534,15 @@ func (c *Reconciler[O]) requeue(ctx context.Context, object O, err error) {
 	if !errors.As(err, &retryable) {
 		return
 	}
-	c.scheduleRetry(ctx, object, retryable.RequeueAfter())
+	useBackoff := true
+	var policy interface{ UseExponentialBackoff() bool }
+	if errors.As(err, &policy) {
+		useBackoff = policy.UseExponentialBackoff()
+	}
+	c.scheduleRetry(ctx, object, retryable.RequeueAfter(), useBackoff)
 }
 
-func (c *Reconciler[O]) scheduleRetry(ctx context.Context, object O, requestedDelay time.Duration) {
+func (c *Reconciler[O]) scheduleRetry(ctx context.Context, object O, requestedDelay time.Duration, useBackoff bool) {
 	if requestedDelay <= 0 || ctx.Err() != nil {
 		return
 	}
@@ -537,14 +554,20 @@ func (c *Reconciler[O]) scheduleRetry(ctx context.Context, object O, requestedDe
 	if c.retryAttempts == nil {
 		c.retryAttempts = make(map[string]uint8)
 	}
+	if !useBackoff {
+		delete(c.retryAttempts, id)
+	}
 	if _, exists := c.retryTimers[id]; exists {
 		c.retryMu.Unlock()
 		return
 	}
-	attempt := c.retryAttempts[id]
-	delay := requeueDelay(requestedDelay, attempt)
-	if attempt < ^uint8(0) {
-		c.retryAttempts[id] = attempt + 1
+	delay := requestedDelay
+	if useBackoff {
+		attempt := c.retryAttempts[id]
+		delay = requeueDelay(requestedDelay, attempt)
+		if attempt < ^uint8(0) {
+			c.retryAttempts[id] = attempt + 1
+		}
 	}
 	retry := &scheduledRetry{timer: time.NewTimer(delay), cancel: make(chan struct{})}
 	c.retryTimers[id] = retry

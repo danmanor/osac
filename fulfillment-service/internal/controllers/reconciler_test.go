@@ -37,6 +37,9 @@ func TestRequeueAfterPreservesCauseAndDelay(t *testing.T) {
 	var retryable interface{ RequeueAfter() time.Duration }
 	Expect(errors.As(wrapped, &retryable)).To(BeTrue())
 	Expect(retryable.RequeueAfter()).To(Equal(250 * time.Millisecond))
+	var backoff interface{ UseExponentialBackoff() bool }
+	Expect(errors.As(wrapped, &backoff)).To(BeTrue())
+	Expect(backoff.UseExponentialBackoff()).To(BeTrue())
 }
 
 func TestRequeueAfterKubernetesDeletionRequestsRetry(t *testing.T) {
@@ -47,6 +50,33 @@ func TestRequeueAfterKubernetesDeletionRequestsRetry(t *testing.T) {
 	var retryable interface{ RequeueAfter() time.Duration }
 	Expect(errors.As(err, &retryable)).To(BeTrue())
 	Expect(retryable.RequeueAfter()).To(Equal(time.Second))
+	var backoff interface{ UseExponentialBackoff() bool }
+	Expect(errors.As(err, &backoff)).To(BeTrue())
+	Expect(backoff.UseExponentialBackoff()).To(BeFalse())
+}
+
+func TestReconcilerDoesNotAccumulateAttemptsForFixedIntervalRetries(t *testing.T) {
+	RegisterTestingT(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	object := privatev1.VirtualNetwork_builder{Id: "vn-1"}.Build()
+	reconciler := &Reconciler[*privatev1.VirtualNetwork]{
+		objectChannel: make(chan *privatev1.VirtualNetwork),
+		retryAttempts: map[string]uint8{"vn-1": 5},
+	}
+	defer reconciler.stopRetries()
+
+	reconciler.requeue(ctx, object, RequeueAtInterval(errors.New("deletion is still in progress"), 10*time.Millisecond))
+
+	Expect(reconciler.retryAttempts).ToNot(HaveKey("vn-1"))
+
+	select {
+	case got := <-reconciler.objectChannel:
+		Expect(got).To(BeIdenticalTo(object))
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("fixed-interval retry did not use the requested delay")
+	}
 }
 
 func TestRequeueDelayUsesExponentialBackoffWithOneMinuteCap(t *testing.T) {

@@ -418,7 +418,7 @@ func (t *task) delete(ctx context.Context) error {
 		if err := t.r.defaultNetwork.Delete(ctx, t.project.GetMetadata().GetTenant()); err != nil {
 			wrapped := fmt.Errorf("failed to delete default networking resources: %w", err)
 			if errors.Is(err, defaultnetworking.ErrResourcesDeleting) {
-				return controllers.RequeueAfter(wrapped, defaultNetworkingDeleteRetryDelay)
+				return controllers.RequeueAtInterval(wrapped, defaultNetworkingDeleteRetryDelay)
 			}
 			return wrapped
 		}

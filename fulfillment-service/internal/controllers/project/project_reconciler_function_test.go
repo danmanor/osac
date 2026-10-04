@@ -1300,6 +1300,9 @@ var _ = Describe("Deletion Cleanup", func() {
 		var retryable interface{ RequeueAfter() time.Duration }
 		Expect(errors.As(err, &retryable)).To(BeTrue())
 		Expect(retryable.RequeueAfter()).To(Equal(defaultNetworkingDeleteRetryDelay))
+		var backoff interface{ UseExponentialBackoff() bool }
+		Expect(errors.As(err, &backoff)).To(BeTrue())
+		Expect(backoff.UseExponentialBackoff()).To(BeFalse())
 	})
 
 	It("should return error if querying for children fails", func() {

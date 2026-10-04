@@ -86,6 +86,9 @@ func expectDeletionRetry(err error) {
 	var retryable interface{ RequeueAfter() time.Duration }
 	Expect(errors.As(err, &retryable)).To(BeTrue())
 	Expect(retryable.RequeueAfter()).To(Equal(time.Second))
+	var backoff interface{ UseExponentialBackoff() bool }
+	Expect(errors.As(err, &backoff)).To(BeTrue())
+	Expect(backoff.UseExponentialBackoff()).To(BeFalse())
 }
 
 // newTaskForDelete creates a task configured for testing delete() with hub-dependent paths.
