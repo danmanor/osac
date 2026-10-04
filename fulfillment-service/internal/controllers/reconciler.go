@@ -47,6 +47,13 @@ func RequeueAfter(err error, delay time.Duration) error {
 	return &requeueAfterError{cause: err, delay: delay}
 }
 
+// RequeueAfterKubernetesDeletion retries a resource after requesting deletion
+// of its Kubernetes object. Kubernetes finalizers complete asynchronously, and
+// the fulfillment event stream does not observe those Kubernetes changes.
+func RequeueAfterKubernetesDeletion(resource string) error {
+	return RequeueAfter(fmt.Errorf("kubernetes %s deletion is still in progress", resource), time.Second)
+}
+
 type requeueAfterError struct {
 	cause error
 	delay time.Duration

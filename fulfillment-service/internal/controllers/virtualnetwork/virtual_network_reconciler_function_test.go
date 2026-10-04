@@ -162,6 +162,12 @@ func hasFinalizer(virtualNetwork *privatev1.VirtualNetwork) bool {
 	return slices.Contains(virtualNetwork.GetMetadata().GetFinalizers(), finalizers.Controller)
 }
 
+func expectDeletionRetry(err error) {
+	var retryable interface{ RequeueAfter() time.Duration }
+	Expect(errors.As(err, &retryable)).To(BeTrue())
+	Expect(retryable.RequeueAfter()).To(Equal(time.Second))
+}
+
 // newTaskForDelete creates a task configured for testing delete() with hub-dependent paths.
 func newTaskForDelete(virtualNetworkID, hubID string, hubCache controllers.HubCache) *task {
 	virtualNetwork := privatev1.VirtualNetwork_builder{
@@ -322,7 +328,7 @@ var _ = Describe("delete", func() {
 
 			err := task.delete(ctx)
 
-			Expect(err).ToNot(HaveOccurred())
+			expectDeletionRetry(err)
 			Expect(deleteCalled).To(BeTrue(), "Delete should have been called")
 			Expect(hasFinalizer(task.virtualNetwork)).To(BeTrue(), "finalizer should remain until K8s object is fully deleted")
 		})
@@ -348,7 +354,7 @@ var _ = Describe("delete", func() {
 
 			err := task.delete(ctx)
 
-			Expect(err).ToNot(HaveOccurred())
+			expectDeletionRetry(err)
 			Expect(hasFinalizer(task.virtualNetwork)).To(BeTrue(), "finalizer should remain while K8s finalizers process")
 		})
 	})

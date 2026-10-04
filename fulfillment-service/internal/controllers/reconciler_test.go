@@ -39,6 +39,16 @@ func TestRequeueAfterPreservesCauseAndDelay(t *testing.T) {
 	Expect(retryable.RequeueAfter()).To(Equal(250 * time.Millisecond))
 }
 
+func TestRequeueAfterKubernetesDeletionRequestsRetry(t *testing.T) {
+	RegisterTestingT(t)
+
+	err := RequeueAfterKubernetesDeletion("subnet")
+	Expect(err).To(MatchError("kubernetes subnet deletion is still in progress"))
+	var retryable interface{ RequeueAfter() time.Duration }
+	Expect(errors.As(err, &retryable)).To(BeTrue())
+	Expect(retryable.RequeueAfter()).To(Equal(time.Second))
+}
+
 func TestRequeueDelayUsesExponentialBackoffWithOneMinuteCap(t *testing.T) {
 	RegisterTestingT(t)
 

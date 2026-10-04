@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -117,6 +118,12 @@ func hasFinalizer(externalIP *privatev1.ExternalIP) bool {
 	return slices.Contains(externalIP.GetMetadata().GetFinalizers(), finalizers.Controller)
 }
 
+func expectDeletionRetry(err error) {
+	var retryable interface{ RequeueAfter() time.Duration }
+	Expect(errors.As(err, &retryable)).To(BeTrue())
+	Expect(retryable.RequeueAfter()).To(Equal(time.Second))
+}
+
 // newTaskForDelete creates a task configured for testing delete() with hub-dependent paths.
 func newTaskForDelete(externalIPID, hubID string, hubCache controllers.HubCache) *task {
 	externalIP := privatev1.ExternalIP_builder{
@@ -211,7 +218,7 @@ var _ = Describe("delete", func() {
 		t := newTaskForDelete(externalIPID, hubID, hubCache)
 
 		err := t.delete(ctx)
-		Expect(err).ToNot(HaveOccurred())
+		expectDeletionRetry(err)
 		Expect(deleteCalled).To(BeTrue())
 		// Finalizer should NOT be removed: K8s object still exists
 		Expect(hasFinalizer(t.externalIP)).To(BeTrue())
@@ -247,7 +254,7 @@ var _ = Describe("delete", func() {
 		t := newTaskForDelete(externalIPID, hubID, hubCache)
 
 		err := t.delete(ctx)
-		Expect(err).ToNot(HaveOccurred())
+		expectDeletionRetry(err)
 		Expect(deleteCalled).To(BeFalse())
 		// Finalizer should NOT be removed: K8s object still being deleted
 		Expect(hasFinalizer(t.externalIP)).To(BeTrue())
