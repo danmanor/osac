@@ -364,6 +364,11 @@ func (s *PrivateComputeInstancesServer) prepareCreate(ctx context.Context, candi
 	if err = s.validateAndResolveUserDataSecret(ctx, spec, true); err != nil {
 		return
 	}
+	if len(spec.GetNetworkAttachments()) > 1 {
+		err = grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"spec.network_attachments: at most one network attachment is supported")
+		return
+	}
 
 	// Apply Catalog rules before adding the tenant's default network. Otherwise a locked
 	// network field could mistake the server-provided attachment for a caller override.

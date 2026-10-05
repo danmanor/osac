@@ -2014,11 +2014,13 @@ var _ = Describe("Private compute instances server", func() {
 		})
 
 		Context("network_attachments", func() {
-			It("Should succeed with two READY subnets as separate attachments", func() {
+			It("Should reject multiple attachments before persisting the ComputeInstance", func() {
 				s1 := createTestSubnet(ctx, virtualNetwork.GetId(), privatev1.SubnetState_SUBNET_STATE_READY)
 				s2 := createTestSubnet(ctx, virtualNetwork.GetId(), privatev1.SubnetState_SUBNET_STATE_READY)
+				instanceID := uuid.NewString()
 
 				vm := privatev1.ComputeInstance_builder{
+					Id: instanceID,
 					Metadata: privatev1.Metadata_builder{
 						Name: fmt.Sprintf("test-%s", uuid.NewString()[:8]),
 					}.Build(),
@@ -2035,11 +2037,13 @@ var _ = Describe("Private compute instances server", func() {
 				request.SetObject(vm)
 
 				response, err := server.Create(ctx, request)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(response).ToNot(BeNil())
-				Expect(response.GetObject().GetSpec().GetNetworkAttachments()).To(HaveLen(2))
-				Expect(response.GetObject().GetSpec().GetNetworkAttachments()[0].GetSubnet().GetId()).To(Equal(s1.GetId()))
-				Expect(response.GetObject().GetSpec().GetNetworkAttachments()[1].GetSubnet().GetId()).To(Equal(s2.GetId()))
+				Expect(err).To(HaveOccurred())
+				Expect(response).To(BeNil())
+				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
+				Expect(grpcstatus.Convert(err).Message()).To(ContainSubstring("at most one network attachment"))
+
+				_, getErr := server.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{Id: instanceID}.Build())
+				Expect(grpcstatus.Code(getErr)).To(Equal(grpccodes.NotFound))
 			})
 		})
 
