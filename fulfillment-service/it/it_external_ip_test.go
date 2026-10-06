@@ -68,6 +68,15 @@ func createReadyExternalIPNetworkClass(ctx context.Context, client privatev1.Net
 		g.Expect(response.GetObject().GetStatus().GetState()).To(
 			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY))
 	}, time.Minute, time.Second).Should(Succeed())
+	setNetworkClassCanonicalHub(ctx, client, id, hubId)
+	expectNetworkClassStatus(
+		ctx,
+		client,
+		id,
+		privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+		hubId,
+		"",
+	)
 	return id
 }
 
@@ -254,6 +263,9 @@ var _ = Describe("Private ExternalIPPool CRUD", func() {
 		createReadyExternalIPNetworkClass(ctx, networkClassesClient)
 
 		poolId := fmt.Sprintf("test-pool-%s", uuid.New())
+		ipId := fmt.Sprintf("test-ip-%s", uuid.New())
+		externalIPsClient := publicv1.NewExternalIPsClient(tool.ExternalView().UserConn())
+		privateIPsClient := privatev1.NewExternalIPsClient(tool.InternalView().AdminConn())
 		_, err := client.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
 			Object: privatev1.ExternalIPPool_builder{
 				Id: poolId,
@@ -267,59 +279,7 @@ var _ = Describe("Private ExternalIPPool CRUD", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
-
-		Eventually(func(g Gomega) {
-			resp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
-				Id: poolId,
-			}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(resp.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_PENDING))
-			g.Expect(resp.GetObject().GetStatus().GetHub()).ToNot(BeEmpty())
-		}, time.Minute, time.Second).Should(Succeed())
-
-		getResp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
-			Id: poolId,
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		pool := getResp.GetObject()
-		pool.SetStatus(privatev1.ExternalIPPoolStatus_builder{
-			State:     privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY,
-			Total:     pool.GetStatus().GetTotal(),
-			Available: pool.GetStatus().GetAvailable(),
-			Allocated: pool.GetStatus().GetAllocated(),
-		}.Build())
-		_, err = client.Update(ctx, privatev1.ExternalIPPoolsUpdateRequest_builder{
-			Object:     pool,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-
-		Eventually(func(g Gomega) {
-			resp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
-				Id: poolId,
-			}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(resp.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY))
-		}, time.Minute, time.Second).Should(Succeed())
-
-		externalIPsClient := publicv1.NewExternalIPsClient(tool.ExternalView().UserConn())
-		ipId := fmt.Sprintf("test-ip-%s", uuid.New())
-		_, err = externalIPsClient.Create(ctx, publicv1.ExternalIPsCreateRequest_builder{
-			Object: publicv1.ExternalIP_builder{
-				Id: ipId,
-				Metadata: publicv1.Metadata_builder{
-					Name: fmt.Sprintf("test-ip-%s", uuid.New()[24:32]),
-				}.Build(),
-				Spec: publicv1.ExternalIPSpec_builder{
-					Pool: publicv1.ExternalIPPoolReference_builder{Id: poolId}.Build(),
-				}.Build(),
-			}.Build(),
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func() {
-			privateIPsClient := privatev1.NewExternalIPsClient(tool.InternalView().AdminConn())
 			ipGetResp, err := privateIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
 				Id: ipId,
 			}.Build())
@@ -344,6 +304,48 @@ var _ = Describe("Private ExternalIPPool CRUD", func() {
 				Id: poolId,
 			}.Build())
 		})
+
+		Eventually(func(g Gomega) {
+			resp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
+				Id: poolId,
+			}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetState()).To(
+				Equal(privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_PENDING))
+			g.Expect(resp.GetObject().GetStatus().GetHub()).To(Equal(hubId))
+		}, time.Minute, time.Second).Should(Succeed())
+
+		getResp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
+			Id: poolId,
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		pool := getResp.GetObject()
+		pool.GetStatus().SetState(privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY)
+		pool.GetStatus().SetHub(hubId)
+		_, err = client.Update(ctx, privatev1.ExternalIPPoolsUpdateRequest_builder{
+			Object:     pool,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state", "status.hub"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		Eventually(func(g Gomega) {
+			resp, err := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{Id: poolId}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetState()).To(
+				Equal(privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY))
+		}, time.Minute, time.Second).Should(Succeed())
+
+		_, err = externalIPsClient.Create(ctx, publicv1.ExternalIPsCreateRequest_builder{
+			Object: publicv1.ExternalIP_builder{
+				Id: ipId,
+				Metadata: publicv1.Metadata_builder{
+					Name: fmt.Sprintf("test-ip-%s", uuid.New()[24:32]),
+				}.Build(),
+				Spec: publicv1.ExternalIPSpec_builder{
+					Pool: publicv1.ExternalIPPoolReference_builder{Id: poolId}.Build(),
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
 
 		_, err = client.Delete(ctx, privatev1.ExternalIPPoolsDeleteRequest_builder{
 			Id: poolId,

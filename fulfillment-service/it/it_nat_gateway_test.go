@@ -69,6 +69,15 @@ var _ = Describe("NATGateway lifecycle", func() {
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId = ncResp.GetObject().GetId()
 		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
+		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassId, hubId)
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassId,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			hubId,
+			"",
+		)
 		networkClassResp, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{
 			Id: networkClassId,
 		}.Build())
