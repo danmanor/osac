@@ -95,7 +95,7 @@ def default_networking(grpc: GRPCClient, k8s_hub_client: K8sClient, test_run_id:
         )
         security_group_cr_name = wait_for_security_group_cr(k8s=k8s_hub_client, uuid=security_group_id)
         wait_for_security_group_ready(k8s=k8s_hub_client, name=security_group_cr_name)
-        print(f"SecurityGroup {security_group_cr_name} is Ready")
+        print("SecurityGroup is Ready")
 
         yield {
             "virtual_network_id": vn_id,
