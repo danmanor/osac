@@ -50,6 +50,7 @@ func newNetworkClassesDAO(
 
 func canonicalNetworkingHubID(
 	ctx context.Context,
+	logger *slog.Logger,
 	networkClassesDao *dao.GenericDAO[*privatev1.NetworkClass],
 ) (string, error) {
 	networkClass, err := findSingletonNetworkClass(ctx, networkClassesDao)
@@ -57,6 +58,7 @@ func canonicalNetworkingHubID(
 		if errors.Is(err, errMultipleActiveNetworkClasses) {
 			return "", status.Error(codes.FailedPrecondition, err.Error())
 		}
+		logger.ErrorContext(ctx, "Failed to resolve the canonical networking Hub", slog.Any("error", err))
 		return "", status.Error(codes.Internal, "failed to resolve the canonical networking Hub")
 	}
 	if networkClass == nil {

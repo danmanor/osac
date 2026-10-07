@@ -388,7 +388,7 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 		}
 	}
 	if len(hubReferences) > 0 {
-		canonicalHubID, resolveErr := canonicalNetworkingHubID(ctx, s.networkClassesDao)
+		canonicalHubID, resolveErr := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}

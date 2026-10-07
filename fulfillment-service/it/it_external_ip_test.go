@@ -665,6 +665,17 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := poolsClient.Delete(deleteCtx, privatev1.ExternalIPPoolsDeleteRequest_builder{Id: poolId}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := poolsClient.Get(getCtx, privatev1.ExternalIPPoolsGetRequest_builder{Id: poolId}.Build())
+					return getErr
+				})
+		})
 
 		Eventually(func(g Gomega) {
 			resp, err := poolsClient.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{
@@ -715,6 +726,17 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := externalIPsClient.Delete(deleteCtx, publicv1.ExternalIPsDeleteRequest_builder{Id: externalIPId}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := privateExternalIPsClient.Get(getCtx, privatev1.ExternalIPsGetRequest_builder{Id: externalIPId}.Build())
+					return getErr
+				})
+		})
 		Eventually(func(g Gomega) {
 			resp, err := privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
 				Id: externalIPId,
@@ -764,6 +786,17 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := instanceTypesClient.Delete(deleteCtx, privatev1.BareMetalInstanceTypesDeleteRequest_builder{Id: bmitName}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := instanceTypesClient.Get(getCtx, privatev1.BareMetalInstanceTypesGetRequest_builder{Id: bmitName}.Build())
+					return getErr
+				})
+		})
 
 		templateId = fmt.Sprintf("test-tmpl-%s", uuid.New())
 		_, err = clusterTemplatesClient.Create(ctx, privatev1.ClusterTemplatesCreateRequest_builder{
@@ -776,6 +809,17 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := clusterTemplatesClient.Delete(deleteCtx, privatev1.ClusterTemplatesDeleteRequest_builder{Id: templateId}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := clusterTemplatesClient.Get(getCtx, privatev1.ClusterTemplatesGetRequest_builder{Id: templateId}.Build())
+					return getErr
+				})
+		})
 
 		// This Cluster is a networked target, so select its Hub from a real subnet
 		// attachment and wait until that Hub matches the ExternalIP's canonical Hub.
@@ -796,9 +840,19 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func(cleanupCtx context.Context) {
-			_, _ = virtualNetworksClient.Delete(cleanupCtx, privatev1.VirtualNetworksDeleteRequest_builder{
-				Id: virtualNetworkID,
-			}.Build())
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := virtualNetworksClient.Delete(deleteCtx, privatev1.VirtualNetworksDeleteRequest_builder{
+						Id: virtualNetworkID,
+					}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := virtualNetworksClient.Get(getCtx, privatev1.VirtualNetworksGetRequest_builder{
+						Id: virtualNetworkID,
+					}.Build())
+					return getErr
+				})
 		})
 		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
 			resp, getErr := virtualNetworksClient.Get(getCtx, privatev1.VirtualNetworksGetRequest_builder{
@@ -827,9 +881,19 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func(cleanupCtx context.Context) {
-			_, _ = subnetsClient.Delete(cleanupCtx, privatev1.SubnetsDeleteRequest_builder{
-				Id: subnetID,
-			}.Build())
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := subnetsClient.Delete(deleteCtx, privatev1.SubnetsDeleteRequest_builder{
+						Id: subnetID,
+					}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := subnetsClient.Get(getCtx, privatev1.SubnetsGetRequest_builder{
+						Id: subnetID,
+					}.Build())
+					return getErr
+				})
 		})
 		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
 			resp, getErr := subnetsClient.Get(getCtx, privatev1.SubnetsGetRequest_builder{
@@ -860,6 +924,17 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		clusterId = createClusterResp.GetObject().GetId()
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := clustersClient.Delete(deleteCtx, publicv1.ClustersDeleteRequest_builder{Id: clusterId}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := privateClustersClient.Get(getCtx, privatev1.ClustersGetRequest_builder{Id: clusterId}.Build())
+					return getErr
+				})
+		})
 		expectNetworkingResourceHub(ctx, networkClassHubID, func(getCtx context.Context) (string, error) {
 			resp, getErr := privateClustersClient.Get(getCtx, privatev1.ClustersGetRequest_builder{
 				Id: clusterId,
@@ -869,34 +944,6 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}
 			return resp.GetObject().GetStatus().GetHub(), nil
 		})
-	})
-
-	AfterEach(func() {
-		if externalIPId != "" {
-			_, _ = externalIPsClient.Delete(ctx, publicv1.ExternalIPsDeleteRequest_builder{
-				Id: externalIPId,
-			}.Build())
-		}
-		if poolId != "" {
-			_, _ = poolsClient.Delete(ctx, privatev1.ExternalIPPoolsDeleteRequest_builder{
-				Id: poolId,
-			}.Build())
-		}
-		if clusterId != "" {
-			clustersClient.Delete(ctx, publicv1.ClustersDeleteRequest_builder{
-				Id: clusterId,
-			}.Build())
-		}
-		if templateId != "" {
-			clusterTemplatesClient.Delete(ctx, privatev1.ClusterTemplatesDeleteRequest_builder{
-				Id: templateId,
-			}.Build())
-		}
-		if bmitName != "" {
-			instanceTypesClient.Delete(ctx, privatev1.BareMetalInstanceTypesDeleteRequest_builder{
-				Id: bmitName,
-			}.Build())
-		}
 	})
 
 	It("Can create, get, and list an ExternalIPAttachment with cluster target", func() {
@@ -916,10 +963,16 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		Expect(response).ToNot(BeNil())
-		DeferCleanup(func() {
-			attachmentsClient.Delete(ctx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{
-				Id: attachmentId,
-			}.Build())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := attachmentsClient.Delete(deleteCtx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachmentId}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := privateAttachmentsClient.Get(getCtx, privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentId}.Build())
+					return getErr
+				})
 		})
 
 		attachment := response.GetObject()
@@ -965,10 +1018,16 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func() {
-			attachmentsClient.Delete(ctx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{
-				Id: attachmentId1,
-			}.Build())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			deleteAndWaitForComputeInstanceFixtureResource(cleanupCtx,
+				func(deleteCtx context.Context) error {
+					_, deleteErr := attachmentsClient.Delete(deleteCtx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachmentId1}.Build())
+					return deleteErr
+				},
+				func(getCtx context.Context) error {
+					_, getErr := privateAttachmentsClient.Get(getCtx, privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentId1}.Build())
+					return getErr
+				})
 		})
 
 		attachmentId2 := fmt.Sprintf("test-att-%s", uuid.New())
@@ -1119,10 +1178,15 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		Expect(ipResp.GetObject().GetStatus().GetAttribution().GetCluster().GetId()).To(Equal(clusterId))
 		Expect(ipResp.GetObject().GetStatus().GetAttachmentTransitionTime()).ToNot(BeNil())
 
-		_, err = attachmentsClient.Delete(ctx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{
-			Id: attachmentId,
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		deleteAndWaitForComputeInstanceFixtureResource(ctx,
+			func(deleteCtx context.Context) error {
+				_, deleteErr := attachmentsClient.Delete(deleteCtx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachmentId}.Build())
+				return deleteErr
+			},
+			func(getCtx context.Context) error {
+				_, getErr := privateAttachmentsClient.Get(getCtx, privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentId}.Build())
+				return getErr
+			})
 
 		ipResp, err = privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{
 			Id: externalIPId,
