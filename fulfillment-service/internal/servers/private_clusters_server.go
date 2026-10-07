@@ -1169,7 +1169,7 @@ func (s *PrivateClustersServer) validateNetworkAttachmentState(ctx context.Conte
 		})
 	}
 
-	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.networkClassesDao)
+	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
 	if err != nil {
 		return err
 	}

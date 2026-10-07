@@ -129,7 +129,7 @@ var _ = Describe("Private virtual networks server", func() {
 				Build()
 			Expect(err).ToNot(HaveOccurred())
 
-			hubID, err := canonicalNetworkingHubID(ctx, networkClassesDAO)
+			hubID, err := canonicalNetworkingHubID(ctx, logger, networkClassesDAO)
 			Expect(hubID).To(BeEmpty())
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
 			Expect(err.Error()).To(ContainSubstring("canonical networking Hub assignment is pending"))

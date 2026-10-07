@@ -278,13 +278,13 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 		clusterResponse, err := clustersClient.Create(ctx, publicv1.ClustersCreateRequest_builder{
 			Object: publicv1.Cluster_builder{
 				Metadata: publicv1.Metadata_builder{Name: fmt.Sprintf("test-hub-a-cluster-%s", uuid.New()[24:])}.Build(),
-					Spec: publicv1.ClusterSpec_builder{
-						Template: publicv1.ClusterTemplateReference_builder{Id: clusterTemplateID}.Build(),
-						NodeSets: testClusterNodeSets(instanceTypeID, 1),
-						NetworkAttachment: publicv1.ClusterNetworkAttachment_builder{
-							Subnet: publicv1.SubnetLocalReference_builder{Id: subnetID}.Build(),
-						}.Build(),
+				Spec: publicv1.ClusterSpec_builder{
+					Template: publicv1.ClusterTemplateReference_builder{Id: clusterTemplateID}.Build(),
+					NodeSets: testClusterNodeSets(instanceTypeID, 1),
+					NetworkAttachment: publicv1.ClusterNetworkAttachment_builder{
+						Subnet: publicv1.SubnetLocalReference_builder{Id: subnetID}.Build(),
 					}.Build(),
+				}.Build(),
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
