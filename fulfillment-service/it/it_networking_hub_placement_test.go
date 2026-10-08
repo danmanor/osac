@@ -467,6 +467,7 @@ var _ = Describe("Canonical networking Hub cache-entry routing", func() {
 				Metadata: publicv1.Metadata_builder{Name: crossHubClusterID}.Build(),
 				Spec: publicv1.ClusterSpec_builder{
 					Template: publicv1.ClusterTemplateReference_builder{Id: clusterTemplateID}.Build(),
+					NodeSets: testClusterNodeSets(instanceTypeID, 1),
 					NetworkAttachment: publicv1.ClusterNetworkAttachment_builder{
 						Subnet: publicv1.SubnetLocalReference_builder{Id: subnetID}.Build(),
 					}.Build(),
