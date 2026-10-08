@@ -220,7 +220,7 @@ func verifyTenantRemovedFromKeycloak(ctx context.Context, name string) {
 		},
 		// Keycloak organization deletion can complete asynchronously after the
 		// Fulfillment tenant and its finalizer have already been removed.
-		time.Minute*2,
+		2*time.Minute,
 		time.Second,
 	).Should(Succeed())
 }
