@@ -6,7 +6,7 @@ choosing a manager role through packaging its Ansible role, registering data
 models and managers, and checking the resulting behavior.
 
 > **Implementation status:** This guide describes the target contract in the
-> [Network Manager Integration Contract Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md).
+> [Network Manager Integration Contract Design in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files).
 > The current OSAC code still uses the legacy ConfigMap-based manager registry
 > and the `implementation-strategy` path to select provider playbooks that
 > include roles from the historically named `osac.templates` collection.
@@ -440,7 +440,7 @@ osac_job_vars:
         egress: []
 ```
 
-The [manager contract's workload attachment input](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#workload-attachment-policy-input)
+The [manager contract's workload attachment input in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 defines the physical-interface variants and all rule constraints.
 
 A Fabric task returns values according to the provider's implementation of
@@ -756,7 +756,7 @@ behavior and implements all assigned operations. Registration success alone
 proves only that the declared objects and model references passed validation.
 
 Use the acceptance checks below and the cases in the manager contract's
-[Test Plan](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
+[Test Plan in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 as the provider conformance suite. Run them against the AAP execution
 environment and actual backend that will be selected. OSAC may use these cases
 for its own supported implementations; it does not run a hosted provider
@@ -878,6 +878,5 @@ target, including FabricDomain when Ethernet east-west is enabled.
 
 - [Unified Networking PRD](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/prd.md)
 - [Unified Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/design.md)
-- [Network Manager Integration Contract PRD](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/prd.md)
-- [Network Manager Integration Contract Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md)
+- [Network Manager Integration Contract PRD, Design, and Test Plan (proposal PR #357)](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 - [Multi-Fabric East-West Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1382-multi-fabric-east-west-networking/design.md)
