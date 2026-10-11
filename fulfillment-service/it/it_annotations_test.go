@@ -40,6 +40,10 @@ var _ = Describe("Annotations", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
+		// Cluster creates may inherit a persisted tenant-default subnet, which
+		// requires the deployment's canonical networking Hub to be available.
+		getOrCreateTenantDefaultNetworkClassFixture(ctx)
+
 		clustersClient = publicv1.NewClustersClient(tool.ExternalView().UserConn())
 		instanceTypesClient = privatev1.NewBareMetalInstanceTypesClient(tool.InternalView().AdminConn())
 		templatesClient = privatev1.NewClusterTemplatesClient(tool.InternalView().AdminConn())

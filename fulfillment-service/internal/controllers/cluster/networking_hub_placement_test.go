@@ -44,6 +44,20 @@ func (f *fakeClusterNetworkingHubReader) Resolve(context.Context) (controllers.N
 	return f.resolution, f.err
 }
 
+func readyClusterNetworkingHubReader(id, namespace string, client clnt.Client) *fakeClusterNetworkingHubReader {
+	return &fakeClusterNetworkingHubReader{
+		resolution: controllers.NetworkingHubResolution{
+			NetworkingHub: controllers.NetworkingHub{
+				ID:        id,
+				Namespace: namespace,
+				Client:    client,
+			},
+			HubID: id,
+			State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+		},
+	}
+}
+
 func newClusterNetworkingHubKubeClient() clnt.Client {
 	scheme := runtime.NewScheme()
 	Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
@@ -63,18 +77,9 @@ var _ = Describe("Cluster networking Hub placement", func() {
 	})
 
 	newReader := func(err error) *fakeClusterNetworkingHubReader {
-		return &fakeClusterNetworkingHubReader{
-			resolution: controllers.NetworkingHubResolution{
-				NetworkingHub: controllers.NetworkingHub{
-					ID:        canonicalHubID,
-					Namespace: hubNamespace,
-					Client:    newClusterNetworkingHubKubeClient(),
-				},
-				HubID: canonicalHubID,
-				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
-			},
-			err: err,
-		}
+		reader := readyClusterNetworkingHubReader(canonicalHubID, hubNamespace, newClusterNetworkingHubKubeClient())
+		reader.err = err
+		return reader
 	}
 
 	newNetworkedTask := func(reader controllers.NetworkingHubReader, assignedHub string) *task {

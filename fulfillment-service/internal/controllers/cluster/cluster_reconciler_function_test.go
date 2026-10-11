@@ -596,14 +596,6 @@ var _ = Describe("update tenant annotation", func() {
 			WithScheme(scheme).
 			Build()
 
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), hubID).
-			Return(&controllers.HubEntry{
-				Namespace: hubNamespace,
-				Client:    fakeClient,
-			}, nil)
-
 		cluster := privatev1.Cluster_builder{
 			Id: clusterID,
 			Metadata: privatev1.Metadata_builder{
@@ -630,9 +622,9 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				logger:              logger,
+				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				maskCalculator:      nil,
 			},
 			cluster: cluster,
 		}
@@ -658,14 +650,6 @@ var _ = Describe("update tenant annotation", func() {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			Build()
-
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), hubID).
-			Return(&controllers.HubEntry{
-				Namespace: hubNamespace,
-				Client:    fakeClient,
-			}, nil)
 
 		cluster := privatev1.Cluster_builder{
 			Id: clusterID,
@@ -700,9 +684,9 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				logger:              logger,
+				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				maskCalculator:      nil,
 			},
 			cluster: cluster,
 		}
