@@ -177,6 +177,7 @@ var _ = Describe("Compute instances server", func() {
 				}.Build(),
 				Status: privatev1.SecurityGroupStatus_builder{
 					State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())

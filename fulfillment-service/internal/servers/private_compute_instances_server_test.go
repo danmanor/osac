@@ -121,6 +121,7 @@ var _ = Describe("Private compute instances server", func() {
 			}.Build(),
 			Status: privatev1.SecurityGroupStatus_builder{
 				State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+				Hub:   "network-hub-a",
 			}.Build(),
 		}.Build()).Do(ctx)
 		Expect(err).ToNot(HaveOccurred())
@@ -4198,6 +4199,15 @@ var _ = Describe("Catalog materialized defaults", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
+			networkClass, err := server.networkClassesDao.Create().SetObject(privatev1.NetworkClass_builder{
+				FabricManager: new("test-strategy"),
+				Metadata:      privatev1.Metadata_builder{Name: "win-network-class", Tenant: testTenant}.Build(),
+				Status: privatev1.NetworkClassStatus_builder{
+					State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+					Hub:   "network-hub-a",
+				}.Build(),
+			}.Build()).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
 
 			// Create a VirtualNetwork and Subnet for network validation.
 			vnDao, err := dao.NewGenericDAO[*privatev1.VirtualNetwork]().
@@ -4211,6 +4221,13 @@ var _ = Describe("Catalog materialized defaults", func() {
 					Name:   "win-vnet",
 					Tenant: testTenant,
 					Labels: map[string]string{defaultLabel: "true"},
+				}.Build(),
+				Spec: privatev1.VirtualNetworkSpec_builder{
+					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClass.GetObject().GetId()}.Build(),
+				}.Build(),
+				Status: privatev1.VirtualNetworkStatus_builder{
+					State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -4226,6 +4243,7 @@ var _ = Describe("Catalog materialized defaults", func() {
 				}.Build(),
 				Status: privatev1.SubnetStatus_builder{
 					State: privatev1.SubnetState_SUBNET_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
@@ -4249,6 +4267,7 @@ var _ = Describe("Catalog materialized defaults", func() {
 				}.Build(),
 				Status: privatev1.SecurityGroupStatus_builder{
 					State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+					Hub:   "network-hub-a",
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
