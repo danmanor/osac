@@ -223,7 +223,7 @@ var _ = Describe("Reflection helper", func() {
 		})
 
 		DescribeTable(
-			"recognizes public networking resources as immutable",
+			"recognizes public networking resources without update support as immutable",
 			func(objectType string) {
 				objectHelper := helper.Lookup(objectType)
 				Expect(objectHelper).ToNot(BeNil())
@@ -231,11 +231,16 @@ var _ = Describe("Reflection helper", func() {
 			},
 			Entry("VirtualNetwork", "virtualnetwork"),
 			Entry("Subnet", "subnet"),
-			Entry("SecurityGroup", "securitygroup"),
 			Entry("ExternalIP", "externalip"),
 			Entry("ExternalIPAttachment", "externalipattachment"),
 			Entry("NATGateway", "natgateway"),
 		)
+
+		It("recognizes public SecurityGroups as updatable for rule editing", func() {
+			objectHelper := helper.Lookup("securitygroup")
+			Expect(objectHelper).ToNot(BeNil())
+			Expect(objectHelper.IsUpdatable()).To(BeTrue())
+		})
 
 		It("rejects updates for a public networking resource without invoking gRPC", func() {
 			objectHelper := helper.Lookup("virtualnetwork")
