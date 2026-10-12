@@ -173,6 +173,63 @@ var _ = Describe("SecurityGroups server", func() {
 			Expect(object.GetSpec().GetEgress()).To(HaveLen(1))
 		})
 
+		It("updates both rule lists while preserving the security group identity and parent", func() {
+			name := fmt.Sprintf("test-%s", uuid.NewString()[:8])
+			created, err := server.Create(ctx, publicv1.SecurityGroupsCreateRequest_builder{
+				Object: publicv1.SecurityGroup_builder{
+					Metadata: publicv1.Metadata_builder{Name: name}.Build(),
+					Spec: publicv1.SecurityGroupSpec_builder{
+						VirtualNetwork: publicv1.VirtualNetworkLocalReference_builder{Id: virtualNetworkID}.Build(),
+						Ingress: []*publicv1.SecurityRule{{
+							Protocol: publicv1.Protocol_PROTOCOL_TCP,
+							PortFrom: new(int32(80)),
+							PortTo:   new(int32(80)),
+							Ipv4Cidr: new("0.0.0.0/0"),
+						}},
+						Egress: []*publicv1.SecurityRule{{
+							Protocol: publicv1.Protocol_PROTOCOL_ALL,
+							Ipv4Cidr: new("0.0.0.0/0"),
+						}},
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+
+			updated, err := server.Update(ctx, publicv1.SecurityGroupsUpdateRequest_builder{
+				Object: publicv1.SecurityGroup_builder{
+					Id:       created.GetObject().GetId(),
+					Metadata: publicv1.Metadata_builder{Name: "changed-name"}.Build(),
+					Spec: publicv1.SecurityGroupSpec_builder{
+						VirtualNetwork: publicv1.VirtualNetworkLocalReference_builder{Id: "changed-vnet"}.Build(),
+						Ingress: []*publicv1.SecurityRule{{
+							Protocol: publicv1.Protocol_PROTOCOL_UDP,
+							PortFrom: new(int32(53)),
+							PortTo:   new(int32(53)),
+							Ipv4Cidr: new("10.0.0.0/24"),
+						}},
+						Egress: []*publicv1.SecurityRule{{
+							Protocol: publicv1.Protocol_PROTOCOL_TCP,
+							PortFrom: new(int32(443)),
+							PortTo:   new(int32(443)),
+							Ipv4Cidr: new("192.168.0.0/16"),
+						}},
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+
+			object := updated.GetObject()
+			Expect(object.GetId()).To(Equal(created.GetObject().GetId()))
+			Expect(object.GetMetadata().GetName()).To(Equal(name))
+			Expect(object.GetMetadata().GetAnnotations()["osac.openshift.io/owner-reference"]).To(Equal(virtualNetworkID))
+			Expect(object.GetSpec().GetVirtualNetwork().GetId()).To(Equal(virtualNetworkID))
+			Expect(object.GetSpec().GetIngress()).To(HaveLen(1))
+			Expect(object.GetSpec().GetIngress()[0].GetProtocol()).To(Equal(publicv1.Protocol_PROTOCOL_UDP))
+			Expect(object.GetSpec().GetIngress()[0].GetPortFrom()).To(Equal(int32(53)))
+			Expect(object.GetSpec().GetEgress()).To(HaveLen(1))
+			Expect(object.GetSpec().GetEgress()[0].GetPortFrom()).To(Equal(int32(443)))
+		})
+
 		It("List objects", func() {
 			// Create a few objects:
 			const count = 10

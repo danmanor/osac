@@ -53,7 +53,13 @@ superseded or extended design explicitly.
 6. **Create/read/delete operations:** Networking specifications and metadata are
    immutable after creation. Read means List/Get. Replacement requires delete
    and recreate under dependency guards. Internal status/condition updates are
-   permitted; they do not create a tenant Update/Patch API.
+   permitted; they do not create a tenant Update/Patch API. The temporary
+   OSAC-5679 exception exposes `SecurityGroups.Update` for replacing the full
+   ingress and egress rule lists only; the public server fixes the update mask
+   so the group ID, name, parent VirtualNetwork, metadata, and status remain
+   unchanged. This is a scoped extension to the immutable target contract in
+   the OSAC-1433 unified networking design. Provider-side rule reconciliation
+   limitations remain tracked separately in OSAC-4888.
 7. **One tenant attachment:** Each VM, bare-metal instance, or cluster has at most
    one tenant network attachment. Its networking is fixed at creation. Preserve
    the resource-specific message types and compatibility rules below.
