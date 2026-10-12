@@ -563,7 +563,7 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 					Name: "ignored-name-change",
 				}.Build(),
 				Spec: publicv1.SecurityGroupSpec_builder{
-					VirtualNetwork: publicv1.VirtualNetworkLocalReference_builder{Id: "ignored-vnet-change"}.Build(),
+					VirtualNetwork: publicv1.VirtualNetworkLocalReference_builder{Id: fixture.virtualNetworkID}.Build(),
 					Ingress:        []*publicv1.SecurityRule{updatedIngress},
 					Egress:         []*publicv1.SecurityRule{updatedEgress},
 				}.Build(),
