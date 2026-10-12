@@ -269,7 +269,7 @@ var _ = Describe("Public clusters", func() {
 
 	It("rejects public updates that change the network attachment", func() {
 		// Reuse the deployment's singleton NetworkClass from BeforeEach.
-		network := createCatalogItemSubnetInClassFixture(ctx, usersGroup, "", networkClassID)
+		network := createCatalogItemNetworkInClassFixture(ctx, usersGroup, "", networkClassID)
 		createResponse, err := clustersClient.Create(ctx, publicv1.ClustersCreateRequest_builder{
 			Object: publicv1.Cluster_builder{
 				Metadata: publicv1.Metadata_builder{
