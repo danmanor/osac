@@ -314,6 +314,12 @@ var _ = Describe("Compute instances server", func() {
 					}.Build(),
 					Status: publicv1.ComputeInstanceStatus_builder{
 						State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING,
+						ComputeNetworkAttachmentStatuses: []*publicv1.ComputeNetworkAttachmentStatus{
+							publicv1.ComputeNetworkAttachmentStatus_builder{
+								SubnetRef: "spoofed-subnet",
+								IpAddress: "192.0.2.99",
+							}.Build(),
+						},
 					}.Build(),
 				}.Build(),
 			}.Build())
@@ -324,6 +330,7 @@ var _ = Describe("Compute instances server", func() {
 			Expect(object.GetId()).ToNot(BeEmpty())
 			Expect(object.GetSpec().GetTemplate().GetId()).To(Equal("general.small"))
 			Expect(object.GetStatus().GetState()).To(Equal(publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING))
+			Expect(object.GetStatus().GetComputeNetworkAttachmentStatuses()).To(BeEmpty())
 		})
 
 		It("List objects", func() {

@@ -262,7 +262,7 @@ message ComputeInstanceStatus {
   string hub = 7 [(cleanapi.field).private = true];
 
   // Subnet and IP details reported for each configured network attachment.
-  repeated ComputeNetworkAttachmentStatus compute_network_attachment_statuses = 8;
+  repeated ComputeNetworkAttachmentStatus compute_network_attachment_statuses = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // Contains the Subnet and IPv4 address reported for a network attachment.

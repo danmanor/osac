@@ -21,17 +21,32 @@ import (
 	. "github.com/onsi/gomega"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 	publicv1 "github.com/osac-project/osac/proto/gen/osac/public/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var _ = Describe("Compute instance network attachment status", Label("compute-networking"), func() {
 	It("persists per-attachment status and exposes it through the public API", func(ctx context.Context) {
-		network := createCatalogItemNetworkFixture(ctx, usersGroup, "")
+		ensureTenantDefaultNetworkingFixture(ctx, usersGroup, "")
+		network := getTenantDefaultNetworkFixture(ctx, usersGroup, "")
 		template := createCatalogItemComputeInstanceProvisioningTemplateFixture(ctx, nil)
-		instance, err := createComputeInstanceFixture(ctx, tool.ExternalView().UserConn(), publicv1.ComputeInstanceSpec_builder{
-			Template:           publicv1.ComputeInstanceTemplateReference_builder{Id: template}.Build(),
-			NetworkAttachments: []*publicv1.ComputeNetworkAttachment{network.computeInstanceAttachment()},
+		publicClient := publicv1.NewComputeInstancesClient(tool.ExternalView().UserConn())
+		created, err := publicClient.Create(ctx, publicv1.ComputeInstancesCreateRequest_builder{
+			Object: publicv1.ComputeInstance_builder{
+				Metadata: publicv1.Metadata_builder{Name: catalogItemFixtureName()}.Build(),
+				Spec: publicv1.ComputeInstanceSpec_builder{
+					Template:           publicv1.ComputeInstanceTemplateReference_builder{Id: template}.Build(),
+					NetworkAttachments: []*publicv1.ComputeNetworkAttachment{network.computeInstanceAttachment()},
+				}.Build(),
+			}.Build(),
 		}.Build())
 		Expect(err).NotTo(HaveOccurred())
+		instance := created.GetObject()
+		// The contract assertions do not depend on provider teardown, which is asynchronous.
+		deferCatalogItemFixtureDeletion(func(ctx context.Context) error {
+			_, err := publicClient.Delete(ctx, publicv1.ComputeInstancesDeleteRequest_builder{Id: instance.GetId()}.Build())
+			return err
+		}, nil)
 
 		attachmentStatus := privatev1.ComputeNetworkAttachmentStatus_builder{
 			SubnetRef: network.subnetID,
@@ -49,10 +64,71 @@ var _ = Describe("Compute instance network attachment status", Label("compute-ne
 		}.Build())
 		Expect(err).NotTo(HaveOccurred())
 
-		response, err := publicv1.NewComputeInstancesClient(tool.ExternalView().UserConn()).Get(ctx,
+		spoofedStatus := publicv1.ComputeNetworkAttachmentStatus_builder{
+			SubnetRef: "spoofed-subnet",
+			IpAddress: "192.0.2.99",
+		}.Build()
+		response, err := publicClient.Get(ctx,
 			publicv1.ComputeInstancesGetRequest_builder{Id: instance.GetId()}.Build())
 		Expect(err).NotTo(HaveOccurred())
-		statuses := response.GetObject().GetStatus().GetComputeNetworkAttachmentStatuses()
+		publicObject := response.GetObject()
+		statuses := publicObject.GetStatus().GetComputeNetworkAttachmentStatuses()
+		Expect(statuses).To(HaveLen(1))
+		Expect(statuses[0].GetSubnetRef()).To(Equal(network.subnetID))
+		Expect(statuses[0].GetIpAddress()).To(Equal("192.0.2.42"))
+		publicObject.SetStatus(nil)
+		_, err = publicClient.Update(ctx, publicv1.ComputeInstancesUpdateRequest_builder{
+			Object: publicObject,
+		}.Build())
+		Expect(err).NotTo(HaveOccurred())
+
+		response, err = publicClient.Get(ctx,
+			publicv1.ComputeInstancesGetRequest_builder{Id: instance.GetId()}.Build())
+		Expect(err).NotTo(HaveOccurred())
+		publicObject = response.GetObject()
+		statuses = publicObject.GetStatus().GetComputeNetworkAttachmentStatuses()
+		Expect(statuses).To(HaveLen(1))
+		Expect(statuses[0].GetSubnetRef()).To(Equal(network.subnetID))
+		Expect(statuses[0].GetIpAddress()).To(Equal("192.0.2.42"))
+		publicObject.GetStatus().SetComputeNetworkAttachmentStatuses(
+			[]*publicv1.ComputeNetworkAttachmentStatus{spoofedStatus},
+		)
+		_, err = publicClient.Update(ctx, publicv1.ComputeInstancesUpdateRequest_builder{
+			Object: publicObject,
+		}.Build())
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = publicClient.Update(ctx, publicv1.ComputeInstancesUpdateRequest_builder{
+			Object: publicv1.ComputeInstance_builder{
+				Id: instance.GetId(),
+				Status: publicv1.ComputeInstanceStatus_builder{
+					ComputeNetworkAttachmentStatuses: []*publicv1.ComputeNetworkAttachmentStatus{spoofedStatus},
+				}.Build(),
+			}.Build(),
+			UpdateMask: catalogItemUpdateMask("status.compute_network_attachment_statuses"),
+		}.Build())
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		for _, path := range []string{
+			"status. compute_network_attachment_statuses",
+			"status..compute_network_attachment_statuses",
+			" status.compute_network_attachment_statuses ",
+		} {
+			_, err = publicClient.Update(ctx, publicv1.ComputeInstancesUpdateRequest_builder{
+				Object: publicv1.ComputeInstance_builder{
+					Id: instance.GetId(),
+					Status: publicv1.ComputeInstanceStatus_builder{
+						ComputeNetworkAttachmentStatuses: []*publicv1.ComputeNetworkAttachmentStatus{spoofedStatus},
+					}.Build(),
+				}.Build(),
+				UpdateMask: catalogItemUpdateMask(path),
+			}.Build())
+			Expect(status.Code(err)).To(Equal(codes.InvalidArgument), "mask path %q", path)
+		}
+
+		response, err = publicClient.Get(ctx,
+			publicv1.ComputeInstancesGetRequest_builder{Id: instance.GetId()}.Build())
+		Expect(err).NotTo(HaveOccurred())
+		statuses = response.GetObject().GetStatus().GetComputeNetworkAttachmentStatuses()
 		Expect(statuses).To(HaveLen(1))
 		Expect(statuses[0].GetSubnetRef()).To(Equal(network.subnetID))
 		Expect(statuses[0].GetIpAddress()).To(Equal("192.0.2.42"))
