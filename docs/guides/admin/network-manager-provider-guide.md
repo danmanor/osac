@@ -213,7 +213,7 @@ VirtualNetwork operations, physical workload interfaces, or Fabric Manager
 work. A Kubernetes Manager is optional for deployments without VM workloads.
 
 The normative resource meanings and tenant-visible behavior are in the
-[Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-unified-networking/design.md).
+[Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-unified-networking/design.md).
 In particular, implementations must preserve these shared semantics:
 
 - A `VirtualNetwork` is a Layer 3 (L3) routing domain. Subnets in it can route
@@ -378,7 +378,7 @@ send an operation string or map one operation name to another.
 | Create/delete VirtualNetwork | Fabric | None | `create_virtual_network` / `delete_virtual_network` |
 | Create/delete Subnet | Fabric, then Kubernetes when configured; reverse order for deletion | None | `create_subnet` / `delete_subnet` |
 | Create/delete FabricDomain | Fabric when the selected NetworkClass enables the declared east-west capability | None | `create_fabric_domain` / `delete_fabric_domain` |
-| Apply/delete network attachment | Kubernetes for `overlay`; Fabric for `physical` | `SubnetAttachment` request targeting one workload; CaaS uses one BaremetalInstance request per worker | `apply_network_attachment` / `delete_network_attachment` |
+| Apply/delete SubnetAttachment | Kubernetes for `overlay`; Fabric for `physical` | `SubnetAttachment` request targeting one workload; CaaS uses one BaremetalInstance request per worker | `apply_subnet_attachment` / `delete_subnet_attachment` |
 | Create/delete ExternalIPPool | Fabric | None | `create_external_ip_pool` / `delete_external_ip_pool` |
 | Allocate/release ExternalIP | Fabric | None | `create_external_ip` / `delete_external_ip` |
 | Create/delete ExternalIPAttachment | Fabric | `ComputeInstance`, `Cluster`, `BaremetalInstance` | `attach_external_ip` / `detach_external_ip` |
@@ -391,7 +391,7 @@ filename stem in the table is the Ansible
 `tasks_from` value; the filename in the collection has the `.yml` extension.
 Each manager implements the task names assigned to its role with its own
 backend behavior, including an explicitly documented no-op where chosen.
-`apply_network_attachment` is one OSAC action with two role-specific
+`apply_subnet_attachment` is one OSAC action with two role-specific
 implementations. For a physical interface, the Fabric Manager maps the
 selected host port to the provider segment for the requested Subnet and
 installs policy before traffic is enabled. For an overlay interface, the
@@ -416,8 +416,8 @@ and result envelope.
 
 | Service extension | Additional manager task | Purpose |
 |---|---|---|
-| BMaaS; also used for CaaS worker instances | Fabric `query_dhcp_lease` for a `SubnetAttachment` targeting a `BaremetalInstance` | Discover the selected physical interface's tenant DHCP lease after network handoff. See the [BMaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1437-bmaas-networking/design.md). |
-| CaaS | Fabric `reserve_cluster_ingress_ip` / `release_cluster_ingress_ip` for a `ClusterOrder` | Reserve and release one tenant-Subnet ingress address for a guest cluster. See the [CaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1436-caas-networking/design.md). |
+| BMaaS; also used for CaaS worker instances | Fabric `query_dhcp_lease` for a `SubnetAttachment` targeting a `BaremetalInstance` | Discover the selected physical interface's tenant DHCP lease after network handoff. See the [BMaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1437-bmaas-networking/design.md). |
+| CaaS | Fabric `reserve_cluster_ingress_ip` / `release_cluster_ingress_ip` for a `ClusterOrder` | Reserve and release one tenant-Subnet ingress address for a guest cluster. See the [CaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1436-caas-networking/design.md). |
 
 Providers implement these additional tasks only when they offer the
 corresponding service extension. The CaaS reservation task uses the configured
@@ -466,7 +466,7 @@ OSAC passes `osac_network_task_from` separately from the
 `osac_job_vars` object. OSAC chooses the task filename stem; a provider role
 must not override it. The common `osac_job_vars` fields are summarized below. Exact types and
 task-specific presence rules are in the manager contract’s
-[canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
+[canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
 
 | Field | Meaning |
 |---|---|
@@ -508,7 +508,7 @@ namespace, VM name/UID and logical interface selector. Use that immutable
 placement to address the exact VM; `target` remains the ComputeInstance API
 projection and is not the KubeVirt VM object.
 
-`apply_network_attachment` has one OSAC task name, but its role and ordering
+`apply_subnet_attachment` has one OSAC task name, but its role and ordering
 follow the normalized interface type and the workload service's lifecycle.
 
 For a physical bare-metal interface:
@@ -518,7 +518,7 @@ For a physical bare-metal interface:
 2. After provisioning, BMaaS creates the target-only `SubnetAttachment`
    request. The networking controller resolves that request back to the BMI,
    selected port, Subnet, and effective SecurityGroup rules.
-3. OSAC dispatches Fabric `apply_network_attachment`. The Fabric Manager
+3. OSAC dispatches Fabric `apply_subnet_attachment`. The Fabric Manager
    reconciles the selected switch port's membership to the provider segment
    backing the requested Subnet and installs the attachment policy. OSAC
    records successful apply before BMaaS proceeds; the server is not reported
@@ -533,7 +533,7 @@ For a VM overlay interface:
 2. VMaaS creates the VM halted, with the Subnet network reference and matching
    interface already in the initial VM spec, then creates its target-only
    `SubnetAttachment` request.
-3. OSAC dispatches Kubernetes `apply_network_attachment`. The Kubernetes
+3. OSAC dispatches Kubernetes `apply_subnet_attachment`. The Kubernetes
    Manager verifies the exact VM and its predeclared Subnet/interface
    reference, then installs policy. It must support policy setup before a VMI
    exists and may not patch the VM's network/interface fields. VMaaS starts
@@ -553,12 +553,12 @@ NetworkAttachmentDefinition named `primary`. The VM template creates a halted
 VM with that reference and its matching interface already in the initial spec.
 OSAC passes the exact VM
 name/UID and `primary` interface selector in `resource.spec.placement` to
-`apply_network_attachment`. Your Kubernetes Manager verifies the VM's Subnet
+`apply_subnet_attachment`. Your Kubernetes Manager verifies the VM's Subnet
 reference and installs policy before success; it does not patch the network
 or interface fields. OSAC owns compute/disks and start/stop and preserves the
 initial networking fields. An identical replay after start verifies the
 existing configuration; it must not rewrite a live interface. The
-[normative VM field-ownership contract](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1435-vmaas-networking/design.md#vm-placement-and-interface-ownership)
+[normative VM field-ownership contract](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1435-vmaas-networking/design.md#vm-placement-and-interface-ownership)
 specifies how the reference is supplied, exact fields, identity checks and
 cleanup.
 
@@ -570,7 +570,7 @@ registration identities, and the normalized `network_attachment` containing
 the resolved Subnet, interface descriptor, and complete SecurityGroup rules.
 NetworkData owner context uses stable API resource IDs and current projection
 UIDs for applicable NetworkClass, VirtualNetwork, and Subnet owners. The
-[canonical serialized task inputs and attachment schema](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs)
+[canonical serialized task inputs and attachment schema](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs)
 are normative; this guide does not define a second payload shape.
 
 A provider's interface baseline allows only the selected interface/Subnet's
@@ -668,7 +668,7 @@ task-specific field required by that task. For the base tasks, these are
 `create_external_ip`, `data.dhcp_leases` for `query_dhcp_lease`, or
 `data.cluster_ingress.address` for `reserve_cluster_ingress_ip`. Optional
 capability tasks use the additional result shape defined by their shared
-[task/result contract](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#manager-result-envelope).
+[task/result contract](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#manager-result-envelope).
 If backend work fails, fail the Ansible task with a diagnostic; do not publish
 a success result for incomplete work.
 
@@ -838,7 +838,7 @@ fulfillment-service APIs:
 3. Create the `NetworkClass` that selects those logical manager names.
 
 For exact common and per-task payload keys, types and required/absent rules,
-use the [canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
+use the [canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
 The release qualification bundle supplies complete producer/consumer fixtures;
 small snippets in this guide illustrate one field and are not full job inputs.
 
@@ -1015,7 +1015,7 @@ proves only that the declared objects and model references passed validation.
 OSAC must deliver a provider-runnable qualification selection from its own
 `tests/e2e` pytest suite. Providers run the same assertions as OSAC against
 their deployed managers and real backend; they do not rewrite the scenarios.
-The detailed [contract test plan](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
+The detailed [contract test plan](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
 defines the required coverage. This is a delivery requirement: the existing
 suite is a starting point, not yet a complete packaged qualification runner.
 
@@ -1233,7 +1233,7 @@ implementations are not evidence of complete behavioral conformance. [User]
 
 ## Related documents
 
-- [Unified Networking PRD](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-unified-networking/prd.md)
-- [Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/2799362/enhancements/OSAC-1433-unified-networking/design.md)
+- [Unified Networking PRD](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-unified-networking/prd.md)
+- [Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/cd108f9/enhancements/OSAC-1433-unified-networking/design.md)
 - [Network Manager Integration Contract PRD, Design, and Test Plan (proposal PR #357)](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 - [Multi-Fabric East-West Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1382-multi-fabric-east-west-networking/design.md)
