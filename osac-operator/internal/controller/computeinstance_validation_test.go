@@ -112,6 +112,19 @@ var _ = Describe("ComputeInstance CEL Validation", func() {
 		Expect(k8sClient.Create(ctx, instance)).To(Succeed())
 	})
 
+	It("should reject multiple networkAttachments", func() {
+		instance := createValidInstance("test-multiple-network-attachments")
+		instance.Spec.NetworkAttachments = []osacv1alpha1.ComputeNetworkAttachment{
+			{SubnetRef: "subnet-a"},
+			{SubnetRef: "subnet-b"},
+		}
+
+		err := k8sClient.Create(ctx, instance)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInvalid(err)).To(BeTrue())
+		Expect(err.Error()).To(ContainSubstring("at most one network attachment is supported"))
+	})
+
 	Describe("NetworkAttachment immutability", func() {
 		It("should reject replacing a subnetRef", func() {
 			instance := createValidInstance("test-subnet-replacement")

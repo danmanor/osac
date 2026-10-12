@@ -1075,21 +1075,13 @@ var _ = Describe("buildSpec with subnetRef", func() {
 		Expect(spec.NetworkAttachments[0].SubnetRef).To(Equal("test-sn"))
 	})
 
-	It("should populate two networkAttachments and omit top-level subnetRef for multi-NIC", func() {
-		sid1, sid2 := "subnet-id-1", "subnet-id-2"
+	It("should populate the sole networkAttachment", func() {
+		sid1 := "subnet-id-1"
 		subnetCR1 := &osacv1alpha1.Subnet{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: hubNamespace,
 				Name:      "sn-1",
 				Labels:    map[string]string{labels.SubnetUuid: sid1},
-			},
-		}
-
-		subnetCR2 := &osacv1alpha1.Subnet{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: hubNamespace,
-				Name:      "sn-2",
-				Labels:    map[string]string{labels.SubnetUuid: sid2},
 			},
 		}
 
@@ -1099,7 +1091,7 @@ var _ = Describe("buildSpec with subnetRef", func() {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(subnetCR1, subnetCR2).
+			WithObjects(subnetCR1).
 			Build()
 
 		template := "osac.templates.ocp_virt_vm"
@@ -1115,7 +1107,6 @@ var _ = Describe("buildSpec with subnetRef", func() {
 					InstanceType: &privatev1.InstanceTypeReference{Name: "test-type"},
 					NetworkAttachments: []*privatev1.ComputeNetworkAttachment{
 						privatev1.ComputeNetworkAttachment_builder{Subnet: &privatev1.SubnetLocalReference{Id: sid1}}.Build(),
-						privatev1.ComputeNetworkAttachment_builder{Subnet: &privatev1.SubnetLocalReference{Id: sid2}}.Build(),
 					},
 				}.Build(),
 			}.Build(),
@@ -1125,9 +1116,8 @@ var _ = Describe("buildSpec with subnetRef", func() {
 
 		spec, err := t.buildSpec(ctx)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(spec.NetworkAttachments).To(HaveLen(2))
+		Expect(spec.NetworkAttachments).To(HaveLen(1))
 		Expect(spec.NetworkAttachments[0].SubnetRef).To(Equal("sn-1"))
-		Expect(spec.NetworkAttachments[1].SubnetRef).To(Equal("sn-2"))
 	})
 
 	It("should resolve securityGroupRefs inside networkAttachments", func() {

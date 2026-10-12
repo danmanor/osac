@@ -174,9 +174,10 @@ type ComputeInstanceSpec struct {
 	SSHKey string `json:"sshKey,omitempty"`
 
 	// NetworkAttachments optionally connects the instance to a Subnet and SecurityGroups.
-	// The complete value is immutable after creation; change it by recreating the instance.
+	// At most one attachment is supported, and the complete value is immutable after creation.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:XValidation:rule="size(self) <= 1",message="at most one network attachment is supported"
 	// +listType=map
 	// +listMapKey=subnetRef
 	NetworkAttachments []ComputeNetworkAttachment `json:"networkAttachments,omitempty"`
