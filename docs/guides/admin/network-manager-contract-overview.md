@@ -57,30 +57,64 @@ converge on one backend allocation and return the same value.
 Matching model names proves declared compatibility; it does not prove that
 packets can flow or that policy is enforced.
 
-## One normal flow
+## Workload attachment flows
 
 ```mermaid
 sequenceDiagram
     participant OSAC
     participant Fabric
     participant K8s as Kubernetes manager
-    participant Workload
+    participant VMaaS
+    participant BMaaS
+    participant VM
+    participant Host as Bare-metal host
     OSAC->>Fabric: Create network and Subnet
     Fabric-->>OSAC: Required network values
     OSAC->>OSAC: Validate and store values
-    OSAC->>K8s: Create VM overlay using stored values
-    K8s-->>OSAC: Success
-    Workload->>Workload: Prepare stopped VM and stable identity
-    Workload->>OSAC: SubnetAttachment request
-    OSAC->>K8s: Apply VM interface and policy
-    K8s-->>OSAC: Success for the request UID
-    OSAC-->>Workload: Attachment ready; VM may start
+    opt Kubernetes Manager is configured
+        OSAC->>K8s: Create Subnet overlay using stored values
+        K8s-->>OSAC: Success
+    end
+    alt VM overlay
+        VMaaS->>VM: Create halted VM with Subnet reference and interface in initial spec
+        VMaaS->>OSAC: SubnetAttachment request for VM
+        OSAC->>K8s: apply_network_attachment
+        K8s->>VM: Verify existing reference; install policy
+        K8s-->>OSAC: Success for the request UID
+        OSAC-->>VMaaS: Attachment ready
+        VMaaS->>VM: Start VM
+        VM-->>VMaaS: Tenant interface address discovered
+        VMaaS-->>OSAC: Report network ready
+    else Bare-metal physical interface
+        BMaaS->>Host: Provision over provisioning connection
+        BMaaS->>OSAC: SubnetAttachment request for BaremetalInstance
+        OSAC->>Fabric: apply_network_attachment
+        Fabric->>Host: Map selected switch port to Subnet segment; install policy
+        Fabric-->>OSAC: Apply success for the request UID
+        BMaaS->>Host: Handoff reboot onto tenant network
+        OSAC->>Fabric: query_dhcp_lease for selected port
+        Fabric-->>OSAC: Tenant address for selected port
+        OSAC-->>BMaaS: Network ready after address discovery
+    end
 ```
 
-The internal `SubnetAttachment` tracks networking work. Its target is a VM or
-a BaremetalInstance; it is not itself the workload. The manager receives both
-the request identity and the target identity, plus one resolved interface,
-Subnet and complete SecurityGroup rules.
+`apply_network_attachment` is one OSAC action with two manager paths. OSAC
+selects the Kubernetes Manager for `overlay` and the Fabric Manager for
+`physical`. In the VM path, the Subnet reference is already in the VM's initial
+spec; Kubernetes verifies it and installs policy before the VM starts. In the
+bare-metal path, Fabric reconciles the selected physical port's segment
+membership to the requested Subnet and installs policy after host provisioning.
+
+The internal `SubnetAttachment` tracks the request, jobs, readiness and
+cleanup. Its target is the VM or BaremetalInstance; it is not the VM interface
+or switch-port mapping. The manager receives both request and target identity,
+plus the resolved interface, Subnet and complete SecurityGroup rules.
+
+Deletion follows the same ownership split in reverse. The service stops the
+workload first; `delete_network_attachment` removes its policy and restores
+the physical interface to that extension's baseline. For a VM, the service
+deletes the stopped VM after policy cleanup. Subnet cleanup waits until its
+workload attachments are gone.
 
 BMaaS uses Fabric for that attachment. BMF waits for apply, performs the
 handoff reboot, then networking discovers the lease using the selected port's
@@ -88,10 +122,12 @@ MAC. CaaS creates one such request for each bare-metal worker. OSAC verifies
 the worker's parent Cluster and supplies that Cluster's tenant as the network
 context, even though the hidden worker itself belongs to `system`.
 
-For VMs, OSAC chooses the namespace and creates the stopped VM; the Kubernetes
-Manager configures its interface and policy through the existing attachment
-task. OSAC starts the VM after success and preserves the manager's fields.
-Providers do not need a new task or output channel to choose their binding.
+For a new flow between two OSAC workloads, both source egress and destination
+ingress rules must allow it. SecurityGroup rules combine as a union separately
+at each endpoint, and established replies are allowed. Each manager enforces
+policy on its own attachment; it does not look up the peer's SecurityGroups.
+Traffic with an endpoint outside OSAC workload policy is governed by the
+attached workload's rule in the direction of that traffic.
 
 ## How CaaS gets its ingress address
 
