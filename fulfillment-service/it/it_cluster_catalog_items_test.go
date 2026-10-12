@@ -298,6 +298,10 @@ var _ = Describe("Cluster Catalog Items", Label("catalog-items"), func() {
 			}, time.Minute, time.Second).Should(Succeed())
 		})
 		It("falls through to Template and system values and supports dry-run and direct creation", func(ctx context.Context) {
+			// This spec creates clusters without network attachments before creating its
+			// explicit network fixture, so ensure the deployment Hub is resolvable first.
+			networkClassID := getOrCreateTenantDefaultNetworkClassFixture(ctx)
+
 			By("authoring a shared offering with Template and catalog defaults")
 			bmit := createCatalogItemBareMetalInstanceTypeFixture(ctx, "shared")
 			version := createCatalogItemClusterVersionFixture(ctx, "4.20.0")
@@ -378,7 +382,7 @@ var _ = Describe("Cluster Catalog Items", Label("catalog-items"), func() {
 			}.Build())
 			expectCatalogItemStatusCode(e, codes.InvalidArgument)
 			By("creating directly from a Template with its version default")
-			network := createCatalogItemNetworkFixture(ctx, usersGroup, "")
+			network := createCatalogItemSubnetInClassFixture(ctx, usersGroup, "", networkClassID)
 			direct, e := createClusterFixture(ctx, tool.ExternalView().UserConn(), publicv1.ClusterSpec_builder{
 				Template:          publicv1.ClusterTemplateReference_builder{Id: template}.Build(),
 				NetworkAttachment: network.clusterAttachment(),

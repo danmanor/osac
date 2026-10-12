@@ -319,6 +319,44 @@ var _ = Describe("Default networking provisioning", func() {
 			sgId = sgResp.GetItems()[0].GetId()
 		}, time.Minute, time.Second).Should(Succeed())
 
+		By("Waiting for the default Subnet to reach PENDING before overriding it")
+		Eventually(func(g Gomega) {
+			resp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetState()).To(
+				Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
+		}, time.Minute, time.Second).Should(Succeed())
+		subnetResp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		subnetObj := subnetResp.GetObject()
+		subnetObj.SetStatus(privatev1.SubnetStatus_builder{
+			State: privatev1.SubnetState_SUBNET_STATE_READY,
+		}.Build())
+		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
+			Object:     subnetObj,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+
+		By("Waiting for the default SecurityGroup to reach PENDING before overriding it")
+		Eventually(func(g Gomega) {
+			resp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(resp.GetObject().GetStatus().GetState()).To(
+				Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING))
+		}, time.Minute, time.Second).Should(Succeed())
+		sgResp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		sgObj := sgResp.GetObject()
+		sgObj.SetStatus(privatev1.SecurityGroupStatus_builder{
+			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+		}.Build())
+		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+			Object:     sgObj,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+
 		vnBefore, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		subnetBefore, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())

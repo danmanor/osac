@@ -40,6 +40,7 @@ var _ = Describe("Labels", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
+		getOrCreateTenantDefaultNetworkClassFixture(ctx)
 		clustersClient = publicv1.NewClustersClient(tool.ExternalView().UserConn())
 		instanceTypesClient = privatev1.NewBareMetalInstanceTypesClient(tool.InternalView().AdminConn())
 		templatesClient = privatev1.NewClusterTemplatesClient(tool.InternalView().AdminConn())
