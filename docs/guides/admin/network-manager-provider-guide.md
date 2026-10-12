@@ -225,16 +225,51 @@ deletion, VMaaS stops the VM and waits for it to stop before deleting the
 request. The manager removes its network/interface fields and policy, and the
 VM is deleted only after request cleanup completes.
 
-For overlay tasks, OSAC makes the selected workload cluster's protected
-kubeconfig available through the existing remote-cluster access mechanism
-(`OSAC_REMOTE_CLUSTER_KUBECONFIG`). Manager roles must not put credential
-contents in the request or `osac_job_vars`, and must operate only on the exact
-target identity supplied by OSAC. The Kubernetes Manager does not handle
-shared VirtualNetwork operations, physical workload interfaces, or Fabric
-Manager work. It is optional for deployments without VM overlay workloads.
+For Kubernetes Manager tasks that operate on a workload cluster, OSAC supplies
+the stable cluster ID as `osac_job_vars.target_cluster.id`. For an overlay
+attachment task, it comes from the SubnetAttachment's immutable placement;
+for a placement-scoped `Subnet` task, it comes from that stage's captured
+extension context.
+The networking AAP group reads its protected kubeconfig from the existing
+remote-cluster Secret mounted at `OSAC_REMOTE_CLUSTER_KUBECONFIG`. This is a
+separate Secret from the backend credentials in `network-fulfillment-ig`.
+Create the kubeconfig Secret in the AAP namespace, make it readable by the
+`osac-sa` service account, and set `REMOTE_CLUSTER_KUBECONFIG_SECRET_NAME` and
+`REMOTE_CLUSTER_KUBECONFIG_SECRET_KEY` in the existing `config-as-code-ig`
+Secret. These settings cause the networking instance-group pod spec to mount
+the file read-only. See the [AAP config-as-code settings](../../../osac-aap/collections/ansible_collections/osac/config_as_code/README.md)
+and [remote-cluster kubeconfig setup guide](../../../osac-operator/docs/vmaas-dedicated-cluster/README.md)
+for the existing mount mechanism. The kubeconfig must contain a context whose
+name exactly matches each supported cluster ID. For one cluster, configure
+its matching context; for multiple clusters, configure one context per
+supported ID in the same kubeconfig.
+
+For tasks that receive `target_cluster`, treat this kubeconfig as required:
+do not omit it or fall back to the AAP pod's in-cluster service account.
+
+After loading `remote_cluster_kubeconfig` through OSAC's shared
+`get_remote_cluster_kubeconfig` task, each Kubernetes API call must select the
+explicit context. For `kubernetes.core.k8s` and `kubernetes.core.k8s_info`
+tasks, pass:
+
+```yaml
+kubeconfig: "{{ remote_cluster_kubeconfig }}"
+context: "{{ target_cluster.id }}"
+```
+
+Manager tasks must not rely on the kubeconfig's current context or choose
+another cluster; another client library must be configured to use the same
+explicit context. Credentials remain in the mounted Secret and never appear
+in the request, `osac_job_vars`, NetworkData, results, or logs. If the context
+is missing or cannot access the exact target, the task fails before changing
+it and readiness does not advance. Every installed networking role can read
+the shared Secret, so providers must trust those roles with its cluster
+credentials. The Kubernetes Manager does not handle shared VirtualNetwork
+operations, physical workload interfaces, or Fabric Manager work. It is
+optional for deployments without VM overlay workloads.
 
 The normative resource meanings and tenant-visible behavior are in the
-[Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-unified-networking/design.md).
+[Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-unified-networking/design.md).
 In particular, implementations must preserve these shared semantics:
 
 - A `VirtualNetwork` is a Layer 3 (L3) routing domain. Subnets in it can route
@@ -442,8 +477,8 @@ and result envelope.
 
 | Service extension | Additional manager task | Purpose |
 |---|---|---|
-| BMaaS; also used for CaaS worker instances | Fabric `query_dhcp_lease` for a `SubnetAttachment` request with a separate `BaremetalInstance` target | Discover the selected physical interface's tenant DHCP lease after network handoff. See the [BMaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1437-bmaas-networking/design.md). |
-| CaaS | Fabric `reserve_cluster_ingress_ip` / `release_cluster_ingress_ip` for a `ClusterOrder` | Reserve and release one tenant-Subnet ingress address for a guest cluster. See the [CaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1436-caas-networking/design.md). |
+| BMaaS; also used for CaaS worker instances | Fabric `query_dhcp_lease` for a `SubnetAttachment` request with a separate `BaremetalInstance` target | Discover the selected physical interface's tenant DHCP lease after network handoff. See the [BMaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1437-bmaas-networking/design.md). |
+| CaaS | Fabric `reserve_cluster_ingress_ip` / `release_cluster_ingress_ip` for a `ClusterOrder` | Reserve and release one tenant-Subnet ingress address for a guest cluster. See the [CaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1436-caas-networking/design.md). |
 
 Providers implement these additional tasks only when they offer the
 corresponding service extension. The CaaS reservation task uses the configured
@@ -492,7 +527,7 @@ OSAC passes `osac_network_task_from` separately from the
 `osac_job_vars` object. OSAC chooses the task filename stem; a provider role
 must not override it. The common `osac_job_vars` fields are summarized below. Exact types and
 task-specific presence rules are in the manager contract’s
-[canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
+[canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
 
 | Field | Meaning |
 |---|---|
@@ -502,6 +537,7 @@ task-specific presence rules are in the manager contract’s
 | `network_owner_context` | Applicable NetworkClass, VirtualNetwork, and Subnet owners, each with `kind`, stable `resourceId`, and current `projectionUID`. OSAC derives eligible output keys from manager declarations, owner scopes, and values already stored; a child task may produce a missing value for a parent or profile owner in this context. |
 | `network_data` | Applicable model name, owner kind and API resource ID, and schema-validated JSON value. Fabric receives existing values to reuse and returns only expected values not already stored; Kubernetes receives only its declared applicable inputs. An empty list is supplied when none apply. |
 | `target` | Complete current workload projection, required when a task operates on a workload endpoint. For attachment work, it is separate from the `SubnetAttachment` in `resource`. |
+| `target_cluster` | Stable hosting-cluster ID captured from a workload's immutable placement or a placement-scoped Subnet stage context. Required when a Kubernetes Manager task operates against that cluster; `target_cluster.id` names its context in the protected remote-cluster kubeconfig and contains no credential. |
 | `network_attachment` | Normalized Subnet, interface descriptor, and complete SecurityGroup rules; required for workload attachment tasks. |
 
 The AAP extra-vars object also carries `osac_dispatch_attempt_id` for launch
@@ -527,7 +563,11 @@ whose UID and generation identify the tracked job and returned result. The
 separate `target` contains the current workload projection, while the request
 stores the immutable target placement and selector. The service extension
 resolves the selected-port MAC before physical apply, delete, or DHCP dispatch.
-Credential material is not part of any of these serialized inputs. [User]
+For Kubernetes workload-attachment work, OSAC copies the placement's
+hosting-cluster ID to `target_cluster.id`; for a placement-scoped Subnet task,
+it uses the captured ID from that stage's extension context. Both select the
+explicit kubeconfig context. Credential material is not part of any
+serialized input. [User]
 
 OSAC uses two manager task entry points for workload attachments:
 `apply_subnet_attachment` applies the requested Subnet connection and
@@ -536,7 +576,7 @@ manager-owned attachment state during teardown. The `SubnetAttachment` is the
 durable operation owner. The workload service creates and deletes the request
 at its lifecycle gates; the networking controller dispatches the task and
 retains the request until cleanup succeeds. The [canonical serialized task
-inputs and attachment schema](https://github.com/osac-project/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs)
+inputs and attachment schema](https://github.com/osac-project/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs)
 are normative; this guide does not define a second payload shape.
 
 For a physical bare-metal interface:
@@ -590,11 +630,11 @@ For a VM overlay interface:
    and policy from the exact stopped VM. VMaaS deletes the VM only after request
    cleanup completes.
 
-The manager uses the selected workload cluster's protected
-`OSAC_REMOTE_CLUSTER_KUBECONFIG` context, supplied outside `osac_job_vars`.
-The request carries target identity and placement, never credentials. These
-lifecycle examples describe OSAC integration points; provider backend
-resources remain manager-owned.
+The manager uses the protected kubeconfig at
+`OSAC_REMOTE_CLUSTER_KUBECONFIG` with the explicit context named by
+`target_cluster.id`. The request carries target identity and placement, never
+credentials. These lifecycle examples describe OSAC integration points;
+provider backend resources remain manager-owned.
 
 
 A provider's interface baseline allows only the selected interface/Subnet's
@@ -692,7 +732,7 @@ task-specific field required by that task. For the base tasks, these are
 `create_external_ip`, `data.dhcp_leases` for `query_dhcp_lease`, or
 `data.cluster_ingress.address` for `reserve_cluster_ingress_ip`. Optional
 capability tasks use the additional result shape defined by their shared
-[task/result contract](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#manager-result-envelope).
+[task/result contract](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#manager-result-envelope).
 If backend work fails, fail the Ansible task with a diagnostic; do not publish
 a success result for incomplete work.
 
@@ -736,8 +776,8 @@ DHCP lease lookup uses the same result envelope:
 
 ```yaml
 osac_result:
-  resourceID: "<BaremetalInstance API ID>"
-  resourceUID: "<BaremetalInstance projection UID>"
+  resourceID: "<SubnetAttachment API ID>"
+  resourceUID: "<SubnetAttachment request UID>"
   observedGeneration: 1
   data:
     network_data: []
@@ -862,7 +902,7 @@ fulfillment-service APIs:
 3. Create the `NetworkClass` that selects those logical manager names.
 
 For exact common and per-task payload keys, types and required/absent rules,
-use the [canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
+use the [canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
 The release qualification bundle supplies complete producer/consumer fixtures;
 small snippets in this guide illustrate one field and are not full job inputs.
 
@@ -1039,7 +1079,7 @@ proves only that the declared objects and model references passed validation.
 OSAC must deliver a provider-runnable qualification selection from its own
 `tests/e2e` pytest suite. Providers run the same assertions as OSAC against
 their deployed managers and real backend; they do not rewrite the scenarios.
-The detailed [contract test plan](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
+The detailed [contract test plan](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
 defines the required coverage. This is a delivery requirement: the existing
 suite is a starting point, not yet a complete packaged qualification runner.
 
@@ -1167,12 +1207,14 @@ run it locally or in their own CI; no hosted certification service is required.
   `ExternalIP.status.address` without manager access to the Kubernetes API.
 - Confirm ExternalIP attachments are removed before an address is released,
   and NATGateway performs outbound SNAT without providing inbound access.
-- Confirm the post-handoff DHCP job uses the BaremetalInstance API ID and projection UID,
-  its selected-port MAC, and returns
-  one unambiguous matching lease per request in `osac_result.data.dhcp_leases`, with the resource UID,
-  observed generation, and `data.network_data` list present. The result does
-  not repeat a task or operation identifier; OSAC gets that from the tracked
-  AAP job.
+- Confirm the post-handoff DHCP job is tracked against the SubnetAttachment
+  API ID and request UID, and receives the BaremetalInstance API ID and current
+  projection UID as `target`, together with its selected-port MAC. Its result
+  echoes the SubnetAttachment resource identity, request UID and generation,
+  and returns one unambiguous matching lease per request in
+  `osac_result.data.dhcp_leases`, with `data.network_data` present. The result
+  does not repeat a task or operation identifier; OSAC gets that from the
+  tracked AAP job.
 
 Record the task/result checks separately from behavioral conformance evidence.
 Every required task file and required real output must be present. Providers
@@ -1257,7 +1299,7 @@ implementations are not evidence of complete behavioral conformance. [User]
 
 ## Related documents
 
-- [Unified Networking PRD](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-unified-networking/prd.md)
-- [Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/e478efa/enhancements/OSAC-1433-unified-networking/design.md)
+- [Unified Networking PRD](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-unified-networking/prd.md)
+- [Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/e2922d5/enhancements/OSAC-1433-unified-networking/design.md)
 - [Network Manager Integration Contract PRD, Design, and Test Plan (proposal PR #357)](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 - [Multi-Fabric East-West Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1382-multi-fabric-east-west-networking/design.md)
