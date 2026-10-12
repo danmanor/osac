@@ -23,9 +23,13 @@ import (
 	. "github.com/onsi/gomega"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/osac-project/osac/fulfillment-service/internal/kubernetes/labels"
 	"github.com/osac-project/osac/fulfillment-service/internal/uuid"
+	osacv1alpha1 "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 	publicv1 "github.com/osac-project/osac/proto/gen/osac/public/v1"
 )
@@ -452,13 +456,15 @@ var _ = Describe("IPv4-only Subnet gRPC contract", func() {
 
 var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 	var (
-		ctx    context.Context
-		client privatev1.SecurityGroupsClient
+		ctx          context.Context
+		client       privatev1.SecurityGroupsClient
+		publicClient publicv1.SecurityGroupsClient
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		client = privatev1.NewSecurityGroupsClient(tool.InternalView().AdminConn())
+		publicClient = publicv1.NewSecurityGroupsClient(tool.ExternalView().UserConn())
 	})
 
 	It("supports canonical IPv4 ingress and egress rules through CRUD", func() {
@@ -505,6 +511,130 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 		_, err = client.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{Id: fixture.securityGroupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		fixture.securityGroupID = ""
+	})
+
+	It("allows tenant users to update rules and reconciles the SecurityGroup CR", func() {
+		fixture := newIPv4NetworkingContractFixture(ctx)
+		name := fmt.Sprintf("ipv4-sg-public-update-%s", uuid.New()[24:])
+		initialRule := privatev1.SecurityRule_builder{
+			Protocol: privatev1.Protocol_PROTOCOL_ALL,
+			Ipv4Cidr: new("0.0.0.0/0"),
+		}.Build()
+		created, err := client.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
+			Object: privatev1.SecurityGroup_builder{
+				Metadata: privatev1.Metadata_builder{Name: name, Tenant: usersGroup}.Build(),
+				Spec: privatev1.SecurityGroupSpec_builder{
+					VirtualNetwork: fixture.virtualNetworkIDRef(),
+					Ingress:        []*privatev1.SecurityRule{initialRule},
+					Egress:         []*privatev1.SecurityRule{initialRule},
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		fixture.securityGroupID = created.GetObject().GetId()
+
+		By("waiting for the initial SecurityGroup CR")
+		Eventually(func(g Gomega) {
+			securityGroups := &osacv1alpha1.SecurityGroupList{}
+			g.Expect(tool.KubeClient().List(ctx, securityGroups, crclient.MatchingLabels{
+				labels.SecurityGroupUuid: fixture.securityGroupID,
+			})).To(Succeed())
+			g.Expect(securityGroups.Items).To(HaveLen(1))
+		}, time.Minute, time.Second).Should(Succeed())
+
+		updatedIngress := publicv1.SecurityRule_builder{
+			Protocol: publicv1.Protocol_PROTOCOL_UDP,
+			PortFrom: new(int32(53)),
+			PortTo:   new(int32(53)),
+			Ipv4Cidr: new("10.251.0.0/16"),
+		}.Build()
+		updatedEgress := publicv1.SecurityRule_builder{
+			Protocol: publicv1.Protocol_PROTOCOL_TCP,
+			PortFrom: new(int32(443)),
+			PortTo:   new(int32(443)),
+			Ipv4Cidr: new("192.168.0.0/16"),
+		}.Build()
+
+		By("updating both rule lists through the public API as a tenant user")
+		updated, err := publicClient.Update(ctx, publicv1.SecurityGroupsUpdateRequest_builder{
+			Object: publicv1.SecurityGroup_builder{
+				Id: fixture.securityGroupID,
+				Metadata: publicv1.Metadata_builder{
+					Name: "ignored-name-change",
+				}.Build(),
+				Spec: publicv1.SecurityGroupSpec_builder{
+					VirtualNetwork: publicv1.VirtualNetworkLocalReference_builder{Id: "ignored-vnet-change"}.Build(),
+					Ingress:        []*publicv1.SecurityRule{updatedIngress},
+					Egress:         []*publicv1.SecurityRule{updatedEgress},
+				}.Build(),
+			}.Build(),
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(updated.GetObject().GetId()).To(Equal(fixture.securityGroupID))
+		Expect(updated.GetObject().GetMetadata().GetName()).To(Equal(name))
+		Expect(updated.GetObject().GetMetadata().GetAnnotations()).To(HaveKeyWithValue(
+			"osac.openshift.io/owner-reference", fixture.virtualNetworkID,
+		))
+		Expect(updated.GetObject().GetSpec().GetVirtualNetwork().GetId()).To(Equal(fixture.virtualNetworkID))
+		Expect(updated.GetObject().GetSpec().GetIngress()).To(HaveLen(1))
+		Expect(proto.Equal(updated.GetObject().GetSpec().GetIngress()[0], updatedIngress)).To(BeTrue())
+		Expect(updated.GetObject().GetSpec().GetEgress()).To(HaveLen(1))
+		Expect(proto.Equal(updated.GetObject().GetSpec().GetEgress()[0], updatedEgress)).To(BeTrue())
+
+		By("reading the stored rule lists and immutable parent through the public API")
+		stored, err := publicClient.Get(ctx, publicv1.SecurityGroupsGetRequest_builder{
+			Id: fixture.securityGroupID,
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(stored.GetObject().GetMetadata().GetName()).To(Equal(name))
+		Expect(stored.GetObject().GetMetadata().GetAnnotations()).To(HaveKeyWithValue(
+			"osac.openshift.io/owner-reference", fixture.virtualNetworkID,
+		))
+		Expect(stored.GetObject().GetSpec().GetVirtualNetwork().GetId()).To(Equal(fixture.virtualNetworkID))
+		Expect(stored.GetObject().GetSpec().GetIngress()).To(HaveLen(1))
+		Expect(proto.Equal(stored.GetObject().GetSpec().GetIngress()[0], updatedIngress)).To(BeTrue())
+		Expect(stored.GetObject().GetSpec().GetEgress()).To(HaveLen(1))
+		Expect(proto.Equal(stored.GetObject().GetSpec().GetEgress()[0], updatedEgress)).To(BeTrue())
+
+		By("waiting for Fulfillment to patch the existing Kubernetes CR with the new rules")
+		Eventually(func(g Gomega) {
+			securityGroups := &osacv1alpha1.SecurityGroupList{}
+			g.Expect(tool.KubeClient().List(ctx, securityGroups, crclient.MatchingLabels{
+				labels.SecurityGroupUuid: fixture.securityGroupID,
+			})).To(Succeed())
+			g.Expect(securityGroups.Items).To(HaveLen(1))
+			if len(securityGroups.Items) != 1 {
+				return
+			}
+
+			securityGroup := securityGroups.Items[0]
+			g.Expect(securityGroup.Spec.VirtualNetwork).To(Equal(fixture.virtualNetworkID))
+			g.Expect(securityGroup.Spec.IngressRules).To(HaveLen(1))
+			g.Expect(securityGroup.Spec.EgressRules).To(HaveLen(1))
+			if len(securityGroup.Spec.IngressRules) != 1 || len(securityGroup.Spec.EgressRules) != 1 {
+				return
+			}
+			g.Expect(securityGroup.Spec.IngressRules[0].Protocol).To(Equal(osacv1alpha1.SecurityGroupProtocolUDP))
+			g.Expect(securityGroup.Spec.IngressRules[0].PortFrom).ToNot(BeNil())
+			g.Expect(securityGroup.Spec.IngressRules[0].PortTo).ToNot(BeNil())
+			if securityGroup.Spec.IngressRules[0].PortFrom != nil {
+				g.Expect(*securityGroup.Spec.IngressRules[0].PortFrom).To(Equal(int32(53)))
+			}
+			if securityGroup.Spec.IngressRules[0].PortTo != nil {
+				g.Expect(*securityGroup.Spec.IngressRules[0].PortTo).To(Equal(int32(53)))
+			}
+			g.Expect(securityGroup.Spec.IngressRules[0].SourceCIDR).To(Equal("10.251.0.0/16"))
+			g.Expect(securityGroup.Spec.EgressRules[0].Protocol).To(Equal(osacv1alpha1.SecurityGroupProtocolTCP))
+			g.Expect(securityGroup.Spec.EgressRules[0].PortFrom).ToNot(BeNil())
+			g.Expect(securityGroup.Spec.EgressRules[0].PortTo).ToNot(BeNil())
+			if securityGroup.Spec.EgressRules[0].PortFrom != nil {
+				g.Expect(*securityGroup.Spec.EgressRules[0].PortFrom).To(Equal(int32(443)))
+			}
+			if securityGroup.Spec.EgressRules[0].PortTo != nil {
+				g.Expect(*securityGroup.Spec.EgressRules[0].PortTo).To(Equal(int32(443)))
+			}
+			g.Expect(securityGroup.Spec.EgressRules[0].DestinationCIDR).To(Equal("192.168.0.0/16"))
+		}, time.Minute, time.Second).Should(Succeed())
 	})
 
 	DescribeTable("rejects missing, malformed, host-bit, IPv6-only, and dual-stack rules",
