@@ -32,7 +32,7 @@ covers only the project documentation merged in from the former
 - `keycloak-configuration.md`, `keycloak-upgrade-rollback.md` — Keycloak setup and upgrade/rollback
 - `customer-ldap-federation-guide.md` — Customer LDAP federation
 - `tenant-identity-and-access-guide.md` — Tenant identity and access
-- `admin/` — `bcm-backend.md`, `metal3-backend.md`, `network-manager-provider-guide.md`
+- `admin/` — `bcm-backend.md`, `metal3-backend.md`, `network-manager-contract-overview.md`, `network-manager-provider-guide.md`
 - `developer/` — Tenant setup, ComputeInstance creation/catalog items, InstanceType management, PublicIP allocation, networking examples
 
 **Feature documentation** (`features/`)
@@ -69,6 +69,7 @@ docs/
 │   ├── admin/
 │   │   ├── bcm-backend.md
 │   │   ├── metal3-backend.md
+│   │   ├── network-manager-contract-overview.md
 │   │   └── network-manager-provider-guide.md
 │   ├── developer/
 │   │   ├── computeinstance-catalogitem-guide.md
