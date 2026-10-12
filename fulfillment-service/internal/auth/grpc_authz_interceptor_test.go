@@ -682,7 +682,7 @@ var _ = Describe("Rego authorization interceptor", func() {
 		)
 
 		DescribeTable(
-			"Allows Keycloak users on public networking CRUD APIs",
+			"Allows Keycloak users on public networking APIs",
 			func(ctx context.Context, method string) {
 				token := createKeycloakUserToken("my-tenant", "my-user", nil)
 				ctx = ContextWithToken(ctx, token)
@@ -711,6 +711,7 @@ var _ = Describe("Rego authorization interceptor", func() {
 			Entry("SecurityGroups Get", "/osac.public.v1.SecurityGroups/Get"),
 			Entry("SecurityGroups List", "/osac.public.v1.SecurityGroups/List"),
 			Entry("SecurityGroups Delete", "/osac.public.v1.SecurityGroups/Delete"),
+			Entry("SecurityGroups Update", "/osac.public.v1.SecurityGroups/Update"),
 			Entry("ExternalIPs Create", "/osac.public.v1.ExternalIPs/Create"),
 			Entry("ExternalIPs Get", "/osac.public.v1.ExternalIPs/Get"),
 			Entry("ExternalIPs List", "/osac.public.v1.ExternalIPs/List"),
@@ -749,7 +750,6 @@ var _ = Describe("Rego authorization interceptor", func() {
 			},
 			Entry("VirtualNetworks Update", "/osac.public.v1.VirtualNetworks/Update"),
 			Entry("Subnets Update", "/osac.public.v1.Subnets/Update"),
-			Entry("SecurityGroups Update", "/osac.public.v1.SecurityGroups/Update"),
 			Entry("ExternalIPs Update", "/osac.public.v1.ExternalIPs/Update"),
 			Entry("ExternalIPAttachments Update", "/osac.public.v1.ExternalIPAttachments/Update"),
 			Entry("NATGateways Update", "/osac.public.v1.NATGateways/Update"),

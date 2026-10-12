@@ -256,6 +256,7 @@ allow if {
     "/osac.public.v1.SecurityGroups/Delete",
     "/osac.public.v1.SecurityGroups/Get",
     "/osac.public.v1.SecurityGroups/List",
+    "/osac.public.v1.SecurityGroups/Update",
     "/osac.public.v1.ExternalIPAttachments/Create",
     "/osac.public.v1.ExternalIPAttachments/Delete",
     "/osac.public.v1.ExternalIPAttachments/Get",
