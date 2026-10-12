@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"sort"
 	"time"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -257,6 +259,10 @@ func (r *SubnetReconciler) handleUpdate(ctx context.Context, subnet *v1alpha1.Su
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	plan, err = r.applySequentialProvisioningPolicy(ctx, subnet, plan)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	implementationStrategy := vnet.Annotations[osacImplementationStrategyAnnotation]
 	// plan may be nil here (no-dispatcher legacy path); FabricTarget/K8sTarget have
 	// nil-receiver-safe implementations that return nil in that case, so this — unlike
@@ -268,6 +274,14 @@ func (r *SubnetReconciler) handleUpdate(ctx context.Context, subnet *v1alpha1.Su
 	if implementationStrategy == "" {
 		log.Info("implementation strategy not set on parent VirtualNetwork, requeueing", "virtualNetwork", vnet.Name)
 		return ctrl.Result{RequeueAfter: defaultPreconditionRequeueInterval}, nil
+	}
+	if implementationStrategy == agentlessNetImplementationStrategy && !isSupportedAgentlessSubnetPrefix(subnet.Spec.IPv4CIDR) {
+		subnet.Status.Phase = v1alpha1.SubnetPhaseFailed
+		setReadyConditionFailed(
+			&subnet.Status.Conditions,
+			"AgentlessNet Subnet CIDR must be a canonical IPv4 prefix of /30 or shorter for gateway and DHCP support.",
+		)
+		return ctrl.Result{}, nil
 	}
 
 	// Resolve VIP prefix length from NetworkClass (if gRPC is available)
@@ -334,8 +348,111 @@ func (r *SubnetReconciler) handleUpdate(ctx context.Context, subnet *v1alpha1.Su
 		subnet.Status.Phase = v1alpha1.SubnetPhaseProgressing
 	}
 
+	if implementationStrategy == agentlessNetImplementationStrategy {
+		ctx = provisioning.WithSubnetParentVirtualNetwork(ctx, provisioning.SubnetParentVirtualNetwork{
+			FulfillmentID: vnet.Labels[osacVirtualNetworkIDLabel],
+			KubernetesUID: string(vnet.UID),
+			TenantID:      vnet.Annotations[osacTenantKey],
+			Phase:         string(vnet.Status.Phase),
+		})
+	}
+
 	// Handle provisioning
 	return r.handleProvisioning(ctx, subnet, plan)
+}
+
+// applySequentialProvisioningPolicy limits cudn_evpn to one K8s target per
+// VirtualNetwork. The oldest Subnet keeps K8s provisioning; later Subnets are
+// fabric-only unless they already have K8s target history, which is grandfathered
+// to preserve previously provisioned CUDNs. An explicit skip annotation always
+// removes the K8s target so the normal stale-target deprovisioning path can run.
+func (r *SubnetReconciler) applySequentialProvisioningPolicy(
+	ctx context.Context, subnet *v1alpha1.Subnet, plan *dispatcher.DispatchPlan,
+) (*dispatcher.DispatchPlan, error) {
+	k8sTarget := plan.K8sTarget()
+	if k8sTarget == nil || k8sTarget.Manager.Name != "cudn_evpn" {
+		return plan, nil
+	}
+	if subnet.Annotations[osacSkipK8sManagerAnnotation] == labelValueTrue {
+		return withoutK8sTarget(plan), nil
+	}
+
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	subnetList := &v1alpha1.SubnetList{}
+	if err := reader.List(ctx, subnetList, client.InNamespace(subnet.Namespace)); err != nil {
+		return nil, fmt.Errorf("listing Subnets for sequential cudn_evpn provisioning: %w", err)
+	}
+	candidates := make([]*v1alpha1.Subnet, 0, len(subnetList.Items)+1)
+	foundCurrent := false
+	for i := range subnetList.Items {
+		candidate := &subnetList.Items[i]
+		if candidate.Spec.VirtualNetwork != subnet.Spec.VirtualNetwork {
+			continue
+		}
+		candidates = append(candidates, candidate)
+		if candidate.Name == subnet.Name {
+			foundCurrent = true
+		}
+	}
+	// A newly created Subnet may not yet appear in a cache-backed reader. Include
+	// the reconcile object so selection remains deterministic for back-to-back creates.
+	if !foundCurrent {
+		candidates = append(candidates, subnet)
+	}
+	if oldestOperatorSubnet(candidates).Name == subnet.Name || hasK8sTargetHistory(subnet) {
+		return plan, nil
+	}
+	return withoutK8sTarget(plan), nil
+}
+
+func oldestOperatorSubnet(subnets []*v1alpha1.Subnet) *v1alpha1.Subnet {
+	sort.Slice(subnets, func(i, j int) bool {
+		left, right := subnets[i], subnets[j]
+		switch {
+		case left.CreationTimestamp.IsZero() && !right.CreationTimestamp.IsZero():
+			return true
+		case !left.CreationTimestamp.IsZero() && right.CreationTimestamp.IsZero():
+			return false
+		case !left.CreationTimestamp.Equal(&right.CreationTimestamp):
+			return left.CreationTimestamp.Before(&right.CreationTimestamp)
+		default:
+			return left.Name < right.Name
+		}
+	})
+	return subnets[0]
+}
+
+func hasK8sTargetHistory(subnet *v1alpha1.Subnet) bool {
+	if subnet.Annotations[osacK8sImplementationStrategyAnnotation] != "" {
+		return true
+	}
+	for _, job := range subnet.Status.ProvisioningJobs {
+		if job.Target == string(dispatcher.ManagerRoleK8s) && job.Type == v1alpha1.JobTypeProvision {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutK8sTarget(plan *dispatcher.DispatchPlan) *dispatcher.DispatchPlan {
+	if plan == nil || plan.K8sTarget() == nil {
+		return plan
+	}
+	filtered := &dispatcher.DispatchPlan{Targets: make([]dispatcher.DispatchTarget, 0, len(plan.Targets)-1)}
+	for _, target := range plan.Targets {
+		if target.Role != dispatcher.ManagerRoleK8s {
+			filtered.Targets = append(filtered.Targets, target)
+		}
+	}
+	return filtered
+}
+
+func isSupportedAgentlessSubnetPrefix(cidr string) bool {
+	prefix, err := netip.ParsePrefix(cidr)
+	return err == nil && prefix.Addr().Is4() && prefix.String() == cidr && prefix.Bits() <= 30
 }
 
 // ensureVNetLockLease creates a K8s Lease for V-Net mutex locking if it

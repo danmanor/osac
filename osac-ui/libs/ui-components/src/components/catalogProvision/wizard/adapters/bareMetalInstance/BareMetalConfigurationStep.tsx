@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   Alert,
   Button,
@@ -25,14 +24,14 @@ import { SelectField } from '@osac/ui-components/components/Form/SelectField';
 import { getErrorMessage } from '@osac/ui-components/utils/error';
 
 import {
-  BM_INSTANCE_TYPE_WIRE_PATH,
   BM_USER_DATA_FORM_PATH,
-  BM_USER_DATA_WIRE_PATH,
+  BM_USER_DATA_SECRET_FORM_PATH,
+  BM_USER_DATA_SOURCE_FORM_PATH,
   BareMetalInstanceWizardValues,
+  getBareMetalInstanceTypeCatalogPolicy,
 } from './fields';
 import { useTranslation } from '../../../../../hooks/useTranslation';
 import OsacForm from '../../../../Form/OsacForm';
-import { getCatalogFieldOverlay, readCatalogFieldDefinitions } from '../../catalogOverlay';
 import UserDataField from '../../fields/UserDataField';
 
 const InstanceTypeDescription = ({ instanceType }: { instanceType: BareMetalInstanceType }) => {
@@ -122,11 +121,7 @@ const BareMetalConfigurationStep = ({ catalogItem }: Props) => {
 
   const { data, isLoading, error, refetch } = useListResource(BareMetalInstanceTypes);
 
-  const definitions = useMemo(() => readCatalogFieldDefinitions(catalogItem), [catalogItem]);
-  const instanceTypeOverlay = useMemo(
-    () => getCatalogFieldOverlay(BM_INSTANCE_TYPE_WIRE_PATH, definitions, t('Instance type')),
-    [definitions, t],
-  );
+  const instanceTypePolicy = getBareMetalInstanceTypeCatalogPolicy(catalogItem);
 
   const currentInstanceType = data?.items.find(
     (i) => i.metadata?.name === values.spec.instanceType.name,
@@ -155,7 +150,7 @@ const BareMetalConfigurationStep = ({ catalogItem }: Props) => {
             label={t('Instance type')}
             fieldId="instance-type"
             isLoading={isLoading}
-            isDisabled={!instanceTypeOverlay.editable || !!error}
+            isDisabled={!instanceTypePolicy.editable || !!error}
             placeholder={t('Select an instance type')}
             options={(data?.items || []).map((instanceType) => ({
               label: `${instanceType.metadata?.name || ''}`,
@@ -185,9 +180,11 @@ const BareMetalConfigurationStep = ({ catalogItem }: Props) => {
             emptyDescription={t('Contact your administrator to have a disk image provisioned.')}
           />
           <UserDataField
-            catalogItem={catalogItem}
-            name={BM_USER_DATA_FORM_PATH}
-            wirePath={BM_USER_DATA_WIRE_PATH}
+            sourceName={BM_USER_DATA_SOURCE_FORM_PATH}
+            secretRefName={BM_USER_DATA_SECRET_FORM_PATH}
+            currentSource={values.spec.userDataSource}
+            inlineName={BM_USER_DATA_FORM_PATH}
+            projectName={values.metadata.project}
           />
         </OsacForm>
       </StackItem>
