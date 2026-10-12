@@ -829,16 +829,17 @@ func (b0 ComputeInstanceSpec_builder) Build() *ComputeInstanceSpec {
 
 // The status contains the details of the compute instance provided by the system.
 type ComputeInstanceStatus struct {
-	state                          protoimpl.MessageState       `protogen:"opaque.v1"`
-	xxx_hidden_State               ComputeInstanceState         `protobuf:"varint,1,opt,name=state,proto3,enum=osac.private.v1.ComputeInstanceState"`
-	xxx_hidden_Conditions          *[]*ComputeInstanceCondition `protobuf:"bytes,2,rep,name=conditions,proto3"`
-	xxx_hidden_InternalIpAddress   string                       `protobuf:"bytes,3,opt,name=internal_ip_address,json=internalIpAddress,proto3"`
-	xxx_hidden_LastRestartedAt     *timestamppb.Timestamp       `protobuf:"bytes,4,opt,name=last_restarted_at,json=lastRestartedAt,proto3,oneof"`
-	xxx_hidden_ExternalIpAddress   string                       `protobuf:"bytes,5,opt,name=external_ip_address,json=externalIpAddress,proto3"`
-	xxx_hidden_StateTransitionTime *timestamppb.Timestamp       `protobuf:"bytes,6,opt,name=state_transition_time,json=stateTransitionTime,proto3,oneof"`
-	xxx_hidden_Hub                 string                       `protobuf:"bytes,7,opt,name=hub,proto3"`
-	unknownFields                  protoimpl.UnknownFields
-	sizeCache                      protoimpl.SizeCache
+	state                                       protoimpl.MessageState             `protogen:"opaque.v1"`
+	xxx_hidden_State                            ComputeInstanceState               `protobuf:"varint,1,opt,name=state,proto3,enum=osac.private.v1.ComputeInstanceState"`
+	xxx_hidden_Conditions                       *[]*ComputeInstanceCondition       `protobuf:"bytes,2,rep,name=conditions,proto3"`
+	xxx_hidden_InternalIpAddress                string                             `protobuf:"bytes,3,opt,name=internal_ip_address,json=internalIpAddress,proto3"`
+	xxx_hidden_LastRestartedAt                  *timestamppb.Timestamp             `protobuf:"bytes,4,opt,name=last_restarted_at,json=lastRestartedAt,proto3,oneof"`
+	xxx_hidden_ExternalIpAddress                string                             `protobuf:"bytes,5,opt,name=external_ip_address,json=externalIpAddress,proto3"`
+	xxx_hidden_StateTransitionTime              *timestamppb.Timestamp             `protobuf:"bytes,6,opt,name=state_transition_time,json=stateTransitionTime,proto3,oneof"`
+	xxx_hidden_Hub                              string                             `protobuf:"bytes,7,opt,name=hub,proto3"`
+	xxx_hidden_ComputeNetworkAttachmentStatuses *[]*ComputeNetworkAttachmentStatus `protobuf:"bytes,8,rep,name=compute_network_attachment_statuses,json=computeNetworkAttachmentStatuses,proto3"`
+	unknownFields                               protoimpl.UnknownFields
+	sizeCache                                   protoimpl.SizeCache
 }
 
 func (x *ComputeInstanceStatus) Reset() {
@@ -917,6 +918,15 @@ func (x *ComputeInstanceStatus) GetHub() string {
 	return ""
 }
 
+func (x *ComputeInstanceStatus) GetComputeNetworkAttachmentStatuses() []*ComputeNetworkAttachmentStatus {
+	if x != nil {
+		if x.xxx_hidden_ComputeNetworkAttachmentStatuses != nil {
+			return *x.xxx_hidden_ComputeNetworkAttachmentStatuses
+		}
+	}
+	return nil
+}
+
 func (x *ComputeInstanceStatus) SetState(v ComputeInstanceState) {
 	x.xxx_hidden_State = v
 }
@@ -943,6 +953,10 @@ func (x *ComputeInstanceStatus) SetStateTransitionTime(v *timestamppb.Timestamp)
 
 func (x *ComputeInstanceStatus) SetHub(v string) {
 	x.xxx_hidden_Hub = v
+}
+
+func (x *ComputeInstanceStatus) SetComputeNetworkAttachmentStatuses(v []*ComputeNetworkAttachmentStatus) {
+	x.xxx_hidden_ComputeNetworkAttachmentStatuses = &v
 }
 
 func (x *ComputeInstanceStatus) HasLastRestartedAt() bool {
@@ -1043,6 +1057,8 @@ type ComputeInstanceStatus_builder struct {
 	StateTransitionTime *timestamppb.Timestamp
 	// Identifier of the hub that was selected for this compute instance.
 	Hub string
+	// Subnet and IP details reported for each configured network attachment.
+	ComputeNetworkAttachmentStatuses []*ComputeNetworkAttachmentStatus
 }
 
 func (b0 ComputeInstanceStatus_builder) Build() *ComputeInstanceStatus {
@@ -1056,6 +1072,81 @@ func (b0 ComputeInstanceStatus_builder) Build() *ComputeInstanceStatus {
 	x.xxx_hidden_ExternalIpAddress = b.ExternalIpAddress
 	x.xxx_hidden_StateTransitionTime = b.StateTransitionTime
 	x.xxx_hidden_Hub = b.Hub
+	x.xxx_hidden_ComputeNetworkAttachmentStatuses = &b.ComputeNetworkAttachmentStatuses
+	return m0
+}
+
+// Contains the Subnet and IPv4 address reported for a network attachment.
+type ComputeNetworkAttachmentStatus struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_SubnetRef string                 `protobuf:"bytes,1,opt,name=subnet_ref,json=subnetRef,proto3"`
+	xxx_hidden_IpAddress string                 `protobuf:"bytes,2,opt,name=ip_address,json=ipAddress,proto3"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ComputeNetworkAttachmentStatus) Reset() {
+	*x = ComputeNetworkAttachmentStatus{}
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComputeNetworkAttachmentStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComputeNetworkAttachmentStatus) ProtoMessage() {}
+
+func (x *ComputeNetworkAttachmentStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ComputeNetworkAttachmentStatus) GetSubnetRef() string {
+	if x != nil {
+		return x.xxx_hidden_SubnetRef
+	}
+	return ""
+}
+
+func (x *ComputeNetworkAttachmentStatus) GetIpAddress() string {
+	if x != nil {
+		return x.xxx_hidden_IpAddress
+	}
+	return ""
+}
+
+func (x *ComputeNetworkAttachmentStatus) SetSubnetRef(v string) {
+	x.xxx_hidden_SubnetRef = v
+}
+
+func (x *ComputeNetworkAttachmentStatus) SetIpAddress(v string) {
+	x.xxx_hidden_IpAddress = v
+}
+
+type ComputeNetworkAttachmentStatus_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	// Identifier of the Subnet assigned to the attachment.
+	SubnetRef string
+	// IPv4 address assigned to the attachment.
+	IpAddress string
+}
+
+func (b0 ComputeNetworkAttachmentStatus_builder) Build() *ComputeNetworkAttachmentStatus {
+	m0 := &ComputeNetworkAttachmentStatus{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_SubnetRef = b.SubnetRef
+	x.xxx_hidden_IpAddress = b.IpAddress
 	return m0
 }
 
@@ -1075,7 +1166,7 @@ type ComputeInstanceCondition struct {
 
 func (x *ComputeInstanceCondition) Reset() {
 	*x = ComputeInstanceCondition{}
-	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[3]
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1087,7 +1178,7 @@ func (x *ComputeInstanceCondition) String() string {
 func (*ComputeInstanceCondition) ProtoMessage() {}
 
 func (x *ComputeInstanceCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[3]
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1244,7 +1335,7 @@ type ComputeInstanceLocalReference struct {
 
 func (x *ComputeInstanceLocalReference) Reset() {
 	*x = ComputeInstanceLocalReference{}
-	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[4]
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1347,7 @@ func (x *ComputeInstanceLocalReference) String() string {
 func (*ComputeInstanceLocalReference) ProtoMessage() {}
 
 func (x *ComputeInstanceLocalReference) ProtoReflect() protoreflect.Message {
-	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[4]
+	mi := &file_osac_private_v1_compute_instance_type_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1448,7 +1539,7 @@ var file_osac_private_v1_compute_instance_type_proto_rawDesc = string([]byte{
 	0x5f, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, 0x5f, 0x6b, 0x65, 0x79, 0x52, 0x06, 0x73, 0x75, 0x62,
 	0x6e, 0x65, 0x74, 0x52, 0x0f, 0x73, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x5f, 0x67, 0x72,
 	0x6f, 0x75, 0x70, 0x73, 0x52, 0x0a, 0x69, 0x73, 0x5f, 0x77, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x73,
-	0x22, 0xeb, 0x03, 0x0a, 0x15, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x49, 0x6e, 0x73, 0x74,
+	0x22, 0xeb, 0x04, 0x0a, 0x15, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x49, 0x6e, 0x73, 0x74,
 	0x61, 0x6e, 0x63, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x3b, 0x0a, 0x05, 0x73, 0x74,
 	0x61, 0x74, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x25, 0x2e, 0x6f, 0x73, 0x61, 0x63,
 	0x2e, 0x70, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6f, 0x6d, 0x70,
@@ -1475,10 +1566,24 @@ var file_osac_private_v1_compute_instance_type_proto_rawDesc = string([]byte{
 	0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x48, 0x01, 0x52, 0x13, 0x73, 0x74,
 	0x61, 0x74, 0x65, 0x54, 0x72, 0x61, 0x6e, 0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d,
 	0x65, 0x88, 0x01, 0x01, 0x12, 0x18, 0x0a, 0x03, 0x68, 0x75, 0x62, 0x18, 0x07, 0x20, 0x01, 0x28,
-	0x09, 0x42, 0x06, 0x8a, 0xb5, 0x18, 0x02, 0x08, 0x01, 0x52, 0x03, 0x68, 0x75, 0x62, 0x42, 0x14,
+	0x09, 0x42, 0x06, 0x8a, 0xb5, 0x18, 0x02, 0x08, 0x01, 0x52, 0x03, 0x68, 0x75, 0x62, 0x12, 0x7e,
+	0x0a, 0x23, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x5f, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72,
+	0x6b, 0x5f, 0x61, 0x74, 0x74, 0x61, 0x63, 0x68, 0x6d, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x74, 0x61,
+	0x74, 0x75, 0x73, 0x65, 0x73, 0x18, 0x08, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2f, 0x2e, 0x6f, 0x73,
+	0x61, 0x63, 0x2e, 0x70, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65, 0x2e, 0x76, 0x31, 0x2e, 0x43, 0x6f,
+	0x6d, 0x70, 0x75, 0x74, 0x65, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x41, 0x74, 0x74, 0x61,
+	0x63, 0x68, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x20, 0x63, 0x6f,
+	0x6d, 0x70, 0x75, 0x74, 0x65, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x41, 0x74, 0x74, 0x61,
+	0x63, 0x68, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x65, 0x73, 0x42, 0x14,
 	0x0a, 0x12, 0x5f, 0x6c, 0x61, 0x73, 0x74, 0x5f, 0x72, 0x65, 0x73, 0x74, 0x61, 0x72, 0x74, 0x65,
 	0x64, 0x5f, 0x61, 0x74, 0x42, 0x18, 0x0a, 0x16, 0x5f, 0x73, 0x74, 0x61, 0x74, 0x65, 0x5f, 0x74,
-	0x72, 0x61, 0x6e, 0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x22, 0xb8,
+	0x72, 0x61, 0x6e, 0x73, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x22, 0x5e,
+	0x0a, 0x1e, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b,
+	0x41, 0x74, 0x74, 0x61, 0x63, 0x68, 0x6d, 0x65, 0x6e, 0x74, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
+	0x12, 0x1d, 0x0a, 0x0a, 0x73, 0x75, 0x62, 0x6e, 0x65, 0x74, 0x5f, 0x72, 0x65, 0x66, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x75, 0x62, 0x6e, 0x65, 0x74, 0x52, 0x65, 0x66, 0x12,
+	0x1d, 0x0a, 0x0a, 0x69, 0x70, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x09, 0x69, 0x70, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x22, 0xb8,
 	0x02, 0x0a, 0x18, 0x43, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x49, 0x6e, 0x73, 0x74, 0x61, 0x6e,
 	0x63, 0x65, 0x43, 0x6f, 0x6e, 0x64, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x41, 0x0a, 0x04, 0x74,
 	0x79, 0x70, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x2d, 0x2e, 0x6f, 0x73, 0x61, 0x63,
@@ -1566,58 +1671,60 @@ var file_osac_private_v1_compute_instance_type_proto_rawDesc = string([]byte{
 })
 
 var file_osac_private_v1_compute_instance_type_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_osac_private_v1_compute_instance_type_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_osac_private_v1_compute_instance_type_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_osac_private_v1_compute_instance_type_proto_goTypes = []any{
 	(ComputeInstanceState)(0),                   // 0: osac.private.v1.ComputeInstanceState
 	(ComputeInstanceConditionType)(0),           // 1: osac.private.v1.ComputeInstanceConditionType
 	(*ComputeInstance)(nil),                     // 2: osac.private.v1.ComputeInstance
 	(*ComputeInstanceSpec)(nil),                 // 3: osac.private.v1.ComputeInstanceSpec
 	(*ComputeInstanceStatus)(nil),               // 4: osac.private.v1.ComputeInstanceStatus
-	(*ComputeInstanceCondition)(nil),            // 5: osac.private.v1.ComputeInstanceCondition
-	(*ComputeInstanceLocalReference)(nil),       // 6: osac.private.v1.ComputeInstanceLocalReference
-	nil,                                         // 7: osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry
-	(*Metadata)(nil),                            // 8: osac.private.v1.Metadata
-	(*ComputeInstanceTemplateReference)(nil),    // 9: osac.private.v1.ComputeInstanceTemplateReference
-	(*timestamppb.Timestamp)(nil),               // 10: google.protobuf.Timestamp
-	(*ComputeInstanceDisk)(nil),                 // 11: osac.private.v1.ComputeInstanceDisk
-	(ComputeInstanceRunStrategy)(0),             // 12: osac.private.v1.ComputeInstanceRunStrategy
-	(*ComputeNetworkAttachment)(nil),            // 13: osac.private.v1.ComputeNetworkAttachment
-	(*ComputeInstanceCatalogItemReference)(nil), // 14: osac.private.v1.ComputeInstanceCatalogItemReference
-	(*InstanceTypeReference)(nil),               // 15: osac.private.v1.InstanceTypeReference
-	(*DiskImageReference)(nil),                  // 16: osac.private.v1.DiskImageReference
-	(*SecretLocalReference)(nil),                // 17: osac.private.v1.SecretLocalReference
-	(ConditionStatus)(0),                        // 18: osac.private.v1.ConditionStatus
-	(*anypb.Any)(nil),                           // 19: google.protobuf.Any
+	(*ComputeNetworkAttachmentStatus)(nil),      // 5: osac.private.v1.ComputeNetworkAttachmentStatus
+	(*ComputeInstanceCondition)(nil),            // 6: osac.private.v1.ComputeInstanceCondition
+	(*ComputeInstanceLocalReference)(nil),       // 7: osac.private.v1.ComputeInstanceLocalReference
+	nil,                                         // 8: osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry
+	(*Metadata)(nil),                            // 9: osac.private.v1.Metadata
+	(*ComputeInstanceTemplateReference)(nil),    // 10: osac.private.v1.ComputeInstanceTemplateReference
+	(*timestamppb.Timestamp)(nil),               // 11: google.protobuf.Timestamp
+	(*ComputeInstanceDisk)(nil),                 // 12: osac.private.v1.ComputeInstanceDisk
+	(ComputeInstanceRunStrategy)(0),             // 13: osac.private.v1.ComputeInstanceRunStrategy
+	(*ComputeNetworkAttachment)(nil),            // 14: osac.private.v1.ComputeNetworkAttachment
+	(*ComputeInstanceCatalogItemReference)(nil), // 15: osac.private.v1.ComputeInstanceCatalogItemReference
+	(*InstanceTypeReference)(nil),               // 16: osac.private.v1.InstanceTypeReference
+	(*DiskImageReference)(nil),                  // 17: osac.private.v1.DiskImageReference
+	(*SecretLocalReference)(nil),                // 18: osac.private.v1.SecretLocalReference
+	(ConditionStatus)(0),                        // 19: osac.private.v1.ConditionStatus
+	(*anypb.Any)(nil),                           // 20: google.protobuf.Any
 }
 var file_osac_private_v1_compute_instance_type_proto_depIdxs = []int32{
-	8,  // 0: osac.private.v1.ComputeInstance.metadata:type_name -> osac.private.v1.Metadata
+	9,  // 0: osac.private.v1.ComputeInstance.metadata:type_name -> osac.private.v1.Metadata
 	3,  // 1: osac.private.v1.ComputeInstance.spec:type_name -> osac.private.v1.ComputeInstanceSpec
 	4,  // 2: osac.private.v1.ComputeInstance.status:type_name -> osac.private.v1.ComputeInstanceStatus
-	9,  // 3: osac.private.v1.ComputeInstanceSpec.template:type_name -> osac.private.v1.ComputeInstanceTemplateReference
-	7,  // 4: osac.private.v1.ComputeInstanceSpec.template_parameters:type_name -> osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry
-	10, // 5: osac.private.v1.ComputeInstanceSpec.restart_requested_at:type_name -> google.protobuf.Timestamp
-	11, // 6: osac.private.v1.ComputeInstanceSpec.boot_disk:type_name -> osac.private.v1.ComputeInstanceDisk
-	11, // 7: osac.private.v1.ComputeInstanceSpec.additional_disks:type_name -> osac.private.v1.ComputeInstanceDisk
-	12, // 8: osac.private.v1.ComputeInstanceSpec.run_strategy:type_name -> osac.private.v1.ComputeInstanceRunStrategy
-	13, // 9: osac.private.v1.ComputeInstanceSpec.network_attachments:type_name -> osac.private.v1.ComputeNetworkAttachment
-	14, // 10: osac.private.v1.ComputeInstanceSpec.catalog_item:type_name -> osac.private.v1.ComputeInstanceCatalogItemReference
-	15, // 11: osac.private.v1.ComputeInstanceSpec.instance_type:type_name -> osac.private.v1.InstanceTypeReference
-	16, // 12: osac.private.v1.ComputeInstanceSpec.disk_image:type_name -> osac.private.v1.DiskImageReference
-	17, // 13: osac.private.v1.ComputeInstanceSpec.user_data_secret:type_name -> osac.private.v1.SecretLocalReference
-	17, // 14: osac.private.v1.ComputeInstanceSpec.ssh_key:type_name -> osac.private.v1.SecretLocalReference
+	10, // 3: osac.private.v1.ComputeInstanceSpec.template:type_name -> osac.private.v1.ComputeInstanceTemplateReference
+	8,  // 4: osac.private.v1.ComputeInstanceSpec.template_parameters:type_name -> osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry
+	11, // 5: osac.private.v1.ComputeInstanceSpec.restart_requested_at:type_name -> google.protobuf.Timestamp
+	12, // 6: osac.private.v1.ComputeInstanceSpec.boot_disk:type_name -> osac.private.v1.ComputeInstanceDisk
+	12, // 7: osac.private.v1.ComputeInstanceSpec.additional_disks:type_name -> osac.private.v1.ComputeInstanceDisk
+	13, // 8: osac.private.v1.ComputeInstanceSpec.run_strategy:type_name -> osac.private.v1.ComputeInstanceRunStrategy
+	14, // 9: osac.private.v1.ComputeInstanceSpec.network_attachments:type_name -> osac.private.v1.ComputeNetworkAttachment
+	15, // 10: osac.private.v1.ComputeInstanceSpec.catalog_item:type_name -> osac.private.v1.ComputeInstanceCatalogItemReference
+	16, // 11: osac.private.v1.ComputeInstanceSpec.instance_type:type_name -> osac.private.v1.InstanceTypeReference
+	17, // 12: osac.private.v1.ComputeInstanceSpec.disk_image:type_name -> osac.private.v1.DiskImageReference
+	18, // 13: osac.private.v1.ComputeInstanceSpec.user_data_secret:type_name -> osac.private.v1.SecretLocalReference
+	18, // 14: osac.private.v1.ComputeInstanceSpec.ssh_key:type_name -> osac.private.v1.SecretLocalReference
 	0,  // 15: osac.private.v1.ComputeInstanceStatus.state:type_name -> osac.private.v1.ComputeInstanceState
-	5,  // 16: osac.private.v1.ComputeInstanceStatus.conditions:type_name -> osac.private.v1.ComputeInstanceCondition
-	10, // 17: osac.private.v1.ComputeInstanceStatus.last_restarted_at:type_name -> google.protobuf.Timestamp
-	10, // 18: osac.private.v1.ComputeInstanceStatus.state_transition_time:type_name -> google.protobuf.Timestamp
-	1,  // 19: osac.private.v1.ComputeInstanceCondition.type:type_name -> osac.private.v1.ComputeInstanceConditionType
-	18, // 20: osac.private.v1.ComputeInstanceCondition.status:type_name -> osac.private.v1.ConditionStatus
-	10, // 21: osac.private.v1.ComputeInstanceCondition.last_transition_time:type_name -> google.protobuf.Timestamp
-	19, // 22: osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry.value:type_name -> google.protobuf.Any
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	6,  // 16: osac.private.v1.ComputeInstanceStatus.conditions:type_name -> osac.private.v1.ComputeInstanceCondition
+	11, // 17: osac.private.v1.ComputeInstanceStatus.last_restarted_at:type_name -> google.protobuf.Timestamp
+	11, // 18: osac.private.v1.ComputeInstanceStatus.state_transition_time:type_name -> google.protobuf.Timestamp
+	5,  // 19: osac.private.v1.ComputeInstanceStatus.compute_network_attachment_statuses:type_name -> osac.private.v1.ComputeNetworkAttachmentStatus
+	1,  // 20: osac.private.v1.ComputeInstanceCondition.type:type_name -> osac.private.v1.ComputeInstanceConditionType
+	19, // 21: osac.private.v1.ComputeInstanceCondition.status:type_name -> osac.private.v1.ConditionStatus
+	11, // 22: osac.private.v1.ComputeInstanceCondition.last_transition_time:type_name -> google.protobuf.Timestamp
+	20, // 23: osac.private.v1.ComputeInstanceSpec.TemplateParametersEntry.value:type_name -> google.protobuf.Any
+	24, // [24:24] is the sub-list for method output_type
+	24, // [24:24] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_osac_private_v1_compute_instance_type_proto_init() }
@@ -1635,14 +1742,14 @@ func file_osac_private_v1_compute_instance_type_proto_init() {
 	file_osac_private_v1_secret_type_proto_init()
 	file_osac_private_v1_compute_instance_type_proto_msgTypes[1].OneofWrappers = []any{}
 	file_osac_private_v1_compute_instance_type_proto_msgTypes[2].OneofWrappers = []any{}
-	file_osac_private_v1_compute_instance_type_proto_msgTypes[3].OneofWrappers = []any{}
+	file_osac_private_v1_compute_instance_type_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_osac_private_v1_compute_instance_type_proto_rawDesc), len(file_osac_private_v1_compute_instance_type_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

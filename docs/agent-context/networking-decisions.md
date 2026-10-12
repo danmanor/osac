@@ -84,6 +84,12 @@ superseded or extended design explicitly.
 | Cluster | `network_attachment`, ClusterNetworkAttachment: subnet, security groups | Singular; no primary field |
 | BaremetalInstance | `network_attachments`, BareMetalNetworkAttachment: subnet, security groups, interface, optional primary | Maximum one entry; primary omitted or true accepted, false rejected |
 
+VMaaS reports per-attachment Subnet and assigned IPv4 details through
+`ComputeInstanceStatus.compute_network_attachment_statuses`, with `subnet_ref`
+and `ip_address`. The current single-attachment boundary permits at most one
+status entry; KubeVirt feedback population is tracked by
+[OSAC-2479](https://redhat.atlassian.net/browse/OSAC-2479).
+
 An omitted attachment requests tenant defaults; a supplied attachment resolves
 missing fields individually. Consult the unified/default designs for validation
 of tenant ownership, subnet/security-group VirtualNetwork alignment, readiness,
