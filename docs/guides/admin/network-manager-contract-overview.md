@@ -78,7 +78,7 @@ sequenceDiagram
     alt VM overlay
         VMaaS->>VM: Create halted VM with Subnet reference and interface in initial spec
         VMaaS->>OSAC: SubnetAttachment request for VM
-        OSAC->>K8s: apply_network_attachment
+        OSAC->>K8s: apply_subnet_attachment
         K8s->>VM: Verify existing reference; install policy
         K8s-->>OSAC: Success for the request UID
         OSAC-->>VMaaS: Attachment ready
@@ -88,7 +88,7 @@ sequenceDiagram
     else Bare-metal physical interface
         BMaaS->>Host: Provision over provisioning connection
         BMaaS->>OSAC: SubnetAttachment request for BaremetalInstance
-        OSAC->>Fabric: apply_network_attachment
+        OSAC->>Fabric: apply_subnet_attachment
         Fabric->>Host: Map selected switch port to Subnet segment; install policy
         Fabric-->>OSAC: Apply success for the request UID
         BMaaS->>Host: Handoff reboot onto tenant network
@@ -98,7 +98,7 @@ sequenceDiagram
     end
 ```
 
-`apply_network_attachment` is one OSAC action with two manager paths. OSAC
+`apply_subnet_attachment` is one OSAC action with two manager paths. OSAC
 selects the Kubernetes Manager for `overlay` and the Fabric Manager for
 `physical`. In the VM path, the Subnet reference is already in the VM's initial
 spec; Kubernetes verifies it and installs policy before the VM starts. In the
@@ -111,7 +111,7 @@ or switch-port mapping. The manager receives both request and target identity,
 plus the resolved interface, Subnet and complete SecurityGroup rules.
 
 Deletion follows the same ownership split in reverse. The service stops the
-workload first; `delete_network_attachment` removes its policy and restores
+workload first; `delete_subnet_attachment` removes its policy and restores
 the physical interface to that extension's baseline. For a VM, the service
 deletes the stopped VM after policy cleanup. Subnet cleanup waits until its
 workload attachments are gone.
