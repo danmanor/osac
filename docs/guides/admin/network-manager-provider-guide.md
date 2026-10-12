@@ -5,6 +5,9 @@ Kubernetes Managers for OSAC networking. It follows the provider workflow from
 choosing a manager role through packaging its Ansible role, registering data
 models and managers, and checking the resulting behavior.
 
+Start with [OSAC networking contract in brief](network-manager-contract-overview.md)
+for the workflow and ownership summary; use this guide for the exact adapter contract.
+
 > **Implementation status:** This guide describes the target contract in the
 > [Network Manager Integration Contract Design in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files).
 > The current OSAC code still uses the legacy ConfigMap-based manager registry
@@ -15,7 +18,8 @@ models and managers, and checking the resulting behavior.
 > template discovery but does not register a manager or validate manager
 > compatibility. The target contract uses a fixed generic networking job
 > template and derives `osac.networking.<managerName>` from NetworkManager.
-> Generic OSAC platform support described below must ship before a provider can
+> Generic OSAC platform support, including installer acceptance of arbitrary
+> manager pairs and provider secret keys, must ship before a provider can
 > use this workflow end to end. The `network-fulfillment-ig` ConfigMap and
 > Secret described later provide job environment values; they do not register
 > manager implementations.
@@ -30,11 +34,18 @@ models and managers, and checking the resulting behavior.
 - [Step 3: Implement the AAP manager role](#step-3-implement-the-aap-manager-role)
 - [Step 4: Register models, managers, and NetworkClass](#step-4-register-models-managers-and-networkclass)
 - [Step 5: Verify the integration](#step-5-verify-the-integration)
+- [Provider readiness checklist](#provider-readiness-checklist)
 - [Changing or removing a manager](#changing-or-removing-a-manager)
 - [Implementation status and conformance ownership](#implementation-status-and-conformance-ownership)
 - [Related documents](#related-documents)
 
 ## How manager integration works
+
+In this guide, **networking profile** means the deployment's active
+NetworkClass and selected managers. It is not an additional resource or tenant
+network. OSAC creates and validates NetworkClass through its API, without a
+provider create/delete task or runtime outputs. Provider-wide settings and
+prerequisites belong to the existing installation/environment configuration.
 
 OSAC gives tenants one networking API across virtual machines, managed
 Kubernetes clusters, and bare-metal servers. The same `VirtualNetwork`,
@@ -71,12 +82,27 @@ names the manager implements and produce their corresponding values.
 For each Fabric create or reconcile task, OSAC derives the expected
 model/owner keys from this declaration, the owner scopes in the operation
 context, and NetworkData already stored. OSAC does not pass that computed set
-to AAP. The task uses `network_owner_context` to label each value and existing
-`network_data` to skip values already stored. It must return every expected
-value exactly once and no other value. OSAC checks that every applicable
-Kubernetes input is stored before starting the Kubernetes job.
+to AAP. Each task uses `network_owner_context` to label values for every
+declared owner present in the context and existing `network_data` to skip
+values already stored. Thus a Subnet task may first return a
+VirtualNetwork-scoped value if that parent value is missing; the value is
+stored under the VirtualNetwork owner and reused by later tasks. A
+NetworkClass-scoped value may first be returned by any eligible resource task
+whose context includes the profile. The task returns every expected value
+exactly once and no other value. OSAC checks that every applicable Kubernetes
+input is stored before starting the Kubernetes job.
 
 ## Before you start
+
+OSAC trusts each provider task's reported success after validating its result
+envelope and required values. A provider must supply every task entry point
+assigned to the role. A task may return a valid success without backend changes
+when the provider deliberately handles that action as a no-op. The task still
+returns every required result field and every expected real, schema-valid
+NetworkData value. An omitted task or missing required output fails the request.
+A successful no-op does not establish the corresponding network or policy
+behavior; providers document their actual behavior and retain separate evidence
+for the shared semantics they claim. Registration is a declaration check. [User]
 
 1. Confirm that the OSAC release includes the generic manager support described
    in the implementation status note. That support includes the registration
@@ -90,7 +116,15 @@ Kubernetes input is stored before starting the Kubernetes job.
    environment (EE) with the `osac.networking` collection and the role for
    each manager. The role's name is the manager's `NetworkManager.spec.managerName`;
    OSAC derives its fully qualified role name as
-   `osac.networking.<managerName>`.
+   `osac.networking.<managerName>`. Compose and pin one execution environment
+   containing all selected wrappers and their dependencies. Each wrapper may
+   delegate to a provider-owned collection such as `acme.fabric`; OSAC dispatch
+   continues to invoke the fixed wrapper. Independently supplied roles must be
+   assembled into the same `osac.networking` collection, with duplicate role
+   names rejected during packaging. Installing a second complete package with
+   that same collection identity is not an additive manager installation.
+   Set the resulting image through `aap.configAsCode.eeImage` and verify the
+   exact collection/task version resolved in the job. [User]
 4. Identify the backend settings and secret values each role needs, and the
    environment-variable names the role will read. Put non-secret values in
    the networking fulfillment group's ConfigMap and sensitive values in its
@@ -129,7 +163,6 @@ aap:
     networkFulfillment:
       config:
         ACME_CONTROLLER_URL: https://fabric-api.example.test
-        ACME_SERVER_CLUSTER_TEMPLATE: spectrum-x-gpu-template
         ACME_CA_BUNDLE: "<PEM CA bundle>"
       secret:
         ACME_API_TOKEN: "<value supplied through the provider's secret source>"
@@ -159,24 +192,24 @@ For the existing AAP instance-group Helm configuration, see
 ### Fabric Manager
 
 The Fabric Manager handles shared networking resources and physical workload
-interfaces. Its required task set includes creating and deleting
-VirtualNetworks and Subnets, applying and removing policy on Cluster and
-BaremetalInstance interfaces, managing ExternalIP pools and allocations,
-managing ExternalIP attachments and NAT gateways, and querying Dynamic Host
-Configuration Protocol (DHCP) leases for Clusters and BaremetalInstances. If
-Ethernet east-west support is enabled, it also creates and deletes
-FabricDomains.
+interfaces. Its shared task set includes creating and deleting
+VirtualNetworks and Subnets, applying and removing policy on physical
+SubnetAttachments, managing ExternalIP pools and allocations, managing
+ExternalIP attachments and NAT gateways, and creating or deleting
+`FabricDomain` resources when the east-west capability is enabled. A selected workload-service extension may
+also require its own task entry points; those tasks are listed separately
+below and are not part of every Fabric Manager's base contract.
 
 ### Kubernetes Manager
 
-The Kubernetes Manager handles Kubernetes-side Subnet networking and applies
-or removes network attachment policy for ComputeInstance VM overlays. It does
-not handle shared VirtualNetwork operations, physical workload interfaces, or
-Fabric Manager work. A Kubernetes Manager is optional for deployments without
-VM workloads.
+The Kubernetes Manager handles Kubernetes-side Subnet networking. For
+ComputeInstance VMs it configures the interface binding and attachment
+policy, and removes them during cleanup. It does not handle shared
+VirtualNetwork operations, physical workload interfaces, or Fabric Manager
+work. A Kubernetes Manager is optional for deployments without VM workloads.
 
 The normative resource meanings and tenant-visible behavior are in the
-[Unified Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/design.md).
+[Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-unified-networking/design.md).
 In particular, implementations must preserve these shared semantics:
 
 - A `VirtualNetwork` is a Layer 3 (L3) routing domain. Subnets in it can route
@@ -191,30 +224,30 @@ In particular, implementations must preserve these shared semantics:
 - ExternalIP attachment provides inbound translation; NATGateway provides
   outbound source translation. They have separate lifecycles and behavior.
 
-Capabilities are a predefined OSAC list, not provider-defined strings. The
-only capability in this contract is `EAST_WEST_ETHERNET`, serialized in the
-manager API as `NETWORK_MANAGER_CAPABILITY_EAST_WEST_ETHERNET`. The Fabric
-`NetworkManager.spec.capabilities` field declares that an implementation can
-run Ethernet east-west tasks. The deployment enables that behavior by
-setting `NetworkClass.spec.east_west_capabilities.supports_east_west_ethernet`
-to true. Both declarations are required: fulfillment-service rejects a
-NetworkClass that enables the behavior when its selected Fabric Manager lacks
-the capability; when the NetworkClass field is false or omitted, OSAC rejects
-a FabricDomain request before AAP dispatch. A capability on a manager alone
-does not enable tenant requests.
+### Optional capabilities
 
-When enabled, `create_fabric_domain` and `delete_fabric_domain` use the same
-generic Fabric Manager registration, collection role, and AAP template as the
-other tasks. Backend settings such as a provider template name come from the
-networking fulfillment group's environment variables, not NetworkClass or
-NetworkManager. The Fabric Manager validates its required values when it
-executes the task and preserves the FabricDomain, VirtualNetwork, and Subnet
-semantics defined in
-the [Unified Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/design.md)
+Capabilities describe optional behavior beyond the base manager contract.
+They come from a predefined OSAC list; providers cannot invent capability
+strings. A Fabric Manager advertises support in
+`NetworkManager.spec.capabilities`, and NetworkClass separately enables it
+for the deployment. OSAC rejects enabling an unsupported capability;
+advertising support alone does not enable tenant requests. Omitted or empty
+capabilities leave the base networking contract in effect.
+
+The current capability list in this proposal is:
+
+| Capability (API enum value) | What it provides |
+|---|---|
+| `NETWORK_MANAGER_CAPABILITY_EAST_WEST_ETHERNET` | Ethernet east-west FabricDomain creation and deletion for participating servers, while preserving VirtualNetwork routing and Subnet broadcast domains. |
+
+Implement the full task and behavior contract for every advertised capability.
+Capability-specific enablement and task requirements are defined in the
+[Network Manager Integration Contract](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 and [Multi-Fabric East-West Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1382-multi-fabric-east-west-networking/design.md).
+The examples below use only the base contract, without optional capabilities.
 
-All networking resources, including `FabricDomain`, use the selected generic
-manager contract; no resource has a separate vendor-specific dispatch path.
+All networking resources use the selected generic manager contract; no
+resource has a separate vendor-specific dispatch path.
 
 ## Step 2: Define any data exchanged between managers
 
@@ -231,9 +264,13 @@ For each model, decide:
    for OSAC models. Equal JSON types do not make two values interchangeable;
    the name is part of the contract.
 2. **Owner scope:** Choose one supported owner scope: `NetworkClass`,
-   `VirtualNetwork`, or `Subnet`. The owner determines how long the value lives
-   and which operations can receive it. A new owner kind requires OSAC platform
-   support.
+   `VirtualNetwork`, or `Subnet`. NetworkClass scope shares a dynamic value
+   across resources bound to that provider profile; VirtualNetwork and Subnet
+   scopes give each tenant resource its own value. NetworkClass has no provider
+   task, so a profile-scoped output is first returned by an eligible resource
+   operation whose owner context includes that profile. OSAC removes it after
+   all profile-bound resources and operations drain. A new owner kind requires
+   OSAC platform support.
 3. **Value schema:** Supply an inline JSON Schema Draft 2020-12 schema. The
    fulfillment service validates the schema when the model is created and
    validates every value against it. OSAC does not fetch schemas from URLs.
@@ -331,20 +368,45 @@ send an operation string or map one operation name to another.
 |---|---|---|---|
 | Create/delete VirtualNetwork | Fabric | None | `create_virtual_network` / `delete_virtual_network` |
 | Create/delete Subnet | Fabric, then Kubernetes when configured; reverse order for deletion | None | `create_subnet` / `delete_subnet` |
-| Create/delete FabricDomain | Fabric, only when it declares `EAST_WEST_ETHERNET` and NetworkClass enables it | None | `create_fabric_domain` / `delete_fabric_domain` |
-| Apply/delete workload attachment | Kubernetes for `ComputeInstance`; Fabric for `Cluster` and `BaremetalInstance` | `ComputeInstance`, `Cluster`, `BaremetalInstance` | `apply_workload_attachment` / `delete_workload_attachment` |
+| Create/delete FabricDomain | Fabric when the selected NetworkClass enables the declared east-west capability | None | `create_fabric_domain` / `delete_fabric_domain` |
+| Apply/delete workload attachment | Kubernetes for a `ComputeInstance` target; Fabric for a `BaremetalInstance` target | `SubnetAttachment` request targeting one workload; CaaS uses one BaremetalInstance request per worker | `apply_workload_attachment` / `delete_workload_attachment` |
 | Create/delete ExternalIPPool | Fabric | None | `create_external_ip_pool` / `delete_external_ip_pool` |
 | Allocate/release ExternalIP | Fabric | None | `create_external_ip` / `delete_external_ip` |
 | Create/delete ExternalIPAttachment | Fabric | `ComputeInstance`, `Cluster`, `BaremetalInstance` | `attach_external_ip` / `detach_external_ip` |
 | Create/delete NATGateway | Fabric | None | `create_nat_gateway` / `delete_nat_gateway` |
-| Query DHCP lease | Fabric | `Cluster`, `BaremetalInstance` | `query_dhcp_lease` |
 
-Every selected manager must provide all task files assigned to its role and
-supported targets. The task filename stem in the table is the Ansible
+This table lists the shared tasks and the optional capability task. Every
+selected manager must provide all shared task files assigned to its role and
+supported targets, plus the tasks for each capability it advertises. The task
+filename stem in the table is the Ansible
 `tasks_from` value; the filename in the collection has the `.yml` extension.
 Each manager implements the task names assigned to its role with its own
-backend behavior. All create/apply and delete tasks must be idempotent by
-resource UID.
+backend behavior, including an explicitly documented no-op where chosen.
+Resource tasks are idempotent by resource API ID; workload attachment tasks are
+idempotent by target workload API ID, its one selected logical interface and
+placement. Each NetworkData output is additionally idempotent by its model
+name and owner kind/API ID, including when concurrent resource tasks can
+produce the same parent- or profile-owned value. Kubernetes UIDs fence
+projections and job results; they do not own backend allocations. [User]
+
+### Workload-service task additions
+
+Service extensions can add task entry points when their lifecycle needs
+provider work beyond the shared resource contract. The extension defines the
+task trigger, target and owner identities, extra inputs, readiness gate, and
+task-specific result fields. The task still uses the common AAP invocation
+and result envelope.
+
+| Service extension | Additional manager task | Purpose |
+|---|---|---|
+| BMaaS; also used for CaaS worker instances | Fabric `query_dhcp_lease` for a `SubnetAttachment` targeting a `BaremetalInstance` | Discover the selected physical interface's tenant DHCP lease after network handoff. See the [BMaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1437-bmaas-networking/design.md). |
+| CaaS | Fabric `reserve_cluster_ingress_ip` / `release_cluster_ingress_ip` for a `ClusterOrder` | Reserve and release one tenant-Subnet ingress address for a guest cluster. See the [CaaS networking design](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1436-caas-networking/design.md). |
+
+Providers implement these additional tasks only when they offer the
+corresponding service extension. The CaaS reservation task uses the configured
+`NetworkClass.spec.vip_prefix_length`; the shared manager contract passes the
+captured value to `create_subnet`, while the CaaS extension defines address
+reservation and release.
 
 OSAC launches one generic networking AAP job template. The template runs the
 OSAC-owned `playbook_osac_network_manager.yml`; providers do not select a
@@ -374,87 +436,122 @@ every role in that group; see [Provider settings and
 secrets](#provider-settings-and-secrets) for the configuration path and
 security boundary.
 
-A Fabric Manager that declares `EAST_WEST_ETHERNET` must implement both
-FabricDomain task files. Each task receives the FabricDomain, its associated
-VirtualNetwork context, required NetworkData, and access to the same
-networking-group environment variables as the other manager tasks.
-NetworkManager cannot register a partial task set.
-
 Create ordering for a Subnet is Fabric first, then Kubernetes when selected.
 Delete ordering is Kubernetes first, then Fabric. OSAC routes workload
 attachment tasks to the manager that owns that interface: the Kubernetes
-Manager for a VM overlay, and the Fabric Manager for Cluster worker and
-bare-metal interfaces.
+Manager for a VM overlay, and the Fabric Manager for BaremetalInstance
+interfaces, including CaaS workers. The SubnetAttachment request owns the job;
+the workload is a separate target. There is no Cluster-target request.
 
 ### AAP inputs for each task
 
 OSAC passes `osac_network_task_from` separately from the
 `osac_job_vars` object. OSAC chooses the task filename stem; a provider role
-must not override it. The common `osac_job_vars` fields are:
+must not override it. The common `osac_job_vars` fields are summarized below. Exact types and
+task-specific presence rules are in the manager contract’s
+[canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
 
 | Field | Meaning |
 |---|---|
-| `manager` | The selected manager's `name` (equal to its `managerName`) and normalized `role`. OSAC derives the role FQCN from this name. Provider settings are supplied through the job environment, not this field. |
-| `resource` | The OSAC resource being reconciled, including its API version, kind, metadata, and spec. The [Unified Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/design.md) defines each resource's fields and meaning. |
-| `network_owner_context` | `owners` lists each live NetworkClass, VirtualNetwork, or Subnet owner relevant to the operation as `{kind, uid}`. OSAC resolves each UID from the hub object's `metadata.uid`. The Fabric role uses this context to label output values. |
-| `network_data` | Existing values that apply to this resource action. Kubernetes receives only declared, applicable inputs. Fabric receives existing values for reuse and cleanup. |
-| `workload_attachment` | For workload attachment tasks, the normalized Subnet, interface, and complete SecurityGroup policy. |
+| `manager` | Selected `managerName`, normalized role (`fabric` or `kubernetes`), and immutable registration `registration_id`. OSAC derives the role FQCN as `osac.networking.<managerName>`. |
+| `network_class` | Bound profile's stable API `resource_id` and current hub `projection_uid`; includes the captured `vip_prefix_length` when configured and omits it otherwise. Manager registrations are captured by OSAC; the role does not resolve them by name. |
+| `resource` | Complete current hub resource projection, including its immutable spec, `metadata.uid`, generation, and stable fulfillment-service `id`. For attachment work, this is the target-only SubnetAttachment request. |
+| `network_owner_context` | Applicable NetworkClass, VirtualNetwork, and Subnet owners, each with `kind`, stable `resourceId`, and current `projectionUID`. OSAC derives eligible output keys from manager declarations, owner scopes, and values already stored; a child task may produce a missing value for a parent or profile owner in this context. |
+| `network_data` | Applicable model name, owner kind and API resource ID, and schema-validated JSON value. Fabric receives existing values to reuse and returns only expected values not already stored; Kubernetes receives only its declared applicable inputs. An empty list is supplied when none apply. |
+| `target` | Complete current workload projection, required when a task operates on a workload endpoint. |
+| `network_attachment` | Normalized Subnet, interface descriptor, and complete SecurityGroup rules; required for workload attachment tasks. |
 
-`workload_attachment` is a sibling of `resource`. OSAC keeps `resource` as the
-owning workload so its UID and generation identify the job. The normalized
-attachment includes the resolved Subnet and parent VirtualNetwork, the
-interface or interfaces, and the complete ingress and egress rules of each
-attached SecurityGroup. On apply, establish the Subnet connection and install
-policy before traffic is enabled. On delete, remove workload-owned policy and
-detach the interface before workload teardown.
+The AAP extra-vars object also carries `osac_dispatch_attempt_id` for launch
+recovery. OSAC passes `osac_network_task_from` separately from `osac_job_vars`;
+the operation table and canonical input contract define task-specific resolved
+context and exact field presence.
 
-For a VM, the Kubernetes Manager receives an overlay interface; for Cluster
-and BaremetalInstance targets, the Fabric Manager receives resolved physical
-interfaces. The input shape and policy requirements are:
+OSAC resolves API references before launch. A provider task does not fetch
+Fulfillment registrations or resources by name. The shared `create_subnet`
+input contains the full parent VirtualNetwork snapshot and routing-domain
+context; when configured, the bound NetworkClass's `vip_prefix_length` is
+available as `network_class.vip_prefix_length`. The Fabric Manager uses it to
+reserve the provider's configured prefix within the Subnet, and workload
+allocators honor the resulting reserved ranges. Each service extension defines
+any additional input required by its own workload-specific operation. All
+allocators that serve the same Subnet coordinate address use through one
+atomic allocator or disjoint ranges, and exclude the registered reserved
+CIDRs. [User]
 
-```yaml
-osac_network_task_from: apply_workload_attachment
-osac_job_vars:
-  manager: {name: acme_kubernetes, role: kubernetes}
-  resource:
-    kind: ComputeInstance
-    metadata: {uid: "<workload UID>", generation: 3}
-  network_owner_context:
-    owners:
-      - {kind: NetworkClass, uid: "<networkclass UID>"}
-      - {kind: VirtualNetwork, uid: "<network UID>"}
-      - {kind: Subnet, uid: "<subnet UID>"}
-  workload_attachment:
-    subnet:
-      uid: "<subnet UID>"
-      name: app-subnet
-      ipv4_cidr: 192.0.2.0/24
-      virtual_network: {uid: "<network UID>", name: app-network}
-    interfaces:
-      - {type: overlay, name: primary}
-    security_groups:
-      - uid: "<group UID>"
-        name: web
-        ingress:
-          - {protocol: TCP, port_from: 443, port_to: 443, ipv4_cidr: 0.0.0.0/0}
-        egress: []
-```
+`network_attachment` is a sibling of `resource` and `target`.
+For attachment and DHCP tasks, `resource` is the target-only SubnetAttachment
+request; its UID and generation identify the tracked job and returned result.
+`target` contains the referenced workload. CaaS has one request per worker
+BaremetalInstance. The one physical interface includes the selected-port MAC
+resolved from the BareMetalHost annotation for every bare-metal target,
+including CaaS workers; OSAC waits for that MAC before physical apply, delete or DHCP dispatch. [User]
+
+On apply, establish the Subnet connection and install the selected policy
+before traffic is enabled. Before delete, the workload owner stops VM guest execution or confirms the physical host powered off. Then remove workload-owned policy and restore
+the provisioning network before workload teardown proceeds. A deliberate provider no-op
+can report task success, but its actual policy and connectivity effects remain
+the provider's stated behavior and evidence.
+
+For VMaaS, OSAC supplies `tenant_namespace=osac-subnet-<Subnet API UUID>`;
+Kubernetes `create_subnet` creates/verifies that owned namespace. OSAC prepares
+a stopped VM with automatic pod-interface attachment disabled and no
+provider-specific interface configuration, then passes its exact name/UID and
+the `primary` selector to `apply_workload_attachment`. Your Kubernetes Manager
+configures that VM's network/interface fields and policy before returning
+success. OSAC owns compute/disks and start/stop and preserves those networking
+fields. No Kubernetes NetworkData output or additional task is needed.
+An identical replay after start verifies the existing configuration; it must
+not rewrite a live interface. The [normative VM field-ownership contract](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1435-vmaas-networking/design.md#vm-placement-and-interface-ownership)
+specifies preparation, exact fields, identity checks and cleanup.
+
+For a VM, OSAC selects the Kubernetes Manager for its overlay interface. For
+physical workload interfaces, including CaaS workers, OSAC selects the Fabric
+Manager. The task receives a target-only `SubnetAttachment` as `resource`, the
+complete referenced workload projection as `target`, the bound profile and
+registration identities, and the normalized `network_attachment` containing
+the resolved Subnet, interface descriptor, and complete SecurityGroup rules.
+NetworkData owner context uses stable API resource IDs and current projection
+UIDs for applicable NetworkClass, VirtualNetwork, and Subnet owners. The
+[canonical serialized task inputs and attachment schema](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs)
+are normative; this guide does not define a second payload shape.
+
+A provider's interface baseline allows only the selected interface/Subnet's
+trusted gateway ARP and DHCP setup traffic alongside tenant default deny.
+This does not authorize arbitrary tenant traffic or rogue DHCP. CaaS API,
+HTTPS, DNS and other bootstrap IP traffic still require normal SecurityGroup
+egress rules. Qualify address discovery under deny-all rules and rejection of
+untrusted infrastructure traffic separately from normal application policy. [User]
 
 The [manager contract's workload attachment input in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 defines the physical-interface variants and all rule constraints.
 
-A Fabric task returns values according to the provider's implementation of
-its manager's declared `networkOutputs`. The provider-authored role already
-knows those model names; OSAC does not need to send the registration list as
-an AAP input. OSAC derives the required
-model/owner keys from that declaration, the owner scopes in
-`network_owner_context`, and NetworkData already stored. It does not send the
-computed set to AAP. The task uses `network_owner_context.owners` to set each
-output's owner kind and UID, and existing `network_data` to skip values
-already stored. It returns each required key exactly once and no other key.
-A model whose owner scope is absent from the context, or whose value is
-already stored, is not expected again. On delete, the task receives existing
-values and owner context for cleanup and returns no new NetworkData.
+For each Fabric create or reconcile task, OSAC expects one value for every
+declared output model whose owner is present in `network_owner_context` and
+does not already have a stored value. Existing values are passed to the task
+for reuse and are not returned again. A Subnet operation may therefore return
+Subnet-owned values and also create a missing VirtualNetwork- or
+NetworkClass-owned value when that owner is in context. Later operations reuse
+the stored value without returning it again. The provider role knows its own
+declarations and labels each value with the resolved owner identity; OSAC
+derives and validates the expected keys without asking the task for a missing-
+output list. Existing backend allocations must be reused. Because separate
+resource tasks may race to produce one missing parent/profile value, each
+eligible task must use the NetworkData model and owner identity as an atomic
+backend idempotency key and return the same value. Use backend idempotency or
+provider-side coordination to prevent duplicate state. Delete and
+non-producing tasks return an empty `network_data` list.
+
+OSAC validates the complete result before writing any NetworkData record. If a
+value already exists before a new manager dispatch, OSAC passes it to the task
+and expects only the still-missing keys. For example, if the Subnet VNI is
+already stored but its reserved ranges are not, the Fabric task reuses the VNI
+and returns the missing ranges. If OSAC has already accepted a complete result
+but a fulfillment-service write persisted only some of its values, the durable
+operation journal replays that exact accepted result to finish persistence;
+it does not launch the manager task again or recalculate the result. Identical
+create retries succeed, while a different value for an existing key is
+rejected.
+
 OSAC validates the full result and every value before writing any NetworkData
 record. Before a consuming Kubernetes task starts, OSAC verifies that each
 applicable declared input has a persisted value. Manager tasks must not write
@@ -464,6 +561,7 @@ common result envelope:
 
 ```yaml
 osac_result:
+  resourceID: "<Subnet API ID>"
   resourceUID: "<subnet UID>"
   observedGeneration: 3
   data:
@@ -471,13 +569,16 @@ osac_result:
       - model_name: acme-networking-subnet-vlan-id
         owner:
           kind: Subnet
-          uid: "<subnet UID>"
+          resourceId: "<Subnet API ID>"
+          projectionUID: "<Subnet hub UID>"
         value: 120
 ```
 
-The fulfillment service validates the result and creates a separate
-`NetworkData` API object with a generated name. That object is OSAC's durable
-record; the provider manager returns only the model name, owner, and value.
+The operator validates the result and creates a separate `NetworkData` API
+record through the fulfillment service. The fulfillment-service database is
+authoritative, and its existing controller path projects the record as a CRD
+in the networking hub. That record is OSAC's durable value; the provider
+manager returns only the model name, owner, and value.
 OSAC then passes the validated record to a Kubernetes Manager that declares
 the model as an input:
 
@@ -486,7 +587,7 @@ osac_job_vars:
   network_data:
     - model_name: acme-networking-subnet-vlan-id
       resource_kind: Subnet
-      resource_uid: "<subnet UID>"
+      resource_id: "<owner API ID>"
       value: 120
 ```
 
@@ -499,12 +600,17 @@ JSON types alone do not make two values interchangeable.
 Every successful task, including `query_dhcp_lease`, returns one AAP
 artifact named `osac_result`. The Ansible task publishes it with
 `ansible.builtin.set_stats`; see the [Ansible `set_stats` documentation](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/set_stats_module.html).
-The artifact includes the owning resource UID and the observed generation; it
-does not repeat an operation or task identifier because OSAC has that context
-from the exact tracked AAP job. Every result contains `data.network_data`; use
+The artifact echoes the stable fulfillment-service resource ID, the original
+request CR UID, and observed generation; it does not repeat an operation or
+task identifier because OSAC has that context from the exact tracked AAP job.
+Every result contains `data.network_data`; use
 an empty list when the task publishes no NetworkData values. Add only the
-task-specific field required by that task: `data.external_ip` for
-`create_external_ip` or `data.dhcp_leases` for `query_dhcp_lease`.
+task-specific field required by that task. For the base tasks, these are
+`data.external_ip` for
+`create_external_ip`, `data.dhcp_leases` for `query_dhcp_lease`, or
+`data.cluster_ingress.address` for `reserve_cluster_ingress_ip`. Optional
+capability tasks use the additional result shape defined by their shared
+[task/result contract](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#manager-result-envelope).
 If backend work fails, fail the Ansible task with a diagnostic; do not publish
 a success result for incomplete work.
 
@@ -515,6 +621,7 @@ For a task with no NetworkData output:
   ansible.builtin.set_stats:
     data:
       osac_result:
+        resourceID: "<authoritative resource API ID>"
         resourceUID: "<resource UID>"
         observedGeneration: 3
         data:
@@ -526,6 +633,7 @@ patch the ExternalIP or any Kubernetes object:
 
 ```yaml
 osac_result:
+  resourceID: "<ExternalIP API ID>"
   resourceUID: "<external IP UID>"
   observedGeneration: 1
   data:
@@ -534,39 +642,132 @@ osac_result:
       address: 198.51.100.19
 ```
 
-OSAC reads the result from the exact tracked AAP job and validates its UID and
-generation against that job's request context. It then validates that the
+OSAC reads the result from the exact tracked AAP job and validates its stable
+resource ID, projection UID, and generation against that job's request context.
+It then validates that the
 address is canonical IPv4 and inside the selected pool. OSAC writes the confirmed address to
 `ExternalIP.status.address` through its existing status feedback path. A
 missing or invalid result leaves the ExternalIP non-ready. Retrying the same
-ExternalIP UID must return the same provider reservation.
+ExternalIP API ID must return the same provider reservation.
 
 DHCP lease lookup uses the same result envelope:
 
 ```yaml
 osac_result:
-  resourceUID: "<workload UID>"
+  resourceID: "<SubnetAttachment API ID>"
+  resourceUID: "<SubnetAttachment request UID>"
   observedGeneration: 1
   data:
     network_data: []
     dhcp_leases:
-      - subnet_ref: "<subnet UID>"
+      - subnet_ref: "<Subnet API ID>"
         interface: primary
         ip_address: 192.0.2.10
         mac_address: "02:00:00:00:00:10"
 ```
 
-Return one unambiguous lease for each requested attachment. A missing or
+Attachment apply and lease lookup are separate jobs on the same request.
+OSAC runs lookup only after BMF reports `NetworkHandoffComplete`, and supplies
+the selected interface MAC for BMaaS and CaaS alike. Return one unambiguous
+MAC-matching lease for the request's one attachment. A missing or
 ambiguous match fails the task. A malformed, missing, stale, or mismatched
 result fails the task and does not make the resource Ready.
 
-Create/apply and delete tasks must be idempotent by resource UID;
-workload-attachment operations are also scoped by interface. A retry may be a
-new AAP job with a new job ID. OSAC polls the exact job ID it launched and does
-not treat another job's result as success. For Subnet create retries, reuse
-NetworkData values already persisted by OSAC rather than allocating
-replacements. During delete, keep values until consumer and Fabric cleanup have
-succeeded.
+**Every AAP job must be fully idempotent**, including create, apply, lookup,
+allocation, release and delete, and every constituent task. This requirement
+also covers the surrounding OSAC workload prepare/start jobs in these flows.
+Repeating the same desired input after success or interruption at any step
+must converge to the same intended state without duplicate allocations,
+objects, rules, or destructive replacement. Backend allocations are keyed by immutable OSAC API resource IDs,
+plus interface/placement where required. Kubernetes UIDs identify concrete
+objects and fence results/writes; they are not backend allocation keys.
+For a Cluster ingress reservation use the Cluster API ID, not ClusterOrder UID.
+Recreating a hub projection must recover the same allocation. OSAC accounts
+for previous jobs before dispatching new work and retains cleanup state during
+deletion; a provider must recover its same API-ID-owned state even
+when execution stopped after a backend write but before returning a result.
+A compatible role/execution-environment upgrade must preserve identities and
+allow unfinished jobs and subsequent reruns to converge. For a supported
+future desired-state update, apply must reconcile the requested change;
+idempotency is necessary but does not itself define update semantics. The
+current immutable resource/NetworkData APIs remain unchanged. [User]
+
+Fulfillment
+commits a durable operation intent with the original complete non-secret
+input, profile/registration identities, placement and frozen expected outputs
+before launching AAP. `LaunchUnknown` is persisted before sending the request.
+A lost acknowledgment is recovered by exact `attempt.correlation_id` and
+original input, not by a recent job, workload name or empty bounded search.
+While any prior execution is unknown or nonterminal, no blind retry or
+opposite action may launch. Ambiguity requires authoritative repair. [User]
+
+After AAP execution is terminal, OSAC validates the entire exact-job artifact
+and current authoritative API owner/spec/provider binding, then persists it as `ResultAccepted`. It replays
+that same accepted artifact after a crash until outputs/address feedback are
+`OutputsCommitted`; only then does the stage complete and a consumer start.
+A definitive failed attempt may use a new correlation UUID/job ID after
+backoff. Providers recover partial creates by API ID and reuse real reservations,
+including when no result was accepted. Delete waits for possibly started
+operations and confirmed backend effects; an asynchronous queued delete is
+not cleanup success. Keep NetworkData and captured placement through all
+consumer and Fabric cleanup. [User]
+
+### External address routing and NAT scope
+
+For ExternalIPAttachment, use the supplied confirmed destination address and
+`routing_domain.type` (`provider_management` or `tenant_virtual_network`).
+Resolve vendor domain identifiers through the provider environment. Do not
+infer the destination domain from the workload's tenant attachment; OSAC
+supplies the correct context for the selected endpoint. [User]
+
+NATGateway receives the whole immutable VirtualNetwork `ipv4_cidr`. Its source
+translation covers that prefix, including later Subnets. Never derive a source
+snapshot from the currently existing Subnet ranges or require NAT rule resizing
+when a Subnet is created or deleted. [User]
+
+### Ingress address reservation contract
+
+Implement `reserve_cluster_ingress_ip` and `release_cluster_ingress_ip` as
+mandatory Fabric entry points. Reserve receives the ClusterOrder and owning
+Cluster identities plus resolved tenant Subnet context. Return one real,
+exclusive IPv4 reservation in `data.cluster_ingress.address`; retries for the
+same owner return the same reservation. Allocate only from the VIP slice
+established at Subnet creation using `vip_prefix_length` and excluded from
+DHCP/overlay allocation. Reservations do not mutate immutable NetworkData.
+
+Fabric owns IPAM: reserve atomically and prevent duplicate active addresses
+within one shared Subnet. The adapter validates its VIP slice and actual
+backend reservation. OSAC validates usable Subnet containment and the exact
+owner/job result, then records the address in the system-managed ClusterOrder
+annotation `osac.openshift.io/ingress-allocated-address`. The provider returns
+the standard result below; it does not patch that annotation. OSAC has no
+separate ingress allocation registry. An annotation write failure cannot
+trigger a new allocation; retries for the same owner return the same address.
+
+Release removes only that owner's reservation and succeeds if it is already
+absent. OSAC orders release after consumers are removed and retains the
+allocation annotation until confirmed release in enabled mode. Release must
+also recover by owner identity when a lost result left no annotation. The
+address is separate from an ExternalIP allocation. [User]
+
+```yaml
+osac_result:
+  resourceID: "<ClusterOrder API ID>"
+  resourceUID: "<bound ClusterOrder UID>"
+  observedGeneration: 1
+  data:
+    network_data: []
+    cluster_ingress:
+      address: 192.0.2.80
+```
+
+Kubernetes Managers may use backend-scoped Kubernetes credentials to create
+namespaces, CUDNs and attachment policy. Manager jobs cannot mutate the OSAC
+registrations, database NetworkData or authoritative resource projections; backend
+credentials enter through the existing group Secret/ConfigMap `envFrom` path.
+A role may create a job-local credential file from those environment values;
+no additional mount or AAP Credential path is introduced. They are never
+embedded in job variables or results. [User]
 
 ## Step 4: Register models, managers, and NetworkClass
 
@@ -578,13 +779,19 @@ fulfillment-service APIs:
    `NetworkManager`.
 3. Create the `NetworkClass` that selects those logical manager names.
 
+For exact common and per-task payload keys, types and required/absent rules,
+use the [canonical serialized task inputs](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md#canonical-serialized-task-inputs).
+The release qualification bundle supplies complete producer/consumer fixtures;
+small snippets in this guide illustrate one field and are not full job inputs.
+
 The examples below show request objects sent to the provider-facing private
 Fulfillment API; they are not `kubectl apply` manifests. For API requests,
 send only resource fields such as `metadata` and `spec`; omit the CRD-only
 `apiVersion` and `kind` fields shown in projected-object examples. The gRPC
 package is `osac.private.v1`. REST Create sends the resource object as the request body;
 the response returns the created object. The API generates each resource `id`.
-References use `metadata.name`; Get and Delete use the generated `id`.
+Model references use NetworkDataModel `metadata.name`; manager selections use
+NetworkManager `spec.managerName`. Get and Delete use the generated `id`.
 
 | Resource | gRPC service | Create | List | Get | Delete |
 |---|---|---|---|---|---|
@@ -603,10 +810,9 @@ by its object name, use `this.metadata.name == "acme-fabric-manager"`.
 Update and Patch are not supported. Cloud Infrastructure Admins use the
 existing private API authentication for registrations; only OSAC service
 identities create or delete runtime NetworkData. No new CLI is defined.
-In REST JSON and generated gRPC clients, `NetworkManager.role` and
-`NetworkManager.capabilities` use the protobuf enum values
-`NETWORK_MANAGER_ROLE_FABRIC`, `NETWORK_MANAGER_ROLE_KUBERNETES`, and
-`NETWORK_MANAGER_CAPABILITY_EAST_WEST_ETHERNET` shown in the examples.
+In REST JSON and generated gRPC clients, manager roles use the protobuf enum
+values `NETWORK_MANAGER_ROLE_FABRIC` and `NETWORK_MANAGER_ROLE_KUBERNETES`
+shown in the examples.
 
 To list registrations by name over REST, URL-encode the private API CEL
 expression in the `filter` query parameter:
@@ -619,8 +825,9 @@ curl --fail-with-body --get \
 ```
 
 The List response contains the generated `id`; save it for later Get or
-Delete. References in a NetworkClass or another registration continue to use
-the stable resource name.
+Delete. A NetworkClass selects `spec.managerName`; declarations in a manager
+select model `metadata.name`. These are separate lookup keys and need not
+equal the registration object name.
 
 OSAC installs the common networking models. Use those model names for existing
 OSAC-defined values; add a provider-defined model only for a distinct value
@@ -637,8 +844,6 @@ spec:
   managerName: acme_fabric
   role: NETWORK_MANAGER_ROLE_FABRIC
   description: Fabric networking for the Acme provider
-  capabilities:
-    - NETWORK_MANAGER_CAPABILITY_EAST_WEST_ETHERNET
   networkOutputs:
     - acme-networking-subnet-vlan-id
 ```
@@ -673,7 +878,6 @@ Create call above:
     "managerName": "acme_fabric",
     "role": "NETWORK_MANAGER_ROLE_FABRIC",
     "description": "Fabric networking for the Acme provider",
-    "capabilities": ["NETWORK_MANAGER_CAPABILITY_EAST_WEST_ETHERNET"],
     "networkOutputs": ["acme-networking-subnet-vlan-id"]
   }
 }
@@ -708,21 +912,16 @@ object rather than a `kubectl` manifest:
 ```json
 {
   "metadata": {"name": "acme-default"},
+  "title": "Acme provider networking",
   "fabricManager": "acme_fabric",
-  "k8sManager": "acme_kubernetes",
-  "spec": {
-    "eastWestCapabilities": {"supportsEastWestEthernet": true}
-  }
+  "k8sManager": "acme_kubernetes"
 }
 ```
 
 The `NetworkClass` selects the deployment's Fabric and optional Kubernetes
 Manager. OSAC accepts the selection only if the names resolve to registrations
 of the correct role and every Kubernetes input model is among the selected
-Fabric Manager's output models. To enable Ethernet east-west support, its
-specification also sets `east_west_capabilities.supports_east_west_ethernet`
-to true; OSAC accepts that only if the selected Fabric Manager declares
-`EAST_WEST_ETHERNET`. Provider template names and other backend settings are
+Fabric Manager's output models. Provider template names and other backend settings are
 supplied through the networking fulfillment group's ConfigMap and Secret;
 they are not fields on NetworkManager or NetworkClass. This is data-contract
 validation; it is not a
@@ -755,12 +954,64 @@ The provider must show that the implementation preserves the shared API
 behavior and implements all assigned operations. Registration success alone
 proves only that the declared objects and model references passed validation.
 
-Use the acceptance checks below and the cases in the manager contract's
-[Test Plan in proposal PR #357](https://github.com/osac-project/enhancement-proposals/pull/357/files)
-as the provider conformance suite. Run them against the AAP execution
-environment and actual backend that will be selected. OSAC may use these cases
-for its own supported implementations; it does not run a hosted provider
-certification service.
+OSAC must deliver a provider-runnable qualification selection from its own
+`tests/e2e` pytest suite. Providers run the same assertions as OSAC against
+their deployed managers and real backend; they do not rewrite the scenarios.
+The detailed [contract test plan](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-network-manager-integration-contract-networking/testplan.md)
+defines the required coverage. This is a delivery requirement: the existing
+suite is a starting point, not yet a complete packaged qualification runner.
+
+### Run the shared qualification suite
+
+The target provider workflow is:
+
+1. Select the test bundle matching the OSAC release and record the OSAC,
+   manager registration, adapter collection and EE image revisions. OSAC
+   supplies a pinned checkout/lockfile and a runner image built from those
+   same tests, with the required CLI, Kubernetes and API clients.
+2. Supply a documented environment profile: OSAC endpoint and authentication
+   references, hub/workload access, exact selected NetworkClass/managers,
+   enabled VMaaS/BMaaS/CaaS services, available images/templates and host
+   capacity, test CIDRs and external pool, and a reachable external traffic
+   probe. Secrets stay in environment variables or referenced secret files.
+3. Run preflight. It verifies versions, access, capacity, test ranges and the
+   managers selected by the actual NetworkClass before creating resources.
+   It must not substitute a bundled manager or enable networking-disabled
+   mode. The suite uses uniquely named test-owned resources and never assumes
+   ownership of pre-existing tenant resources.
+4. Run the published networking qualification selection. Reuse existing
+   service journeys and shared fixtures; add missing network assertions and
+   tag applicable tests across their owning service directories. The runner
+   executes serially by default and uses bounded condition waits. Its release
+   manifest lists every required test ID for the selected service profile.
+5. Retain JUnit results, a readable coverage summary, sanitized diagnostics,
+   version/profile metadata and cleanup results. A failed test exits nonzero;
+   missing prerequisites or skipped required tests mark the run incomplete.
+   Optional capabilities may be not applicable only when absent from the
+   declared profile. A provider no-op never silently skips an applicable
+   behavior check or turns its failure into a pass.
+
+Checks include same-Subnet and cross-Subnet traffic, tenant isolation,
+stateful policy allow/deny/reply behavior, DHCP/address uniqueness, inbound
+DNAT and outbound SNAT, VM/BM/CaaS lifecycle and natural cleanup. They assert
+observable behavior through OSAC APIs and workload/external probes, without
+hard-coded vendor names or backend APIs.
+
+A separately selected recovery group runs in a dedicated test environment.
+It tests reruns after success, interrupted jobs after partial effects,
+restarts, lost launch acknowledgments, interrupted cleanup, and compatible
+adapter upgrades. OSAC supplies the AAP/controller fault controls needed to
+make those scenarios repeatable; starting this group is explicit, and those
+controls are absent from ordinary production execution. Contract-level
+fault injection complements real E2E packet/lifecycle checks. A smoke run
+alone cannot claim recovery coverage.
+
+OSAC owns the test code, fixtures, runner and release coverage manifest; the
+provider owns deployment prerequisites, configuration and execution against
+its backend. Backend-specific internal correctness checks may supplement the
+suite, but cannot replace or weaken its shared assertions. OSAC CI exercises
+the same selection with its maintained manager implementations. Providers can
+run it locally or in their own CI; no hosted certification service is required.
 
 ### Registration and data exchange
 
@@ -770,14 +1021,17 @@ certification service.
   manager name is rejected.
 - Confirm a `NetworkClass` is rejected when a Kubernetes input model is not
   declared by the selected Fabric Manager.
-- Confirm a NetworkClass that enables Ethernet east-west is rejected unless
-  the selected Fabric Manager declares `EAST_WEST_ETHERNET`; confirm a
-  declaration on the manager alone does not enable FabricDomain requests.
-- Create a VirtualNetwork and then a Subnet; confirm OSAC expects only models
-  whose owner scopes are present and whose values are not already stored.
-  Confirm the Fabric task returns every expected model/owner key once, OSAC
-  stores the values, and the Kubernetes task receives only its declared
-  inputs.
+- Create the NetworkClass and confirm no provider job starts. Create a
+  NetworkClass-scoped model and verify that its first eligible Fabric resource
+  operation returns one profile-owned value, which later operations reuse.
+  Create VirtualNetwork- and Subnet-scoped models; verify each task returns
+  missing values for declared owners present in its context. A child operation
+  may first produce a parent-owned value, such as a VirtualNetwork VNI, when
+  none is stored. Confirm OSAC stores the complete validated result before the
+  Kubernetes task receives only its declared inputs. After all dependents drain,
+  inject a NetworkData owner-cleanup failure and verify profile deletion stays
+  pending without launching a provider job. Restore cleanup and verify the next
+  reconciliation removes profile-owned NetworkData and completes deletion.
 - Omit an expected output or return an unexpected/duplicate key; confirm OSAC
   rejects the complete result before storing any new NetworkData or starting
   the Kubernetes task. Also check wrong owners and schema-invalid values.
@@ -786,44 +1040,76 @@ certification service.
 
 ### Shared networking behavior
 
+- Accept overlapping or identical private CIDRs and addresses across isolated
+  VirtualNetworks, including different tenants. Keep network identity in
+  allocation, routing, policy, DNAT destination lookup and cleanup.
+- Distinguish that supported overlap from duplicate independently owned
+  addresses in one shared Subnet. Ingress reservation uniqueness is scoped to
+  that Subnet; it is never deployment-wide private-IP uniqueness.
+- Verify deleting an address or range in one isolated network does not affect
+  an equal address or range in another.
+
+
 - Confirm Subnets within one VirtualNetwork have distinct L2 broadcast domains
   and L3 routing between them, subject to the attached SecurityGroups.
 - Confirm workloads attached to one Subnet share its L2 broadcast domain.
 - Confirm separate VirtualNetworks remain isolated.
-- When Ethernet east-west is enabled, create and delete a `FabricDomain`
-  through the selected Fabric Manager and confirm it does not change
-  VirtualNetwork routing or Subnet broadcast domains.
 - Confirm SecurityGroup rules apply on each network attachment, are stateful,
   combine as a union, allow established replies, and deny unmatched new
   traffic.
-- Confirm policy is in effect before a workload is made Ready and is removed
-  before workload teardown. A policy failure must leave traffic unavailable
-  and the workload non-ready.
+- Observe the provider's policy behavior before readiness and during teardown.
+  A provider claiming SecurityGroup enforcement must show policy is in effect
+  before traffic is enabled, unmatched traffic is denied, and policy failure
+  leaves traffic unavailable. A successful no-op is recorded as a no-op; OSAC
+  trusts its valid reported success without probing the data plane. [User]
 - Exercise these behaviors for each supported target: ComputeInstance VM
-  overlay, Cluster worker interface, and BaremetalInstance physical interface.
+  overlay, BaremetalInstance physical interfaces, including CaaS workers.
 
 ### Resource operations and retry behavior
 
 - Exercise every operation and workload-target row in [Step 3](#step-3-implement-the-aap-manager-role),
   including create and delete order for Subnets.
-- Confirm create/apply and delete are safe to repeat for the same resource UID
-  and that a failed attempt can be retried with a new AAP job ID.
+- Confirm every job is safe to repeat after success and after interruption at
+  each side-effect boundary, using a new AAP job ID but the same owner/input.
+  Verify no duplicates or reallocation, correct recovery of partial work,
+  repeated deletion, and convergence after a compatible adapter upgrade.
 - Confirm ExternalIP addresses are unique within a pool, a retry for one
-  ExternalIP UID returns its same reservation, and release removes that
+  ExternalIP API ID returns its same reservation, and release removes that
   reservation. Confirm the manager returns the address in
   `osac_result.data.external_ip.address`, OSAC validates it, and OSAC writes
   `ExternalIP.status.address` without manager access to the Kubernetes API.
 - Confirm ExternalIP attachments are removed before an address is released,
   and NATGateway performs outbound SNAT without providing inbound access.
-- Confirm DHCP lease lookup returns one unambiguous lease per requested
-  attachment in `osac_result.data.dhcp_leases`, with the resource UID,
+- Confirm the post-handoff DHCP job uses the SubnetAttachment API ID and request UID,
+  a separate BaremetalInstance target and its selected-port MAC, and returns
+  one unambiguous matching lease per request in `osac_result.data.dhcp_leases`, with the resource UID,
   observed generation, and `data.network_data` list present. The result does
   not repeat a task or operation identifier; OSAC gets that from the tracked
   AAP job.
 
-Do not declare a new implementation ready for tenant use until provider
-conformance evidence covers every applicable operation, target, data model,
-and shared resource behavior.
+Record the task/result checks separately from behavioral conformance evidence.
+Every required task file and required real output must be present. Providers
+document backend effects and any deliberate no-ops; task success alone proves
+the provider reported success, not that a shared networking behavior exists.
+Claims of complete shared semantics require evidence for every applicable
+operation, target, model and resource behavior. [User]
+
+## Provider readiness checklist
+
+- [ ] Every assigned entry point exists and returns its required valid result.
+- [ ] Repeated and interrupted jobs converge without duplicate side effects;
+      compatible adapter upgrades preserve owned resources and unfinished work.
+- [ ] Models, matching manager declarations and the selected profile are registered.
+- [ ] The composed EE, configuration, credentials and infrastructure prerequisites
+      are installed; their tested revisions are recorded.
+- [ ] The shared suite completed for every supported service and enabled capability;
+      required failures, skips and untested areas remain visible.
+- [ ] Packet behavior, allocation, lifecycle, cleanup and recovery evidence is retained.
+- [ ] Intentional no-ops and their actual effects/limitations are documented.
+
+This checklist indexes implementation and evidence. Checking a box does not
+replace a test result, and a no-op's successful return does not prove its
+networking effect.
 
 ## Changing or removing a manager
 
@@ -853,14 +1139,20 @@ registration also removes provider-side network state.
 This guide specifies the target provider contract: registration objects and
 REST/gRPC APIs, AAP role invocation and task entry points, shared fulfillment-
 group settings and secrets, NetworkData exchange, manager
-results, FabricDomain handling, ExternalIP allocation, and the minimum
+results, ExternalIP allocation, and the minimum
 behavioral acceptance checks. The guide describes a proposed OSAC contract;
 the current OSAC code still uses the legacy ConfigMap-based manager registry
 and does not yet enforce generic NetworkDataModel, NetworkManager, or
 NetworkData support. That legacy registry is separate from the
 `network-fulfillment-ig` ConfigMap and Secret used to provide AAP job
 environment values. Generic OSAC platform implementation must ship before
-this onboarding flow can be used end to end.
+this onboarding flow can be used end to end. Its delivery includes removing
+installer manager-name and dual-manager restrictions, accepting arbitrary
+provider Secret keys (the current umbrella schema allows only NETRIS_PASSWORD),
+bootstrapping owner-create model production and ingress reservation tasks,
+and configuring the pinned provider-composed EE and backend-scoped Kubernetes
+authorization. Non-secret networking group ConfigMap keys are already open.
+These installer and dispatch changes are generic platform backlog. [User]
 This target lifecycle also rejects Update and Patch on `NetworkClass`; the
 current private API still permits some NetworkClass field updates and must
 change to meet the target contract.
@@ -870,13 +1162,15 @@ acceptance checks in Step 5 and retaining its own test output and backend
 observations as conformance evidence. Registration validation checks declared
 models, roles, capabilities, and input/output compatibility; it cannot prove
 backend behavior. OSAC does not operate a hosted provider certification
-service. A deployment must not select a manager
-for tenant use until its provider has verified every operation and applicable
-target, including FabricDomain when Ethernet east-west is enabled.
+service. A provider may select an implementation with documented no-op behavior when
+every required task and result is supplied. OSAC trusts valid provider-reported
+success. The provider must qualify each behavioral claim separately, including
+any enabled optional capabilities. Current partial
+implementations are not evidence of complete behavioral conformance. [User]
 
 ## Related documents
 
-- [Unified Networking PRD](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/prd.md)
-- [Unified Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-unified-networking/design.md)
+- [Unified Networking PRD](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-unified-networking/prd.md)
+- [Unified Networking Design](https://github.com/danmanor/enhancement-proposals/blob/d361ea9ab3757d275a8550ba3ebc26c80f9595f4/enhancements/OSAC-1433-unified-networking/design.md)
 - [Network Manager Integration Contract PRD, Design, and Test Plan (proposal PR #357)](https://github.com/osac-project/enhancement-proposals/pull/357/files)
 - [Multi-Fabric East-West Networking Design](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1382-multi-fabric-east-west-networking/design.md)
