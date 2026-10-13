@@ -42,11 +42,7 @@ var _ = Describe("Compute instance network attachment status", Label("compute-ne
 		}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		instance := created.GetObject()
-		// The contract assertions do not depend on provider teardown, which is asynchronous.
-		deferCatalogItemFixtureDeletion(func(ctx context.Context) error {
-			_, err := publicClient.Delete(ctx, publicv1.ComputeInstancesDeleteRequest_builder{Id: instance.GetId()}.Build())
-			return err
-		}, nil)
+		deferComputeInstanceDeletion(instance.GetId(), tool.ExternalView().UserConn())
 
 		attachmentStatus := privatev1.ComputeNetworkAttachmentStatus_builder{
 			SubnetRef: network.subnetID,
