@@ -34,6 +34,14 @@ Separate VirtualNetworks may reuse private CIDRs and IPs. Two independent
 endpoints sharing one Subnet must use different IPs. Address allocation and
 cleanup always retain the owning network identity.
 
+Every workload interface attached to a Subnet gets its tenant IPv4 address,
+prefix, default gateway, and DNS resolver configuration through Dynamic Host
+Configuration Protocol (DHCP). The workload OS must request DHCP on that
+interface. The manager configures the network path and does not assign a static
+address inside the guest or host.
+DHCP on the tenant Subnet is separate from a bare-metal server's provisioning
+network DHCP and from ExternalIP or CaaS ingress address reservations.
+
 ## The three data objects
 
 | Object | Example |
@@ -76,14 +84,15 @@ sequenceDiagram
         K8s-->>OSAC: Success
     end
     alt VM overlay
-        VMaaS->>VM: Create halted VM with Subnet reference and interface in initial spec
+        VMaaS->>VM: Create halted VM without tenant network/interface fields
         VMaaS->>OSAC: SubnetAttachment request for VM
         OSAC->>K8s: apply_subnet_attachment
-        K8s->>VM: Verify existing reference; install policy
+        K8s->>VM: Add network/interface fields; install policy
         K8s-->>OSAC: Success for the request UID
         OSAC-->>VMaaS: Attachment ready
         VMaaS->>VM: Start VM
-        VM-->>VMaaS: Tenant interface address discovered
+        VM-->>VM: Obtain tenant IPv4 configuration through DHCP
+        VM-->>VMaaS: Tenant interface address discovered from VM status
         VMaaS-->>OSAC: Report network ready
     else Bare-metal physical interface
         BMaaS->>Host: Provision over provisioning connection
@@ -100,10 +109,16 @@ sequenceDiagram
 
 `apply_subnet_attachment` is one OSAC action with two manager paths. OSAC
 selects the Kubernetes Manager for `overlay` and the Fabric Manager for
-`physical`. In the VM path, the Subnet reference is already in the VM's initial
-spec; Kubernetes verifies it and installs policy before the VM starts. In the
-bare-metal path, Fabric reconciles the selected physical port's segment
-membership to the requested Subnet and installs policy after host provisioning.
+`physical`. In the VM path, VMaaS creates the exact VM halted without tenant
+network/interface fields. Kubernetes adds the fields for the requested Subnet
+and installs policy before the VM starts. The first boot then requests tenant
+configuration through DHCP, and VMaaS discovers the assigned address from VM
+status. In the bare-metal path, Fabric reconciles the selected physical port's
+segment membership to the requested Subnet and installs policy after host
+provisioning. The host receives a separate provisioning-network lease during
+provisioning; after the network handoff reboot, its tenant interface requests
+configuration through DHCP and BMaaS discovers that lease by selected-port
+MAC.
 
 The internal `SubnetAttachment` tracks the request, jobs, readiness and
 cleanup. Its target is the VM or BaremetalInstance; it is not the VM interface
