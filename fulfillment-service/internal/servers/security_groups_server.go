@@ -41,7 +41,7 @@ type SecurityGroupsServer struct {
 	publicv1.UnimplementedSecurityGroupsServer
 
 	logger    *slog.Logger
-	delegate  privatev1.SecurityGroupsServer
+	delegate  *PrivateSecurityGroupsServer
 	inMapper  *GenericMapper[*publicv1.SecurityGroup, *privatev1.SecurityGroup]
 	outMapper *GenericMapper[*privatev1.SecurityGroup, *publicv1.SecurityGroup]
 }
@@ -272,13 +272,19 @@ func (s *SecurityGroupsServer) Update(ctx context.Context,
 		err = grpcstatus.Errorf(grpccodes.Internal, "failed to process security group")
 		return
 	}
+	// Public callers may update only the rule lists. Keep the identifier needed
+	// for lookup, but discard client-supplied metadata, status, and the immutable
+	// parent reference before the private server validates the candidate.
+	privateSecurityGroup.Metadata = nil
+	privateSecurityGroup.Status = nil
+	privateSecurityGroup.Spec.VirtualNetwork = nil
 
 	privateRequest := &privatev1.SecurityGroupsUpdateRequest{}
 	privateRequest.SetObject(privateSecurityGroup)
 	// Public callers can replace rule lists only. Never trust a caller-provided
 	// field mask to update the SecurityGroup's identity, metadata, or status.
 	privateRequest.SetUpdateMask(&fieldmaskpb.FieldMask{Paths: []string{"spec.ingress", "spec.egress"}})
-	privateResponse, err := s.delegate.Update(ctx, privateRequest)
+	privateResponse, err := s.delegate.updateFromPublic(ctx, privateRequest)
 	if err != nil {
 		return nil, err
 	}

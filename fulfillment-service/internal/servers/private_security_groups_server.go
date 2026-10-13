@@ -174,6 +174,13 @@ func (s *PrivateSecurityGroupsServer) Update(ctx context.Context,
 	return
 }
 
+func (s *PrivateSecurityGroupsServer) updateFromPublic(ctx context.Context,
+	request *privatev1.SecurityGroupsUpdateRequest) (*privatev1.SecurityGroupsUpdateResponse, error) {
+	var response *privatev1.SecurityGroupsUpdateResponse
+	err := s.generic.UpdateWithValidation(ctx, request, &response, s.validateSecurityGroupWithRuleUpdates)
+	return response, err
+}
+
 func (s *PrivateSecurityGroupsServer) Delete(ctx context.Context,
 	request *privatev1.SecurityGroupsDeleteRequest) (response *privatev1.SecurityGroupsDeleteResponse, err error) {
 	getRequest := &privatev1.SecurityGroupsGetRequest{}
@@ -199,6 +206,16 @@ func (s *PrivateSecurityGroupsServer) Signal(ctx context.Context,
 // validateSecurityGroup validates the SecurityGroup object.
 func (s *PrivateSecurityGroupsServer) validateSecurityGroup(ctx context.Context,
 	newSecurityGroup *privatev1.SecurityGroup, existingSecurityGroup *privatev1.SecurityGroup) error {
+	return s.validateSecurityGroupWithRuleUpdatePolicy(ctx, newSecurityGroup, existingSecurityGroup, false)
+}
+
+func (s *PrivateSecurityGroupsServer) validateSecurityGroupWithRuleUpdates(ctx context.Context,
+	newSecurityGroup *privatev1.SecurityGroup, existingSecurityGroup *privatev1.SecurityGroup) error {
+	return s.validateSecurityGroupWithRuleUpdatePolicy(ctx, newSecurityGroup, existingSecurityGroup, true)
+}
+
+func (s *PrivateSecurityGroupsServer) validateSecurityGroupWithRuleUpdatePolicy(ctx context.Context,
+	newSecurityGroup *privatev1.SecurityGroup, existingSecurityGroup *privatev1.SecurityGroup, allowRuleUpdates bool) error {
 
 	if newSecurityGroup == nil {
 		return grpcstatus.Errorf(grpccodes.InvalidArgument, "security group is mandatory")
@@ -221,7 +238,7 @@ func (s *PrivateSecurityGroupsServer) validateSecurityGroup(ctx context.Context,
 	}
 
 	// Check immutable fields (only on Update)
-	if err := validateImmutableFieldsSecurityGroup(newSecurityGroup, existingSecurityGroup); err != nil {
+	if err := validateImmutableFieldsSecurityGroup(newSecurityGroup, existingSecurityGroup, allowRuleUpdates); err != nil {
 		return err
 	}
 
@@ -366,7 +383,8 @@ func validateSecurityRule(rule *privatev1.SecurityRule, ruleType string, index i
 }
 
 // validateImmutableFieldsSecurityGroup validates that immutable fields have not been changed.
-func validateImmutableFieldsSecurityGroup(newSecurityGroup *privatev1.SecurityGroup, existingSecurityGroup *privatev1.SecurityGroup) error {
+func validateImmutableFieldsSecurityGroup(newSecurityGroup *privatev1.SecurityGroup,
+	existingSecurityGroup *privatev1.SecurityGroup, allowRuleUpdates bool) error {
 	if existingSecurityGroup == nil {
 		return nil // Create operation, no immutability checks
 	}
@@ -379,6 +397,18 @@ func validateImmutableFieldsSecurityGroup(newSecurityGroup *privatev1.SecurityGr
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
 			"field 'spec.virtual_network' is immutable and cannot be changed from '%s' to '%s'",
 			refKey(existingSpec.GetVirtualNetwork()), refKey(newSpec.GetVirtualNetwork()))
+	}
+	if allowRuleUpdates {
+		if newSpec != nil {
+			newSpec = proto.Clone(newSpec).(*privatev1.SecurityGroupSpec)
+			newSpec.Ingress = nil
+			newSpec.Egress = nil
+		}
+		if existingSpec != nil {
+			existingSpec = proto.Clone(existingSpec).(*privatev1.SecurityGroupSpec)
+			existingSpec.Ingress = nil
+			existingSpec.Egress = nil
+		}
 	}
 	if !proto.Equal(newSpec, existingSpec) {
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
