@@ -1066,8 +1066,6 @@ var _ = Describe("mutateBMI", func() {
 var _ = Describe("update", func() {
 	It("should preserve operator-managed spec fields when patching an existing CR", func() {
 		ctx := context.Background()
-		ctrl := gomock.NewController(GinkgoT())
-		DeferCleanup(ctrl.Finish)
 
 		const (
 			bmiID        = "bmi-test-id"
@@ -1106,19 +1104,21 @@ var _ = Describe("update", func() {
 			WithObjects(existingCR).
 			Build()
 
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), hubID).
-			Return(&controllers.HubEntry{
-				Namespace: hubNamespace,
-				Client:    fakeClient,
-			}, nil)
-
 		var logOutput bytes.Buffer
 		t := &task{
 			r: &function{
-				logger:                       slog.New(slog.NewTextHandler(&logOutput, nil)),
-				hubCache:                     hubCache,
+				logger: slog.New(slog.NewTextHandler(&logOutput, nil)),
+				networkingHubReader: &fakeBareMetalNetworkingHubReader{
+					resolution: controllers.NetworkingHubResolution{
+						NetworkingHub: controllers.NetworkingHub{
+							ID:        hubID,
+							Namespace: hubNamespace,
+							Client:    fakeClient,
+						},
+						HubID: hubID,
+						State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+					},
+				},
 				bareMetalInstanceTypesClient: defaultFakeBareMetalInstanceTypesClient(),
 			},
 			bareMetalInstance: privatev1.BareMetalInstance_builder{
