@@ -117,14 +117,6 @@ var _ = Describe("update tenant annotation", func() {
 			WithScheme(scheme).
 			Build()
 
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().
-			Get(gomock.Any(), hubID).
-			Return(&controllers.HubEntry{
-				Namespace: hubNamespace,
-				Client:    fakeClient,
-			}, nil)
-
 		cluster := privatev1.Cluster_builder{
 			Id: clusterID,
 			Metadata: privatev1.Metadata_builder{
@@ -150,9 +142,9 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				logger:              logger,
+				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				maskCalculator:      nil,
 			},
 			cluster: cluster,
 		}
@@ -290,16 +282,11 @@ var _ = Describe("update tenant annotation", func() {
 		scheme := runtime.NewScheme()
 		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingOrder).Build()
-		hubCache := controllers.NewMockHubCache(ctrl)
-		hubCache.EXPECT().Get(gomock.Any(), hubID).Return(&controllers.HubEntry{
-			Namespace: hubNamespace,
-			Client:    fakeClient,
-		}, nil)
 		var logOutput bytes.Buffer
 		t := &task{
 			r: &function{
-				logger:   slog.New(slog.NewTextHandler(&logOutput, nil)),
-				hubCache: hubCache,
+				logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
+				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
 			},
 			cluster: privatev1.Cluster_builder{
 				Id: clusterID,
