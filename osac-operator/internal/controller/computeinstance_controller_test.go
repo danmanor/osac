@@ -42,6 +42,15 @@ import (
 
 const testTemplateParams = `{"key": "value"}`
 
+func expectVMIStatusInTargetCache(ctx context.Context, targetClient client.Client, expected *kubevirtv1.VirtualMachineInstance) {
+	Eventually(func(g Gomega) {
+		observed := &kubevirtv1.VirtualMachineInstance{}
+		key := types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}
+		g.Expect(targetClient.Get(ctx, key, observed)).To(Succeed())
+		g.Expect(observed.Status.Interfaces).To(Equal(expected.Status.Interfaces))
+	}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+}
+
 // createReadyTenant creates a Tenant with the given name in the namespace and sets status to Ready.
 // If the tenant already exists, it is updated to Ready.
 func createReadyTenant(ctx context.Context, namespace, name string) {
@@ -414,6 +423,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 			targetClient, err := getTargetClient(ctx, reconciler.mgr, reconciler.targetCluster)
 			Expect(err).NotTo(HaveOccurred())
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
 
 			ip := reconciler.getDefaultVMIIPAddress(ctx, targetClient, vmi.Namespace, vmi.Name)
 			Expect(ip).To(Equal(wantIP))
@@ -438,6 +448,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 			targetClient, err := getTargetClient(ctx, reconciler.mgr, reconciler.targetCluster)
 			Expect(err).NotTo(HaveOccurred())
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
 
 			ip := reconciler.getDefaultVMIIPAddress(ctx, targetClient, vmi.Namespace, vmi.Name)
 			Expect(ip).To(BeEmpty())
@@ -488,6 +499,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 			}
 			Expect(targetClient.Create(ctx, vmi)).To(Succeed())
 			DeferCleanup(func() { _ = targetClient.Delete(ctx, vmi) })
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
 
 			instance := &osacv1alpha1.ComputeInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: "ci-status-test", Namespace: "default"},
@@ -541,6 +553,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 			}
 			Expect(targetClient.Create(ctx, vmi)).To(Succeed())
 			DeferCleanup(func() { _ = targetClient.Delete(ctx, vmi) })
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
 
 			instance := &osacv1alpha1.ComputeInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: "ci-status-missing-id-test", Namespace: "default"},
@@ -586,6 +599,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 			}
 			Expect(targetClient.Create(ctx, vmi)).To(Succeed())
 			DeferCleanup(func() { _ = targetClient.Delete(ctx, vmi) })
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
 
 			instance := &osacv1alpha1.ComputeInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: "ci-status-empty-test", Namespace: "default"},
