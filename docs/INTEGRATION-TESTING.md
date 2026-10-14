@@ -281,6 +281,7 @@ Touched-area requirements: [component guide](../osac-operator/AGENTS.md#integrat
   and gRPC endpoints to verify client-credentials token acquisition and
   authenticated calls in both connection modes. The installer render contract
   checks the Secret references and issuer ConfigMap.
+- **VMaaS network-attachment IP feedback and ExternalIP DNAT ([OSAC-2479](https://redhat.atlassian.net/browse/OSAC-2479), [OSAC-2485](https://redhat.atlassian.net/browse/OSAC-2485), DEV):** `test/integration/computeinstance_network_status_test.go` writes and reads `computeNetworkAttachmentStatuses` through the installed ComputeInstance CRD status subresource in Kind. Controller unit tests cover selection of the default KubeVirt interface, Subnet CR name-to-ID resolution, Fulfillment status feedback, and waiting for/using the reported IP as the ExternalIP target. This verifies the operator API and controller contract; the Kind suite does not run a real VMI, AAP workflow, or network fabric, so it makes no claim about provider-level reachability.
 - **Cross-cluster fulfillment OAuth:** No deployed suite currently covers this
   boundary. With bundled Keycloak, the dev installer provisions the existing
   `osac-controller` credentials through `osac-infra`, but the local
