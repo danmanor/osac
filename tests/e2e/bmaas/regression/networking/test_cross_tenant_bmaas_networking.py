@@ -29,7 +29,7 @@ from typing import Any, ClassVar
 import pytest
 
 from tests.e2e.bmaas.regression.networking import bmi_ssh, guest_ssh
-from tests.e2e.core.grpc_client import PRIVATE_API, GRPCClient
+from tests.e2e.core.grpc_client import GRPCClient
 from tests.e2e.core.helpers import (
     wait_for_bmh_available,
     wait_for_bmi_cr,
@@ -73,39 +73,6 @@ def _require(state: dict[str, Any], *keys: str) -> None:
         pytest.skip(f"Prerequisite state missing: {', '.join(missing)}")
 
 
-def _disk_image_from_catalog_item(item: dict[str, Any]) -> str:
-    fields = item.get("fields") or {}
-    policy = fields.get("diskImage") or fields.get("disk_image") or {}
-    locked = policy.get("locked") or {}
-    editable = policy.get("editable") or {}
-    default = editable.get("defaultValue") or editable.get("default_value") or {}
-    return str(locked.get("name") or default.get("name") or "").strip()
-
-
-def _lab_disk_image_name(grpc: GRPCClient, *catalog_names: str) -> str | None:
-    """Optional DiskImage name. Lab catalogs (ci-bm-default) have no disk_image policy.
-
-    DiskImages RPCs are VMaaS-gated on this hub, so do not List/Create them.
-    """
-    named = os.environ.get("OSAC_BMI_DISK_IMAGE", "").strip()
-    if named:
-        return named
-    items = grpc.call(service=f"{PRIVATE_API}.BareMetalInstanceCatalogItems/List").get("items") or []
-    wanted = {n for n in catalog_names if n}
-    for item in items:
-        meta_name = str((item.get("metadata") or {}).get("name") or "")
-        if wanted and meta_name not in wanted:
-            continue
-        di = _disk_image_from_catalog_item(item)
-        if di:
-            return di
-    for item in items:
-        di = _disk_image_from_catalog_item(item)
-        if di:
-            return di
-    return None
-
-
 def _sg_deny_workaround() -> bool:
     return os.environ.get("OSAC_SG_DENY_WORKAROUND", "") == "1"
 
@@ -119,7 +86,7 @@ def _create_bmi(
     security_group_id: str,
     ssh_public_key: str,
     tenant: str,
-    disk_image: str | None,
+    disk_image: str,
     user_data: str,
     auto_eip: bool,
     instance_type: str | None = None,
@@ -524,6 +491,7 @@ class TestCrossTenantBmaasNetworking:
         k8s_hub_client: K8sClient,
         catalog_item_name: str,
         auto_eip_catalog_item_name: str,
+        bmi_disk_image: str,
         net_ssh_public_key: str,
         net_test_run_id: str,
         bmh_ssh_hosts: dict[str, str],
@@ -556,7 +524,6 @@ class TestCrossTenantBmaasNetworking:
                 t1["cidr_base"] + ".1.",
             ),
         ]
-        disk_image = _lab_disk_image_name(private_grpc, catalog_item_name, auto_eip_catalog_item_name)
         bmis: list[dict[str, Any]] = list(self.__class__.state.get("bmis") or [])
         for key, name_prefix, tenant, catalog, subnet, sg, auto_eip, ip_prefix in specs:
             name = f"{name_prefix}-{net_test_run_id}"
@@ -568,7 +535,7 @@ class TestCrossTenantBmaasNetworking:
                 security_group_id=sg,
                 ssh_public_key=net_ssh_public_key,
                 tenant=tenant,
-                disk_image=disk_image,
+                disk_image=bmi_disk_image,
                 user_data=bmi_user_data,
                 auto_eip=auto_eip,
                 instance_type=bmi_instance_type,
