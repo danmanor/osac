@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -805,9 +806,6 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 	if kvVMHasConditionWithStatus(kv, kubevirtv1.VirtualMachineReady, corev1.ConditionTrue) {
 		ipAddress := r.getDefaultVMIIPAddress(ctx, targetClient, kv.GetNamespace(), name)
 
-		log.Info("KubeVirt virtual machine (kubevirt resource) is ready", "computeinstance", instance.GetName(), "ipAddress", ipAddress)
-		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionReady, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
-		instance.SetIPAddress(ipAddress)
 		instance.Status.ComputeNetworkAttachmentStatuses = nil
 		if ipAddress != "" && len(instance.Spec.NetworkAttachments) == 1 {
 			subnetRef := instance.Spec.NetworkAttachments[0].SubnetRef
@@ -819,11 +817,22 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 			if subnetID == "" {
 				return fmt.Errorf("subnet CR %s is missing the %s label", subnetRef, osacSubnetIDLabel)
 			}
-			instance.Status.ComputeNetworkAttachmentStatuses = []v1alpha1.ComputeNetworkAttachmentStatus{{
-				SubnetRef: subnetID,
-				IPAddress: ipAddress,
-			}}
+			if !isCanonicalIPv4AddressInSubnet(ipAddress, subnet.Spec.IPv4CIDR) {
+				log.Info("ignoring default VMI interface IP outside the attached Subnet IPv4 CIDR",
+					"computeinstance", instance.GetName(), "ipAddress", ipAddress,
+					"subnet", subnetRef, "subnetIPv4CIDR", subnet.Spec.IPv4CIDR)
+				ipAddress = ""
+			} else {
+				instance.Status.ComputeNetworkAttachmentStatuses = []v1alpha1.ComputeNetworkAttachmentStatus{{
+					SubnetRef: subnetID,
+					IPAddress: ipAddress,
+				}}
+			}
 		}
+
+		log.Info("KubeVirt virtual machine (kubevirt resource) is ready", "computeinstance", instance.GetName(), "ipAddress", ipAddress)
+		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionReady, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
+		instance.SetIPAddress(ipAddress)
 		if oldReadyStatus != metav1.ConditionTrue {
 			r.Recorder.Eventf(instance, nil, corev1.EventTypeNormal, eventReasonReady, eventActionReconcile, "VirtualMachine is ready, IP: %s", ipAddress)
 		}
@@ -841,6 +850,24 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 	}
 
 	return nil
+}
+
+// isCanonicalIPv4AddressInSubnet accepts only a canonical IPv4 address contained
+// by the attached Subnet CIDR. VMI status is guest-reported, so it must not be
+// published as a tenant attachment address or used as an ExternalIP DNAT target
+// unless it belongs to that Subnet.
+func isCanonicalIPv4AddressInSubnet(ipAddress, subnetCIDR string) bool {
+	address, err := netip.ParseAddr(ipAddress)
+	if err != nil || !address.Is4() || address.String() != ipAddress {
+		return false
+	}
+
+	prefix, err := netip.ParsePrefix(subnetCIDR)
+	if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() {
+		return false
+	}
+
+	return prefix.Contains(address)
 }
 
 // getDefaultVMIIPAddress fetches the VirtualMachineInstance and returns the IP for its default network interface.

@@ -525,6 +525,69 @@ var _ = Describe("ComputeInstance Controller", func() {
 			}}))
 		})
 
+		It("clears attachment status when the default interface IP is outside the Subnet CIDR", func() {
+			const (
+				subnetName = "ci-status-outside-subnet"
+				targetNS   = subnetName
+				vmiName    = "ci-status-outside-vmi"
+			)
+			subnet := &osacv1alpha1.Subnet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      subnetName,
+					Namespace: "default",
+					Labels:    map[string]string{osacSubnetIDLabel: "subnet-id-outside"},
+				},
+				Spec: osacv1alpha1.SubnetSpec{
+					VirtualNetwork: "ci-status-vnet",
+					IPv4CIDR:       "10.0.3.0/24",
+				},
+			}
+			Expect(k8sClient.Create(ctx, subnet)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, subnet) })
+
+			namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNS}}
+			Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, namespace) })
+
+			reconciler := NewComputeInstanceReconciler(testMcManager, "", "", "", &mockProvisioningProvider{}, 0, 0, mcmanager.LocalCluster)
+			targetClient, err := getTargetClient(ctx, reconciler.mgr, reconciler.targetCluster)
+			Expect(err).NotTo(HaveOccurred())
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: vmiName, Namespace: targetNS},
+				Status: kubevirtv1.VirtualMachineInstanceStatus{
+					Interfaces: []kubevirtv1.VirtualMachineInstanceNetworkInterface{{IP: "192.0.2.42", Name: "default"}},
+				},
+			}
+			Expect(targetClient.Create(ctx, vmi)).To(Succeed())
+			DeferCleanup(func() { _ = targetClient.Delete(ctx, vmi) })
+			expectVMIStatusInTargetCache(ctx, targetClient, vmi)
+
+			instance := &osacv1alpha1.ComputeInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: "ci-status-outside-test", Namespace: "default"},
+				Spec:       osacv1alpha1.ComputeInstanceSpec{NetworkAttachments: []osacv1alpha1.ComputeNetworkAttachment{{SubnetRef: subnetName}}},
+				Status: osacv1alpha1.ComputeInstanceStatus{
+					IPAddress: "10.0.3.42",
+					ComputeNetworkAttachmentStatuses: []osacv1alpha1.ComputeNetworkAttachmentStatus{{
+						SubnetRef: "subnet-id-outside",
+						IPAddress: "10.0.3.42",
+					}},
+				},
+			}
+			vm := &kubevirtv1.VirtualMachine{
+				ObjectMeta: metav1.ObjectMeta{Name: vmiName, Namespace: targetNS},
+				Status: kubevirtv1.VirtualMachineStatus{
+					PrintableStatus: kubevirtv1.VirtualMachineStatusRunning,
+					Conditions: []kubevirtv1.VirtualMachineCondition{{
+						Type: kubevirtv1.VirtualMachineReady, Status: corev1.ConditionTrue,
+					}},
+				},
+			}
+
+			Expect(reconciler.handleKubeVirtVM(ctx, targetClient, instance, vm)).To(Succeed())
+			Expect(instance.Status.IPAddress).To(BeEmpty())
+			Expect(instance.Status.ComputeNetworkAttachmentStatuses).To(BeEmpty())
+		})
+
 		It("does not report an attachment status when the Subnet ID is missing", func() {
 			const (
 				subnetName = "ci-status-missing-id-subnet"
@@ -626,6 +689,16 @@ var _ = Describe("ComputeInstance Controller", func() {
 	})
 
 	Context("Helper functions", func() {
+		Describe("isCanonicalIPv4AddressInSubnet", func() {
+			It("accepts only canonical IPv4 addresses contained by an IPv4 subnet", func() {
+				Expect(isCanonicalIPv4AddressInSubnet("10.0.3.42", "10.0.3.0/24")).To(BeTrue())
+				Expect(isCanonicalIPv4AddressInSubnet("192.0.2.42", "10.0.3.0/24")).To(BeFalse())
+				Expect(isCanonicalIPv4AddressInSubnet("2001:db8::42", "10.0.3.0/24")).To(BeFalse())
+				Expect(isCanonicalIPv4AddressInSubnet("010.0.3.42", "10.0.3.0/24")).To(BeFalse())
+				Expect(isCanonicalIPv4AddressInSubnet("10.0.3.42", "invalid-cidr")).To(BeFalse())
+			})
+		})
+
 		Describe("computeInstanceTargetNamespace", func() {
 			It("uses the tenant name when status.namespace is unset", func() {
 				tenant := &osacv1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "tenant"}}
