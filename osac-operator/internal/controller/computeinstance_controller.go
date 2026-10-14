@@ -803,16 +803,33 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 	// Ready condition (set by the virt-launcher pod's readiness probe).
 	oldReadyStatus := conditionStatus(instance, v1alpha1.ComputeInstanceConditionReady)
 	if kvVMHasConditionWithStatus(kv, kubevirtv1.VirtualMachineReady, corev1.ConditionTrue) {
-		ipAddress := r.getFirstVMIIPAddress(ctx, targetClient, kv.GetNamespace(), name)
+		ipAddress := r.getDefaultVMIIPAddress(ctx, targetClient, kv.GetNamespace(), name)
 
 		log.Info("KubeVirt virtual machine (kubevirt resource) is ready", "computeinstance", instance.GetName(), "ipAddress", ipAddress)
 		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionReady, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
 		instance.SetIPAddress(ipAddress)
+		instance.Status.ComputeNetworkAttachmentStatuses = nil
+		if ipAddress != "" && len(instance.Spec.NetworkAttachments) == 1 {
+			subnetRef := instance.Spec.NetworkAttachments[0].SubnetRef
+			subnet := &v1alpha1.Subnet{}
+			if err := r.Get(ctx, types.NamespacedName{Name: subnetRef, Namespace: instance.Namespace}, subnet); err != nil {
+				return fmt.Errorf("failed to get Subnet CR %s for ComputeInstance network status: %w", subnetRef, err)
+			}
+			subnetID := subnet.Labels[osacSubnetIDLabel]
+			if subnetID == "" {
+				return fmt.Errorf("subnet CR %s is missing the %s label", subnetRef, osacSubnetIDLabel)
+			}
+			instance.Status.ComputeNetworkAttachmentStatuses = []v1alpha1.ComputeNetworkAttachmentStatus{{
+				SubnetRef: subnetID,
+				IPAddress: ipAddress,
+			}}
+		}
 		if oldReadyStatus != metav1.ConditionTrue {
 			r.Recorder.Eventf(instance, nil, corev1.EventTypeNormal, eventReasonReady, eventActionReconcile, "VirtualMachine is ready, IP: %s", ipAddress)
 		}
 	} else {
 		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionReady, metav1.ConditionFalse, "", v1alpha1.ReasonAsExpected)
+		instance.Status.ComputeNetworkAttachmentStatuses = nil
 	}
 
 	// RestartRequired mirrors KubeVirt's RestartRequired condition, which is set when
@@ -826,9 +843,8 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 	return nil
 }
 
-// getFirstVMIIPAddress fetches the VirtualMachineInstance and returns the first non-empty
-// IP from .status.interfaces[*].ipAddress, or "" if none or on error.
-func (r *ComputeInstanceReconciler) getFirstVMIIPAddress(ctx context.Context, targetClient client.Client, namespace, name string) string {
+// getDefaultVMIIPAddress fetches the VirtualMachineInstance and returns the IP for its default network interface.
+func (r *ComputeInstanceReconciler) getDefaultVMIIPAddress(ctx context.Context, targetClient client.Client, namespace, name string) string {
 	log := ctrllog.FromContext(ctx)
 
 	vmi := &kubevirtv1.VirtualMachineInstance{}
@@ -837,12 +853,12 @@ func (r *ComputeInstanceReconciler) getFirstVMIIPAddress(ctx context.Context, ta
 		return ""
 	}
 	for _, iface := range vmi.Status.Interfaces {
-		if iface.IP != "" {
+		if iface.Name == "default" {
 			return iface.IP
 		}
 	}
 
-	log.Info("no IP address found for VirtualMachineInstance", "namespace", namespace, "name", name)
+	log.Info("no IP address found for default VirtualMachineInstance interface", "namespace", namespace, "name", name)
 	return ""
 }
 
