@@ -224,10 +224,25 @@ var _ = Describe("MCP server", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		networkClassID = networkClassResponse.GetObject().GetId()
-		DeferCleanup(func() {
-			_, err := networkClassesClient.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{Id: networkClassID}.Build())
-			Expect(err).ToNot(HaveOccurred())
+		DeferCleanup(func(cleanupCtx context.Context) {
+			if securityGroupID != "" {
+				Expect(cleanupSecurityGroupFixture(cleanupCtx, securityGroupsClient, securityGroupID)).To(Succeed())
+			}
+			if subnetID != "" {
+				Expect(cleanupSubnetFixture(cleanupCtx, subnetsClient, subnetID)).To(Succeed())
+			}
+			if virtualNetworkID != "" {
+				Expect(cleanupVirtualNetworkFixture(cleanupCtx, virtualNetworksClient, virtualNetworkID)).To(Succeed())
+			}
+			Expect(cleanupNetworkClassFixture(cleanupCtx, networkClassesClient, networkClassID)).To(Succeed())
 		})
+
+		err = updateNetworkClassStatusWithRetry(ctx, networkClassesClient, networkClassID, privatev1.NetworkClassStatus_builder{
+			State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			Hub:   hubId,
+		}.Build(), &fieldmaskpb.FieldMask{Paths: []string{"status.state", "status.hub"}})
+		Expect(err).ToNot(HaveOccurred())
+		waitForNetworkClassReady(ctx, networkClassesClient, networkClassID)
 
 		virtualNetworkID = fmt.Sprintf("mcp-virtual-network-%s", uuid.New())
 		_, err = virtualNetworksClient.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{
@@ -245,10 +260,6 @@ var _ = Describe("MCP server", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func() {
-			_, err := virtualNetworksClient.Delete(ctx, privatev1.VirtualNetworksDeleteRequest_builder{Id: virtualNetworkID}.Build())
-			Expect(err).ToNot(HaveOccurred())
-		})
 		Eventually(func(g Gomega) {
 			response, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: virtualNetworkID}.Build())
 			g.Expect(err).ToNot(HaveOccurred())
@@ -279,10 +290,6 @@ var _ = Describe("MCP server", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func() {
-			_, err := subnetsClient.Delete(ctx, privatev1.SubnetsDeleteRequest_builder{Id: subnetID}.Build())
-			Expect(err).ToNot(HaveOccurred())
-		})
 		Eventually(func(g Gomega) {
 			response, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetID}.Build())
 			g.Expect(err).ToNot(HaveOccurred())
@@ -311,10 +318,6 @@ var _ = Describe("MCP server", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		securityGroupID = securityGroupResponse.GetObject().GetId()
-		DeferCleanup(func() {
-			_, err := securityGroupsClient.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{Id: securityGroupID}.Build())
-			Expect(err).ToNot(HaveOccurred())
-		})
 		Eventually(func(g Gomega) {
 			response, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
 			g.Expect(err).ToNot(HaveOccurred())
