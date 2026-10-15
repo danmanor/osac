@@ -803,10 +803,10 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 	// Ready mirrors VirtualMachine.Status.Ready, synced from the VirtualMachineInstance
 	// Ready condition (set by the virt-launcher pod's readiness probe).
 	oldReadyStatus := conditionStatus(instance, v1alpha1.ComputeInstanceConditionReady)
+	instance.Status.ComputeNetworkAttachmentStatuses = nil
 	if kvVMHasConditionWithStatus(kv, kubevirtv1.VirtualMachineReady, corev1.ConditionTrue) {
 		ipAddress := r.getDefaultVMIIPAddress(ctx, targetClient, kv.GetNamespace(), name)
 
-		instance.Status.ComputeNetworkAttachmentStatuses = nil
 		if ipAddress != "" && len(instance.Spec.NetworkAttachments) == 1 {
 			subnetRef := instance.Spec.NetworkAttachments[0].SubnetRef
 			subnet := &v1alpha1.Subnet{}
@@ -838,7 +838,6 @@ func (r *ComputeInstanceReconciler) handleKubeVirtVM(ctx context.Context, target
 		}
 	} else {
 		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionReady, metav1.ConditionFalse, "", v1alpha1.ReasonAsExpected)
-		instance.Status.ComputeNetworkAttachmentStatuses = nil
 	}
 
 	// RestartRequired mirrors KubeVirt's RestartRequired condition, which is set when
