@@ -1527,17 +1527,16 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ipResponse.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeFalse())
 
-		attachmentResponse, err = privateAttachmentsClient.Get(ctx,
-			privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		attachmentResponse.GetObject().GetMetadata().SetFinalizers(nil)
-		_, err = privateAttachmentsClient.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
-			Object:     attachmentResponse.GetObject(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
-			Lock:       true,
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		Expect(cleanupExternalIPAttachmentFixture(ctx, privateAttachmentsClient, attachmentID)).To(Succeed())
+		err = updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient, attachmentID, nil)
+		if grpcstatus.Code(err) == grpccodes.NotFound {
+			_, attachmentGetErr := privateAttachmentsClient.Get(ctx,
+				privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
+			Expect(grpcstatus.Code(attachmentGetErr)).To(Equal(grpccodes.NotFound),
+				"NotFound while releasing the finalizer must mean the attachment is gone, not that another resource disappeared")
+		} else {
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cleanupExternalIPAttachmentFixture(ctx, privateAttachmentsClient, attachmentID)).To(Succeed())
+		}
 
 		_, err = externalIPsClient.Delete(ctx, publicv1.ExternalIPsDeleteRequest_builder{Id: externalIPId}.Build())
 		Expect(err).NotTo(HaveOccurred())
