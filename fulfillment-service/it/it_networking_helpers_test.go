@@ -232,6 +232,36 @@ func cleanupExternalIPAttachmentFixture(
 		})
 }
 
+func updateExternalIPAttachmentFinalizersWithRetry(
+	ctx context.Context,
+	client privatev1.ExternalIPAttachmentsClient,
+	id string,
+	finalizers []string,
+) error {
+	const maxAttempts = 5
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		response, getErr := client.Get(ctx, privatev1.ExternalIPAttachmentsGetRequest_builder{Id: id}.Build())
+		if getErr != nil {
+			return getErr
+		}
+		attachment := response.GetObject()
+		attachment.GetMetadata().SetFinalizers(finalizers)
+		_, err = client.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
+			Object:     attachment,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
+			Lock:       true,
+		}.Build())
+		if err == nil || grpcstatus.Code(err) != grpccodes.Aborted {
+			return err
+		}
+		if attempt < maxAttempts-1 {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return fmt.Errorf("update ExternalIPAttachment %q finalizers after %d attempts: %w", id, maxAttempts, err)
+}
+
 func cleanupNATGatewayFixture(
 	ctx context.Context,
 	publicClient publicv1.NATGatewaysClient,

@@ -1320,13 +1320,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}, time.Minute, time.Second).Should(Succeed())
 		attachmentIDs = append(attachmentIDs, deferredAttachment.GetId())
 
-		deferredAttachment.GetMetadata().SetFinalizers([]string{"integration-test/hold-deferred-detach"})
-		_, err = privateAttachmentsClient.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
-			Object:     deferredAttachment,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
-			Lock:       true,
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient,
+			deferredAttachment.GetId(), []string{"integration-test/hold-deferred-detach"})).To(Succeed())
 		_, err = attachmentsClient.Delete(ctx,
 			publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: deferredAttachment.GetId()}.Build())
 		Expect(err).NotTo(HaveOccurred())
@@ -1359,15 +1354,7 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 				"the deferred reconciler must not replace an attachment that is already terminating")
 		}, time.Second, 100*time.Millisecond).Should(Succeed())
 
-		deferredAttachmentResponse, err := privateAttachmentsClient.Get(ctx,
-			privatev1.ExternalIPAttachmentsGetRequest_builder{Id: deferredAttachment.GetId()}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		deferredAttachmentResponse.GetObject().GetMetadata().SetFinalizers(nil)
-		_, err = privateAttachmentsClient.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
-			Object:     deferredAttachmentResponse.GetObject(),
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
-			Lock:       true,
-		}.Build())
+		err = updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient, deferredAttachment.GetId(), nil)
 		// Removing the last finalizer can delete the terminating attachment in
 		// the same transaction, in which case the update reports NotFound. Let the
 		// assertions below verify that workload cleanup also removes its IPs.
