@@ -4255,8 +4255,10 @@ var _ = Describe("Catalog materialized defaults", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
+			k8sManager := "test-k8s-manager"
 			networkClass, err := server.networkClassesDao.Create().SetObject(privatev1.NetworkClass_builder{
 				FabricManager: new("test-strategy"),
+				K8SManager:    &k8sManager,
 				Metadata:      privatev1.Metadata_builder{Name: "win-network-class", Tenant: testTenant}.Build(),
 				Status: privatev1.NetworkClassStatus_builder{
 					State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
