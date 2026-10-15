@@ -94,11 +94,10 @@ func newComputeInstanceFeedbackBridge(hubClient clnt.Client, ciClient privatev1.
 		Save: func(ctx context.Context, remote *privatev1.ComputeInstance) error {
 			_, err := ciClient.Update(ctx, privatev1.ComputeInstancesUpdateRequest_builder{
 				Object: remote,
-					UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
-						feedbackStatusConditionsPath, feedbackStatusStatePath,
-						"status.external_ip_address", "status.internal_ip_address",
-						"status.compute_network_attachment_statuses", "status.last_restarted_at",
-					}},
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
+					feedbackStatusConditionsPath, feedbackStatusStatePath,
+					"status.external_ip_address", "status.internal_ip_address",
+					"status.compute_network_attachment_statuses", "status.last_restarted_at",
 				}},
 			}.Build())
 			return err
