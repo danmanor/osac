@@ -1417,6 +1417,26 @@ var _ = Describe("Private virtual networks server", func() {
 			Expect(err.Error()).To(ContainSubstring("must be READY"))
 		})
 
+		It("requires an explicitly referenced NetworkClass to be Ready before admitting a VirtualNetwork", func() {
+			networkClass := createNetworkClass(ctx, privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING)
+
+			_, err := vnServer.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{
+				Object: privatev1.VirtualNetwork_builder{
+					Metadata: privatev1.Metadata_builder{
+						Name: fmt.Sprintf("test-%s", uuid.NewString()[:8]),
+					}.Build(),
+					Spec: privatev1.VirtualNetworkSpec_builder{
+						Ipv4Cidr:     new("10.0.0.0/16"),
+						Region:       "us-west-1",
+						NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClass.GetId()}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("NetworkClass"))
+			Expect(err.Error()).To(ContainSubstring("must be READY"))
+		})
+
 		It("Default NC capability mismatch is rejected", func() {
 			// Create the singleton NC that supports only IPv4 (not IPv6):
 			ncDao, err := dao.NewGenericDAO[*privatev1.NetworkClass]().

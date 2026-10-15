@@ -456,6 +456,11 @@ func (s *PrivateVirtualNetworksServer) validateNetworkClassReference(ctx context
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
 			"network_class '%s' does not exist", networkClassKey)
 	}
+	if networkClass.GetStatus().GetState() != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"NetworkClass '%s' must be READY (current state: %s)",
+			networkClassKey, networkClass.GetStatus().GetState().String())
+	}
 
 	// VN-VAL-05/06: Validate the addressing mode implied by ipv4_cidr/ipv6_cidr against the
 	// NetworkClass's capabilities.
