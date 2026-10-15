@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/osac-project/osac/fulfillment-service/internal/controllers/finalizers"
 	"github.com/osac-project/osac/fulfillment-service/internal/uuid"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 	publicv1 "github.com/osac-project/osac/proto/gen/osac/public/v1"
@@ -1320,8 +1321,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		}, time.Minute, time.Second).Should(Succeed())
 		attachmentIDs = append(attachmentIDs, deferredAttachment.GetId())
 
-		Expect(updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient,
-			deferredAttachment.GetId(), []string{"integration-test/hold-deferred-detach"})).To(Succeed())
+		Expect(addExternalIPAttachmentFinalizerWithRetry(ctx, privateAttachmentsClient,
+			deferredAttachment.GetId(), "integration-test/hold-deferred-detach")).To(Succeed())
 		_, err = attachmentsClient.Delete(ctx,
 			publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: deferredAttachment.GetId()}.Build())
 		Expect(err).NotTo(HaveOccurred())
@@ -1354,7 +1355,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 				"the deferred reconciler must not replace an attachment that is already terminating")
 		}, time.Second, 100*time.Millisecond).Should(Succeed())
 
-		err = updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient, deferredAttachment.GetId(), nil)
+		err = removeExternalIPAttachmentFinalizerWithRetry(ctx, privateAttachmentsClient,
+			deferredAttachment.GetId(), "integration-test/hold-deferred-detach")
 		// Removing the last finalizer can delete the terminating attachment in
 		// the same transaction, in which case the update reports NotFound. Let the
 		// assertions below verify that workload cleanup also removes its IPs.
@@ -1485,6 +1487,7 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 	})
 
 	It("keeps an ExternalIP in use while its attachment is deleting behind a finalizer", func() {
+		const heldFinalizer = "integration-test/hold-detach"
 		attachmentID := fmt.Sprintf("test-held-attachment-%s", uuid.New())
 		_, err := attachmentsClient.Create(ctx, publicv1.ExternalIPAttachmentsCreateRequest_builder{
 			Object: publicv1.ExternalIPAttachment_builder{
@@ -1500,25 +1503,35 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		attachmentIDs = append(attachmentIDs, attachmentID)
 
-		attachmentResponse, err := privateAttachmentsClient.Get(ctx,
-			privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		attachment := attachmentResponse.GetObject()
-		attachment.GetMetadata().SetFinalizers([]string{"integration-test/hold-detach"})
-		_, err = privateAttachmentsClient.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
-			Object:     attachment,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
-			Lock:       true,
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		_, err = attachmentsClient.Delete(ctx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachmentID}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		// The event-driven Fulfillment controller adds its own finalizer after
+		// Create. Wait for that first reconcile to finish before adding the test
+		// finalizer, otherwise its stale update can replace our marker.
 		Eventually(func(g Gomega) {
 			response, getErr := privateAttachmentsClient.Get(ctx,
 				privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
 			g.Expect(getErr).NotTo(HaveOccurred())
-			g.Expect(response.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeTrue())
+			metadata := response.GetObject().GetMetadata()
+			g.Expect(metadata.GetFinalizers()).To(ContainElement(finalizers.Controller))
+			g.Expect(response.GetObject().GetStatus().GetHub()).NotTo(BeEmpty())
 		}, time.Minute, time.Second).Should(Succeed())
+
+		Expect(addExternalIPAttachmentFinalizerWithRetry(ctx, privateAttachmentsClient,
+			attachmentID, heldFinalizer)).To(Succeed())
+		attachmentBeforeDelete, err := privateAttachmentsClient.Get(ctx,
+			privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(attachmentBeforeDelete.GetObject().GetMetadata().GetFinalizers()).To(ContainElement(heldFinalizer),
+			"the test finalizer must be persisted before requesting deletion")
+		_, err = attachmentsClient.Delete(ctx, publicv1.ExternalIPAttachmentsDeleteRequest_builder{Id: attachmentID}.Build())
+		Expect(err).NotTo(HaveOccurred())
+		attachmentAfterDelete, err := privateAttachmentsClient.Get(ctx,
+			privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())
+		Expect(err).NotTo(HaveOccurred())
+		metadata := attachmentAfterDelete.GetObject().GetMetadata()
+		Expect(metadata.HasDeletionTimestamp()).To(BeTrue(),
+			"a finalizer must keep the attachment available after the synchronous delete request")
+		Expect(metadata.GetFinalizers()).To(ContainElement(heldFinalizer),
+			"the test finalizer must remain until the delete guard is checked")
 
 		_, err = externalIPsClient.Delete(ctx, publicv1.ExternalIPsDeleteRequest_builder{Id: externalIPId}.Build())
 		Expect(err).To(HaveOccurred())
@@ -1527,7 +1540,7 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ipResponse.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeFalse())
 
-		err = updateExternalIPAttachmentFinalizersWithRetry(ctx, privateAttachmentsClient, attachmentID, nil)
+		err = removeExternalIPAttachmentFinalizerWithRetry(ctx, privateAttachmentsClient, attachmentID, heldFinalizer)
 		if grpcstatus.Code(err) == grpccodes.NotFound {
 			_, attachmentGetErr := privateAttachmentsClient.Get(ctx,
 				privatev1.ExternalIPAttachmentsGetRequest_builder{Id: attachmentID}.Build())

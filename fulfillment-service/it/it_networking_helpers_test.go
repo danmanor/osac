@@ -16,6 +16,7 @@ package it
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -232,11 +233,11 @@ func cleanupExternalIPAttachmentFixture(
 		})
 }
 
-func updateExternalIPAttachmentFinalizersWithRetry(
+func mutateExternalIPAttachmentFinalizersWithRetry(
 	ctx context.Context,
 	client privatev1.ExternalIPAttachmentsClient,
 	id string,
-	finalizers []string,
+	mutate func([]string) []string,
 ) error {
 	const maxAttempts = 5
 	var err error
@@ -246,7 +247,12 @@ func updateExternalIPAttachmentFinalizersWithRetry(
 			return getErr
 		}
 		attachment := response.GetObject()
-		attachment.GetMetadata().SetFinalizers(finalizers)
+		finalizers := slices.Clone(attachment.GetMetadata().GetFinalizers())
+		updatedFinalizers := mutate(finalizers)
+		if slices.Equal(finalizers, updatedFinalizers) {
+			return nil
+		}
+		attachment.GetMetadata().SetFinalizers(updatedFinalizers)
 		_, err = client.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
 			Object:     attachment,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
@@ -260,6 +266,31 @@ func updateExternalIPAttachmentFinalizersWithRetry(
 		}
 	}
 	return fmt.Errorf("update ExternalIPAttachment %q finalizers after %d attempts: %w", id, maxAttempts, err)
+}
+
+func addExternalIPAttachmentFinalizerWithRetry(
+	ctx context.Context,
+	client privatev1.ExternalIPAttachmentsClient,
+	id string,
+	finalizer string,
+) error {
+	return mutateExternalIPAttachmentFinalizersWithRetry(ctx, client, id, func(finalizers []string) []string {
+		if slices.Contains(finalizers, finalizer) {
+			return finalizers
+		}
+		return append(finalizers, finalizer)
+	})
+}
+
+func removeExternalIPAttachmentFinalizerWithRetry(
+	ctx context.Context,
+	client privatev1.ExternalIPAttachmentsClient,
+	id string,
+	finalizer string,
+) error {
+	return mutateExternalIPAttachmentFinalizersWithRetry(ctx, client, id, func(finalizers []string) []string {
+		return slices.DeleteFunc(finalizers, func(existing string) bool { return existing == finalizer })
+	})
 }
 
 func cleanupNATGatewayFixture(
