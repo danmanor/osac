@@ -427,7 +427,13 @@ finalizer before networking children are created. The BareMetalInstance case
 restarts the installed manager while attachment cleanup is held by a test
 finalizer, then confirms cleanup resumes for the same attachment after the
 finalizer is released. Test finalizers simulate provider cleanup; they do not
-exercise a real provider.
+exercise a real provider. Additional cases persist ExternalIP Create and
+ExternalIPAttachment detach launch claims in the real API, delete those
+resources, restart the installed manager, and verify deletion remains held,
+Create cannot move the ExternalIP back to Ready, and no job ID is recorded
+while the launch claim remains active. Controller tests separately assert the
+exact provider invocation count;
+the Kind suite does not deploy AAP.
 
 Run the suite in its own Kind cluster when testing in parallel. Use a local-only
 Kind config with unique HTTP and HTTPS host ports, and set the HTTPS port to the
