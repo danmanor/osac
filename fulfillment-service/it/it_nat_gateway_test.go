@@ -263,23 +263,16 @@ var _ = Describe("NATGateway lifecycle", func() {
 		for _, id := range externalIPIDs {
 			cleanupErr := cleanupNetworkFixtureResource(ctx,
 				func(cleanupCtx context.Context) error {
-					ipResponse, err := privateExternalIPsClient.Get(cleanupCtx, privatev1.ExternalIPsGetRequest_builder{Id: id}.Build())
+					_, err := privateExternalIPsClient.Get(cleanupCtx, privatev1.ExternalIPsGetRequest_builder{Id: id}.Build())
 					if grpcstatus.Code(err) == grpccodes.NotFound {
 						return nil
 					}
 					if err != nil {
 						return err
 					}
-					ip := ipResponse.GetObject()
-					if ip.GetStatus().GetState() != privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED {
-						ip.SetStatus(privatev1.ExternalIPStatus_builder{
-							State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED,
-						}.Build())
-						if _, err := privateExternalIPsClient.Update(cleanupCtx, privatev1.ExternalIPsUpdateRequest_builder{
-							Object: ip, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-						}.Build()); err != nil {
-							return err
-						}
+					if err := setExternalIPFixtureState(cleanupCtx, privateExternalIPsClient, id,
+						privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED); err != nil {
+						return err
 					}
 					_, err = externalIPsClient.Delete(cleanupCtx, publicv1.ExternalIPsDeleteRequest_builder{Id: id}.Build())
 					return err

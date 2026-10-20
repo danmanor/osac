@@ -1255,15 +1255,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 		Consistently(listAttachments, 2*time.Second, 100*time.Millisecond).Should(BeEmpty(),
 			"a deferred EIA must not be created while its ExternalIP is pending")
 
-		ipResponse, err := privateExternalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{Id: deferredIPID}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		ip := ipResponse.GetObject()
-		ip.SetStatus(privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED}.Build())
-		_, err = privateExternalIPsClient.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
-			Object:     ip,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(setExternalIPFixtureState(ctx, privateExternalIPsClient, deferredIPID,
+			privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)).To(Succeed())
 		Consistently(listAttachments, 2*time.Second, 100*time.Millisecond).Should(BeEmpty(),
 			"an allocated ExternalIP must wait for the Cluster endpoint")
 
@@ -1349,13 +1342,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(ip.GetStatus().GetHub()).To(Equal(networkClassHubID))
 		}, time.Minute, time.Second).Should(Succeed())
-		ip, err := getRaceIP()
-		Expect(err).NotTo(HaveOccurred())
-		ip.GetStatus().SetState(privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)
-		_, err = privateExternalIPsClient.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
-			Object: ip, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(setExternalIPFixtureState(ctx, privateExternalIPsClient, deferredIPID,
+			privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)).To(Succeed())
 
 		ownerFilter := fmt.Sprintf("this.metadata.labels['osac.openshift.io/auto-created-for'] == %q", racingClusterID)
 		listOwnedAttachments := func() []*privatev1.ExternalIPAttachment {
@@ -1487,15 +1475,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).NotTo(HaveOccurred())
-		ipResponse, err := privateExternalIPsClient.Get(ctx,
-			privatev1.ExternalIPsGetRequest_builder{Id: deferredIPID}.Build())
-		Expect(err).NotTo(HaveOccurred())
-		ip := ipResponse.GetObject()
-		ip.SetStatus(privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED}.Build())
-		_, err = privateExternalIPsClient.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
-			Object: ip, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(setExternalIPFixtureState(ctx, privateExternalIPsClient, deferredIPID,
+			privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)).To(Succeed())
 		Expect(setClusterFixtureReadiness(ctx, privateClustersClient, racingClusterID, true)).To(Succeed())
 
 		attachmentFilter := fmt.Sprintf("this.spec.external_ip.id == %q", deferredIPID)
@@ -1533,7 +1514,7 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			privatev1.ClustersGetRequest_builder{Id: racingClusterID}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(clusterResponse.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeTrue())
-		ipResponse, err = privateExternalIPsClient.Get(ctx,
+		ipResponse, err := privateExternalIPsClient.Get(ctx,
 			privatev1.ExternalIPsGetRequest_builder{Id: deferredIPID}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ipResponse.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeFalse(),
@@ -1602,13 +1583,8 @@ var _ = Describe("ExternalIPAttachment cross-resource validation", func() {
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(ip.GetStatus().GetHub()).To(Equal(networkClassHubID))
 		}, time.Minute, time.Second).Should(Succeed())
-		ip, err := getRaceIP()
-		Expect(err).NotTo(HaveOccurred())
-		ip.GetStatus().SetState(privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)
-		_, err = privateExternalIPsClient.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
-			Object: ip, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(setExternalIPFixtureState(ctx, privateExternalIPsClient, raceIPID,
+			privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)).To(Succeed())
 
 		attachmentID := fmt.Sprintf("test-race-attachment-%s", uuid.New())
 		attachmentRequest := publicv1.ExternalIPAttachmentsCreateRequest_builder{

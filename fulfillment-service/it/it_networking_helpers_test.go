@@ -24,6 +24,7 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 	publicv1 "github.com/osac-project/osac/proto/gen/osac/public/v1"
@@ -205,6 +206,97 @@ func cleanupExternalIPFixture(ctx context.Context, client privatev1.ExternalIPsC
 			}.Build())
 			return err
 		})
+}
+
+func setExternalIPFixtureState(
+	ctx context.Context,
+	client privatev1.ExternalIPsClient,
+	id string,
+	state privatev1.ExternalIPState,
+) error {
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		response, err := client.Get(ctx, privatev1.ExternalIPsGetRequest_builder{Id: id}.Build())
+		if err != nil {
+			return err
+		}
+		ip := response.GetObject()
+		if ip.GetStatus().GetState() == state {
+			return nil
+		}
+
+		ip.GetStatus().SetState(state)
+		ip.GetStatus().SetStateTransitionTime(nextFixtureStateTransitionTime(ip.GetStatus().GetStateTransitionTime()))
+		_, err = client.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
+			Object: ip,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
+				"status.state", "status.state_transition_time",
+			}},
+			Lock: true,
+		}.Build())
+		if grpcstatus.Code(err) != grpccodes.Aborted {
+			return err
+		}
+		if attempt < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+	return fmt.Errorf("update ExternalIP %q state after %d attempts", id, maxAttempts)
+}
+
+func setNATGatewayFixtureState(
+	ctx context.Context,
+	client privatev1.NATGatewaysClient,
+	id string,
+	state privatev1.NATGatewayState,
+) error {
+	const maxAttempts = 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		response, err := client.Get(ctx, privatev1.NATGatewaysGetRequest_builder{Id: id}.Build())
+		if err != nil {
+			return err
+		}
+		gateway := response.GetObject()
+		if gateway.GetStatus().GetState() == state {
+			return nil
+		}
+
+		gateway.GetStatus().SetState(state)
+		gateway.GetStatus().SetStateTransitionTime(nextFixtureStateTransitionTime(gateway.GetStatus().GetStateTransitionTime()))
+		_, err = client.Update(ctx, privatev1.NATGatewaysUpdateRequest_builder{
+			Object: gateway,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
+				"status.state", "status.state_transition_time",
+			}},
+			Lock: true,
+		}.Build())
+		if grpcstatus.Code(err) != grpccodes.Aborted {
+			return err
+		}
+		if attempt < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+	return fmt.Errorf("update NATGateway %q state after %d attempts", id, maxAttempts)
+}
+
+func nextFixtureStateTransitionTime(previous *timestamppb.Timestamp) *timestamppb.Timestamp {
+	transitionTime := time.Now()
+	if previous != nil {
+		minimum := previous.AsTime().Add(time.Second)
+		if transitionTime.Before(minimum) {
+			transitionTime = minimum
+		}
+	}
+	return timestamppb.New(transitionTime)
 }
 
 func cleanupExternalIPAttachmentFixture(

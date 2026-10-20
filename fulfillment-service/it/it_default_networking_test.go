@@ -417,14 +417,8 @@ var _ = Describe("Default networking provisioning", func() {
 			g.Expect(listGateways(g)).To(BeEmpty())
 			expectNotReady(g)
 		}, 5*time.Second, time.Second).Should(Succeed())
-		ipResponse, err := externalIPsClient.Get(ctx, privatev1.ExternalIPsGetRequest_builder{Id: externalIPID}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		ip := ipResponse.GetObject()
-		ip.SetStatus(privatev1.ExternalIPStatus_builder{State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED}.Build())
-		_, err = externalIPsClient.Update(ctx, privatev1.ExternalIPsUpdateRequest_builder{
-			Object: ip, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		Expect(setExternalIPFixtureState(ctx, externalIPsClient, externalIPID,
+			privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED)).To(Succeed())
 
 		By("Waiting for NATGateway and keeping readiness false until it is READY")
 		var gatewayID string
@@ -482,14 +476,8 @@ var _ = Describe("Default networking provisioning", func() {
 		Eventually(expectPendingResources, time.Minute, time.Second).Should(Succeed())
 		Consistently(expectPendingResources, 5*time.Second, time.Second).Should(Succeed())
 
-		gatewayResponse, err := natGatewaysClient.Get(ctx, privatev1.NATGatewaysGetRequest_builder{Id: gatewayID}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		gateway := gatewayResponse.GetObject()
-		gateway.SetStatus(privatev1.NATGatewayStatus_builder{State: privatev1.NATGatewayState_NAT_GATEWAY_STATE_READY}.Build())
-		_, err = natGatewaysClient.Update(ctx, privatev1.NATGatewaysUpdateRequest_builder{
-			Object: gateway, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		Expect(setNATGatewayFixtureState(ctx, natGatewaysClient, gatewayID,
+			privatev1.NATGatewayState_NAT_GATEWAY_STATE_READY)).To(Succeed())
 		Eventually(func(g Gomega) {
 			response, getErr := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantID}.Build())
 			g.Expect(getErr).ToNot(HaveOccurred())
