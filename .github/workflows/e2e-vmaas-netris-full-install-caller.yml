@@ -11,18 +11,6 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      test-infra-repository:
-        description: "Repository containing the test-infra reusable workflow"
-        required: false
-        default: "osac-project/osac-test-infra"
-      test-infra-ref:
-        description: "Branch or tag of test-infra; ignored when test-infra-sha is set"
-        required: false
-        default: "codex/netris-vmaas-cudn-evpn"
-      test-infra-sha:
-        description: "Exact test-infra commit SHA; overrides test-infra-ref"
-        required: false
-        default: "f141eb4393dc0cc3e51a12a95c2a050179e3d6cd"
       pr-number:
         description: "PR number being tested; PR details are read from GitHub"
         required: false
@@ -71,6 +59,18 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          validate_single_line() {
+            local name="$1" value="$2"
+            if [[ "${value}" == *$'\n'* || "${value}" == *$'\r'* ]]; then
+              echo "::error::${name} must not contain CR or LF."
+              exit 1
+            fi
+          }
+          validate_single_line "PR repository input" "${TYPED_REPOSITORY}"
+          validate_single_line "PR ref input" "${TYPED_REF}"
+          validate_single_line "PR SHA input" "${TYPED_SHA}"
+          validate_single_line "workflow branch" "${BRANCH}"
+
           repository="${REPO}"
           ref="${BRANCH}"
           sha=""
@@ -83,6 +83,21 @@ jobs:
             [[ -n "${repository}" ]] || { echo "::error::The repository of the pull request's branch no longer exists."; exit 1; }
             ref=$(jq -r '.head.ref' <<<"${pull}")
             sha=$(jq -r '.head.sha' <<<"${pull}")
+            validate_single_line "PR head repository" "${repository}"
+            validate_single_line "PR head ref" "${ref}"
+            validate_single_line "PR head SHA" "${sha}"
+            [[ "${repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+              echo "::error::The pull request's head repository is invalid."
+              exit 1
+            }
+            git check-ref-format --branch "${ref}" >/dev/null 2>&1 || {
+              echo "::error::The pull request's head ref is invalid."
+              exit 1
+            }
+            [[ "${sha}" =~ ^[[:xdigit:]]{40}$ ]] || {
+              echo "::error::The pull request's head SHA is invalid."
+              exit 1
+            }
             if [[ -n "${TYPED_SHA}" && "${TYPED_SHA}" != "${sha}" ]]; then
               echo "::error::The head of PR #${NUMBER} is ${sha}, not the requested ${TYPED_SHA}; refusing to run."
               exit 1
@@ -96,16 +111,28 @@ jobs:
               echo "::error::A repository other than ${REPO} needs a pull request number."
               exit 1
             fi
-            if [[ -n "${TYPED_REF}" ]]; then ref="${TYPED_REF}"; fi
+            if [[ -n "${TYPED_REF}" ]]; then
+              ref="${TYPED_REF}"
+              git check-ref-format --branch "${ref}" >/dev/null 2>&1 || {
+                echo "::error::The requested branch ref is invalid."
+                exit 1
+              }
+            fi
           fi
           source_ref="${sha:-${ref}}"
+          validate_single_line "repository output" "${repository}"
+          validate_single_line "ref output" "${ref}"
+          validate_single_line "SHA output" "${sha}"
+          validate_single_line "source ref output" "${source_ref}"
+          validate_single_line "fork author output" "${fork_author}"
+          validate_single_line "fork association output" "${fork_association}"
           {
-            echo "repository=${repository}"
-            echo "ref=${ref}"
-            echo "sha=${sha}"
-            echo "source-ref=${source_ref}"
-            echo "fork-author=${fork_author}"
-            echo "fork-association=${fork_association}"
+            printf 'repository=%s\n' "${repository}"
+            printf 'ref=%s\n' "${ref}"
+            printf 'sha=%s\n' "${sha}"
+            printf 'source-ref=%s\n' "${source_ref}"
+            printf 'fork-author=%s\n' "${fork_author}"
+            printf 'fork-association=%s\n' "${fork_association}"
           } >> "$GITHUB_OUTPUT"
           echo "Testing ${repository} at ${source_ref}" >> "$GITHUB_STEP_SUMMARY"
 
@@ -120,9 +147,8 @@ jobs:
     with:
       repo: ${{ needs.pr.outputs.repository }}
       sha: ${{ needs.pr.outputs.source-ref }}
-      test-infra-repository: ${{ inputs.test-infra-repository || 'osac-project/osac-test-infra' }}
-      test-infra-ref: ${{ inputs.test-infra-ref || 'codex/netris-vmaas-cudn-evpn' }}
-      test-infra-sha: ${{ inputs.test-infra-sha || 'f141eb4393dc0cc3e51a12a95c2a050179e3d6cd' }}
+      test-infra-repository: osac-project/osac-test-infra
+      test-infra-sha: f141eb4393dc0cc3e51a12a95c2a050179e3d6cd
       pr-number: ${{ inputs.pr-number }}
       fork-pr-author-association: ${{ needs.pr.outputs.fork-association }}
       fork-pr-author: ${{ needs.pr.outputs.fork-author }}
