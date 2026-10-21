@@ -66,11 +66,6 @@ jobs:
               exit 1
             fi
           }
-          validate_single_line "PR repository input" "${TYPED_REPOSITORY}"
-          validate_single_line "PR ref input" "${TYPED_REF}"
-          validate_single_line "PR SHA input" "${TYPED_SHA}"
-          validate_single_line "workflow branch" "${BRANCH}"
-
           repository="${REPO}"
           ref="${BRANCH}"
           sha=""
