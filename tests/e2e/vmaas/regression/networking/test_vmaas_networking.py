@@ -412,11 +412,15 @@ def test_external_ip_provides_ssh_ingress(
     netris_vm_network: dict[str, Any], netris_vm_external_ip_attachment: str
 ) -> None:
     vm = netris_vm_network["vm_a1"]
+    expected_host_key = guest_ssh.guest_host_key(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"])
 
     def try_ssh() -> str:
         try:
             return guest_ssh.ssh_via_external_ip(
-                netris_vm_external_ip_attachment, netris_vm_network["identity_file"], timeout=10
+                netris_vm_external_ip_attachment,
+                netris_vm_network["identity_file"],
+                expected_host_key=expected_host_key,
+                timeout=10,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return ""
