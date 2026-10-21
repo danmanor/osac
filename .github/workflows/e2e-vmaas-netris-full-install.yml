@@ -32,22 +32,6 @@ on:
         required: false
         type: string
         default: ""
-      test-infra-repository:
-        description: Repository containing the test-infra checkout
-        required: false
-        type: string
-        default: osac-project/osac-test-infra
-      test-infra-ref:
-        description: Branch or tag of test-infra used by the runner
-        required: false
-        type: string
-        default: codex/netris-vmaas-cudn-evpn
-      test-infra-sha:
-        description: Exact test-infra commit; overrides test-infra-ref
-        required: false
-        type: string
-        default: 3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5
-
 jobs:
   e2e-vmaas-netris:
     permissions:
@@ -55,7 +39,7 @@ jobs:
       id-token: write
       checks: write
       pull-requests: read
-    uses: osac-project/osac-test-infra/.github/workflows/e2e-bmaas-netris-full-install.yml@3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5
+    uses: osac-project/osac-test-infra/.github/workflows/e2e-bmaas-netris-full-install.yml@f141eb4393dc0cc3e51a12a95c2a050179e3d6cd
     with:
       suite: vmaas
       osac-profile: cudn-evpn-netris-test
@@ -68,9 +52,9 @@ jobs:
         { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "osac-aap/execution-environment/execution-environment.yaml", "context": ".", "imageKey": "aap.bootstrap.image", "buildType": "ansible-builder" },
         { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "osac-aap/execution-environment/execution-environment.yaml", "context": ".", "imageKey": "aap.configAsCode.eeImage", "buildType": "ansible-builder" }
         ]
-      test-infra-repository: ${{ inputs.test-infra-repository }}
-      test-infra-ref: ${{ inputs.test-infra-ref }}
-      test-infra-sha: ${{ inputs.test-infra-sha }}
+      test-infra-repository: osac-project/osac-test-infra
+      test-infra-ref: codex/netris-vmaas-cudn-evpn
+      test-infra-sha: f141eb4393dc0cc3e51a12a95c2a050179e3d6cd
       pr-repository: ${{ inputs.pr-number != '' && inputs.repo || '' }}
       pr-sha: ${{ inputs.pr-number != '' && inputs.sha || '' }}
       pr-number: ${{ inputs.pr-number }}
