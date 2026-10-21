@@ -39,3 +39,8 @@ jobs:
     check: "E2E / BMaaS Netris Full Install"
     suite: netris
     manual_only: true
+  e2e-vmaas-netris:
+    kind: e2e
+    check: "E2E / VMaaS Netris Full Install"
+    suite: vmaas-netris
+    manual_only: true

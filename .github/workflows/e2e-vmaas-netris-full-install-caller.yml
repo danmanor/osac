@@ -1,0 +1,128 @@
+---
+name: E2E VMaaS Netris Full Install
+run-name: "E2E VMaaS Netris Full Install${{ inputs.pr-number != '' && format(' / PR #{0} @ {1}', inputs.pr-number, inputs.pr-sha) || '' }}"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Manual entry point for the optional Netris VMaaS suite. For a pull request,
+# use /test vmaas-netris or its checkbox so the run is attached to the PR.
+on:
+  workflow_dispatch:
+    inputs:
+      test-infra-repository:
+        description: "Repository containing the test-infra reusable workflow"
+        required: false
+        default: "osac-project/osac-test-infra"
+      test-infra-ref:
+        description: "Branch or tag of test-infra; ignored when test-infra-sha is set"
+        required: false
+        default: "codex/netris-vmaas-cudn-evpn"
+      test-infra-sha:
+        description: "Exact test-infra commit SHA; overrides test-infra-ref"
+        required: false
+        default: "3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5"
+      pr-number:
+        description: "PR number being tested; PR details are read from GitHub"
+        required: false
+        default: ""
+      pr-repository:
+        description: "Ignored when a PR number is given; otherwise empty or this repository"
+        required: false
+        default: ""
+      pr-ref:
+        description: "Ignored when a PR number is given; otherwise the branch to test"
+        required: false
+        default: ""
+      pr-sha:
+        description: "Optional expected commit; a PR head mismatch fails the run"
+        required: false
+        default: ""
+
+concurrency:
+  group: e2e-vmaas-netris-full-install-${{ github.repository }}-${{ inputs.pr-number || github.run_id }}
+  cancel-in-progress: ${{ inputs.pr-number != '' }}
+
+jobs:
+  pr:
+    name: Read the pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      repository: ${{ steps.pr.outputs.repository }}
+      ref: ${{ steps.pr.outputs.ref }}
+      sha: ${{ steps.pr.outputs.sha }}
+      source-ref: ${{ steps.pr.outputs.source-ref }}
+      fork-author: ${{ steps.pr.outputs.fork-author }}
+      fork-association: ${{ steps.pr.outputs.fork-association }}
+    steps:
+      - name: Read the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ inputs.pr-number }}
+          TYPED_REPOSITORY: ${{ inputs.pr-repository }}
+          TYPED_REF: ${{ inputs.pr-ref }}
+          TYPED_SHA: ${{ inputs.pr-sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          repository="${REPO}"
+          ref="${BRANCH}"
+          sha=""
+          fork_author=""
+          fork_association=""
+          if [[ -n "${NUMBER}" ]]; then
+            [[ "${NUMBER}" =~ ^[0-9]+$ ]] || { echo "::error::The pull request number must be digits only."; exit 1; }
+            pull=$(gh api "repos/${REPO}/pulls/${NUMBER}")
+            repository=$(jq -r '.head.repo.full_name // empty' <<<"${pull}")
+            [[ -n "${repository}" ]] || { echo "::error::The repository of the pull request's branch no longer exists."; exit 1; }
+            ref=$(jq -r '.head.ref' <<<"${pull}")
+            sha=$(jq -r '.head.sha' <<<"${pull}")
+            if [[ -n "${TYPED_SHA}" && "${TYPED_SHA}" != "${sha}" ]]; then
+              echo "::error::The head of PR #${NUMBER} is ${sha}, not the requested ${TYPED_SHA}; refusing to run."
+              exit 1
+            fi
+            if [[ "${repository}" != "${REPO}" ]]; then
+              fork_author=$(jq -r '.user.login' <<<"${pull}")
+              fork_association=$(jq -r '.author_association' <<<"${pull}")
+            fi
+          else
+            if [[ -n "${TYPED_REPOSITORY}" && "${TYPED_REPOSITORY}" != "${REPO}" ]]; then
+              echo "::error::A repository other than ${REPO} needs a pull request number."
+              exit 1
+            fi
+            if [[ -n "${TYPED_REF}" ]]; then ref="${TYPED_REF}"; fi
+          fi
+          source_ref="${sha:-${ref}}"
+          {
+            echo "repository=${repository}"
+            echo "ref=${ref}"
+            echo "sha=${sha}"
+            echo "source-ref=${source_ref}"
+            echo "fork-author=${fork_author}"
+            echo "fork-association=${fork_association}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Testing ${repository} at ${source_ref}" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e-vmaas-netris:
+    needs: pr
+    permissions:
+      contents: read
+      id-token: write
+      checks: write
+      pull-requests: read
+    uses: ./.github/workflows/e2e-vmaas-netris-full-install.yml
+    with:
+      repo: ${{ needs.pr.outputs.repository }}
+      sha: ${{ needs.pr.outputs.source-ref }}
+      test-infra-repository: ${{ inputs.test-infra-repository || 'osac-project/osac-test-infra' }}
+      test-infra-ref: ${{ inputs.test-infra-ref || 'codex/netris-vmaas-cudn-evpn' }}
+      test-infra-sha: ${{ inputs.test-infra-sha || '3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5' }}
+      pr-number: ${{ inputs.pr-number }}
+      fork-pr-author-association: ${{ needs.pr.outputs.fork-association }}
+      fork-pr-author: ${{ needs.pr.outputs.fork-author }}

@@ -26,6 +26,16 @@ checking its box in the E2E comment of the pull request; the suite has its own l
 ("E2E BMaaS Netris Full Install", Run workflow, with the pull request's number, repository, branch and commit). A label no longer
 starts it. A new commit does not cancel a run that is already going.
 
+## Optional: VMaaS Netris
+
+The VMaaS Netris suite uses the `cudn-evpn-netris-test` profile and the
+VMaaS setup in osac-test-infra PR [#622](https://github.com/osac-project/osac-test-infra/pull/622).
+It is manual-only: start it with `/test vmaas-netris` or its checkbox in the
+pull request comment, or use the Actions page entry “E2E VMaaS Netris Full
+Install”. Its ExternalIP ingress and NAT egress cases skip until the lab's
+Netris route and return policy is configured and
+`OSAC_NETRIS_VM_EXTERNAL_PATH_ENABLED=true` is set.
+
 ## Approvals after a rebase, and pull requests from forks
 
 - A clean rebase, or "Update branch", keeps the approval and moves it to the new head. A rebase that needs conflict
