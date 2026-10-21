@@ -94,7 +94,7 @@ jobs:
               exit 1
             }
             if [[ -n "${TYPED_SHA}" && "${TYPED_SHA}" != "${sha}" ]]; then
-              echo "::error::The head of PR #${NUMBER} is ${sha}, not the requested ${TYPED_SHA}; refusing to run."
+              echo "::error::The head of PR #${NUMBER} does not match the requested SHA; refusing to run."
               exit 1
             fi
             if [[ "${repository}" != "${REPO}" ]]; then
