@@ -46,6 +46,7 @@ from tests.e2e.vmaas.networking_lifecycle_helpers import (
     delete_and_wait_for_virtual_network,
 )
 from tests.e2e.vmaas.regression.networking import guest_ssh
+from tests.e2e.vmaas.regression.networking.cleanup import _run_cleanup
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_netris_vmaas]
 
@@ -184,8 +185,10 @@ def netris_vm_network(
         )
         yield state
     finally:
+        cleanup_errors: list[str] = []
         for instance in reversed(instances):
-            try:
+
+            def delete_instance(instance: dict[str, str] = instance) -> None:
                 cli.delete_compute_instance(uuid=instance["id"])
                 if instance.get("cr"):
                     wait_for_deletion(k8s=k8s_hub_client, name=instance["cr"])
@@ -196,28 +199,36 @@ def netris_vm_network(
                     delay=5,
                     description=f"ComputeInstance {instance['id']} API deletion",
                 )
-            except Exception as exc:
-                print(f"WARNING: failed to delete ComputeInstance {instance['id']}: {exc}")
+
+            _run_cleanup(cleanup_errors, f"ComputeInstance {instance['id']}", delete_instance)
         if secret_created:
-            try:
-                cli.delete_secret(name=secret_name)
-            except Exception as exc:
-                print(f"WARNING: failed to delete SSH key Secret {secret_name}: {exc}")
+            _run_cleanup(cleanup_errors, f"SSH key Secret {secret_name}", lambda: cli.delete_secret(name=secret_name))
         for network in reversed(networks):
             if "sg_id" in network:
-                try:
-                    delete_and_wait_for_security_group(grpc, k8s_hub_client, network["sg_id"], network.get("sg_cr"))
-                except Exception as exc:
-                    print(f"WARNING: failed to delete SecurityGroup {network['sg_id']}: {exc}")
+                _run_cleanup(
+                    cleanup_errors,
+                    f"SecurityGroup {network['sg_id']}",
+                    lambda network=network: delete_and_wait_for_security_group(
+                        grpc, k8s_hub_client, network["sg_id"], network.get("sg_cr")
+                    ),
+                )
             if "subnet_id" in network:
-                try:
-                    delete_and_wait_for_subnet(grpc, k8s_hub_client, network["subnet_id"], network.get("subnet_cr"))
-                except Exception as exc:
-                    print(f"WARNING: failed to delete Subnet {network['subnet_id']}: {exc}")
-            try:
-                delete_and_wait_for_virtual_network(grpc, k8s_hub_client, network["vn_id"], network.get("vn_cr"))
-            except Exception as exc:
-                print(f"WARNING: failed to delete VirtualNetwork {network['vn_id']}: {exc}")
+                _run_cleanup(
+                    cleanup_errors,
+                    f"Subnet {network['subnet_id']}",
+                    lambda network=network: delete_and_wait_for_subnet(
+                        grpc, k8s_hub_client, network["subnet_id"], network.get("subnet_cr")
+                    ),
+                )
+            _run_cleanup(
+                cleanup_errors,
+                f"VirtualNetwork {network['vn_id']}",
+                lambda network=network: delete_and_wait_for_virtual_network(
+                    grpc, k8s_hub_client, network["vn_id"], network.get("vn_cr")
+                ),
+            )
+        if cleanup_errors:
+            raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
 
 
 @pytest.fixture
@@ -241,16 +252,19 @@ def netris_external_ip_pool(
         wait_for_external_ip_pool_grpc_ready(private_grpc=private_grpc, pool_id=pool_id)
         yield {"id": pool_id, "cr": pool_cr}
     finally:
-        try:
-            private_grpc.delete_external_ip_pool(pool_id=pool_id)
-        except Exception as exc:
-            print(f"WARNING: failed to delete ExternalIPPool {pool_id}: {exc}")
-        try:
+        cleanup_errors: list[str] = []
+        _run_cleanup(
+            cleanup_errors, f"ExternalIPPool {pool_id}", lambda: private_grpc.delete_external_ip_pool(pool_id=pool_id)
+        )
+
+        def wait_for_pool_deletion() -> None:
             pool_cr_name = pool_cr or k8s_hub_client.get_external_ip_pool_name(uuid=pool_id, checked=False)
             if pool_cr_name:
                 wait_for_external_ip_pool_deletion(k8s=k8s_hub_client, name=pool_cr_name)
-        except Exception as exc:
-            print(f"WARNING: failed to wait for ExternalIPPool {pool_id} deletion: {exc}")
+
+        _run_cleanup(cleanup_errors, f"ExternalIPPool {pool_id} deletion wait", wait_for_pool_deletion)
+        if cleanup_errors:
+            raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
 
 
 @pytest.fixture
@@ -284,20 +298,25 @@ def netris_nat_gateway(
         wait_for_nat_gateway_ready(k8s=k8s_hub_client, name=nat_cr)
         yield
     finally:
+        cleanup_errors: list[str] = []
         if nat_id:
-            try:
+
+            def delete_nat_gateway() -> None:
                 grpc.delete_nat_gateway(nat_gateway_id=nat_id)
                 if nat_cr:
                     wait_for_nat_gateway_deletion(k8s=k8s_hub_client, name=nat_cr)
-            except Exception as exc:
-                print(f"WARNING: failed to delete NATGateway {nat_id}: {exc}")
+
+            _run_cleanup(cleanup_errors, f"NATGateway {nat_id}", delete_nat_gateway)
         if eip_id:
-            try:
+
+            def delete_nat_external_ip() -> None:
                 grpc.delete_external_ip(external_ip_id=eip_id)
                 if eip_cr:
                     wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
-            except Exception as exc:
-                print(f"WARNING: failed to delete NAT ExternalIP {eip_id}: {exc}")
+
+            _run_cleanup(cleanup_errors, f"NAT ExternalIP {eip_id}", delete_nat_external_ip)
+        if cleanup_errors:
+            raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
 
 
 @pytest.fixture
@@ -335,20 +354,25 @@ def netris_vm_external_ip_attachment(
         )
         yield address
     finally:
+        cleanup_errors: list[str] = []
         if attachment_id:
-            try:
+
+            def delete_attachment() -> None:
                 grpc.delete_external_ip_attachment(attachment_id=attachment_id)
                 if attachment_cr:
                     wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr)
-            except Exception as exc:
-                print(f"WARNING: failed to delete ExternalIPAttachment {attachment_id}: {exc}")
+
+            _run_cleanup(cleanup_errors, f"ExternalIPAttachment {attachment_id}", delete_attachment)
         if eip_id:
-            try:
+
+            def delete_ingress_external_ip() -> None:
                 grpc.delete_external_ip(external_ip_id=eip_id)
                 if eip_cr:
                     wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
-            except Exception as exc:
-                print(f"WARNING: failed to delete ingress ExternalIP {eip_id}: {exc}")
+
+            _run_cleanup(cleanup_errors, f"Ingress ExternalIP {eip_id}", delete_ingress_external_ip)
+        if cleanup_errors:
+            raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
 
 
 def test_same_subnet_arp_and_ping_succeed(netris_vm_network: dict[str, Any]) -> None:

@@ -116,7 +116,7 @@ def test_curl_status_extracts_http_code(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(guest_ssh, "ssh_guest_unchecked", ssh_guest_unchecked)
 
     assert guest_ssh.curl_status("tenant-a", "vm-one", "/tmp/id_ed25519") == 200
-    assert "https://quay.io" in commands[0]
+    assert commands[0].split()[-1] == "https://quay.io"
 
 
 def test_ssh_via_external_ip_verifies_expected_host_key_and_uses_identity(monkeypatch: pytest.MonkeyPatch) -> None:
