@@ -78,9 +78,6 @@ jobs:
             [[ -n "${repository}" ]] || { echo "::error::The repository of the pull request's branch no longer exists."; exit 1; }
             ref=$(jq -r '.head.ref' <<<"${pull}")
             sha=$(jq -r '.head.sha' <<<"${pull}")
-            validate_single_line "PR head repository" "${repository}"
-            validate_single_line "PR head ref" "${ref}"
-            validate_single_line "PR head SHA" "${sha}"
             [[ "${repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
               echo "::error::The pull request's head repository is invalid."
               exit 1
