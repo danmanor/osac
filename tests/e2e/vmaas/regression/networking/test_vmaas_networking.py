@@ -47,7 +47,7 @@ from tests.e2e.vmaas.networking_lifecycle_helpers import (
 )
 from tests.e2e.vmaas.regression.networking import guest_ssh
 
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.requires_netris_vmaas]
 
 _EXTERNAL_PATH_FLAG = "OSAC_NETRIS_VM_EXTERNAL_PATH_ENABLED"
 _NETWORKING_SUITE_PREREQUISITE = (

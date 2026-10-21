@@ -111,7 +111,9 @@ comes within about a quarter of an hour). Anything else gets a person.
   `bot-approve.yml` here are thin callers that keep the triggers and the suite jobs. A member of the organization can start suites by hand with the comment `/test` (the suites the change needs) or
   `/test vmaas caas` (those suites), or from the comment the decision keeps on a pull request written by a member
   (a checkbox per suite; any approval state, a draft and a fork of a member included; a pull
-  request by someone outside the organization gets no comment). The rules they apply are one page:
+  request by someone outside the organization gets no comment). `/test netris` starts the BMaaS Netris suite;
+  `/test vmaas-netris` starts the separate VMaaS Netris suite. Both require a dedicated Netris lab. The rules they apply
+  are one page:
   osac-ci `docs/RULES.md`. The callers pin a full commit of an osac-ci release (the tag in a comment); the Dependabot group
   `osac-ci` opens one pull request per release, reviewed by wg-infra.
 - **Emergency:** setting the repository variable `CI_GATING_ENABLED` to `false` makes `CI` run every part.
