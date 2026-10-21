@@ -22,7 +22,7 @@ on:
       test-infra-sha:
         description: "Exact test-infra commit SHA; overrides test-infra-ref"
         required: false
-        default: "3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5"
+        default: "f141eb4393dc0cc3e51a12a95c2a050179e3d6cd"
       pr-number:
         description: "PR number being tested; PR details are read from GitHub"
         required: false
@@ -122,7 +122,7 @@ jobs:
       sha: ${{ needs.pr.outputs.source-ref }}
       test-infra-repository: ${{ inputs.test-infra-repository || 'osac-project/osac-test-infra' }}
       test-infra-ref: ${{ inputs.test-infra-ref || 'codex/netris-vmaas-cudn-evpn' }}
-      test-infra-sha: ${{ inputs.test-infra-sha || '3919c4a65eed7cfad21a4ba72b3620ff0de0f5c5' }}
+      test-infra-sha: ${{ inputs.test-infra-sha || 'f141eb4393dc0cc3e51a12a95c2a050179e3d6cd' }}
       pr-number: ${{ inputs.pr-number }}
       fork-pr-author-association: ${{ needs.pr.outputs.fork-association }}
       fork-pr-author: ${{ needs.pr.outputs.fork-author }}
