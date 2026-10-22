@@ -100,11 +100,11 @@ def curl_status(vm_namespace: str, vm_name: str, identity_file: str, timeout: in
         vm_namespace=vm_namespace, vm_name=vm_name, identity_file=identity_file, command=command, timeout=timeout + 30
     )
     if virtctl_rc != 0:
-        log.warning("VM guest curl via %s/%s exited %d: %s", vm_namespace, vm_name, virtctl_rc, output)
+        log.warning("VM guest curl via %s/%s exited %d", vm_namespace, vm_name, virtctl_rc)
         return 0
     matches = _HTTP_STATUS_RE.findall(output)
     if len(matches) != 1:
-        log.warning("VM guest curl via %s/%s returned no unique HTTP status: %r", vm_namespace, vm_name, output)
+        log.warning("VM guest curl via %s/%s returned no unique HTTP status", vm_namespace, vm_name)
         return 0
     return int(matches[0])
 
