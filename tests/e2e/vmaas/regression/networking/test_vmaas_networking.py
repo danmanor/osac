@@ -319,141 +319,320 @@ def netris_nat_gateway(
             raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
 
 
-@pytest.fixture
-def netris_vm_external_ip_attachment(
-    netris_external_ip_pool: dict[str, str],
-    grpc: GRPCClient,
-    k8s_hub_client: K8sClient,
-    test_run_id: str,
-    netris_vm_network: dict[str, Any],
-) -> Iterator[str]:
-    vm = netris_vm_network["vm_a1"]
-    eip_id: str | None = None
-    eip_cr: str | None = None
-    attachment_id: str | None = None
-    attachment_cr: str | None = None
-    try:
-        eip_id = grpc.create_external_ip(
-            name=f"netris-vm-ingress-eip-{test_run_id}", pool=netris_external_ip_pool["id"]
-        )
-        eip_cr = wait_for_external_ip_cr(k8s=k8s_hub_client, uuid=eip_id)
-        wait_for_external_ip_allocated(k8s=k8s_hub_client, name=eip_cr)
-        attachment_id = grpc.create_external_ip_attachment(
-            name=f"netris-vm-ingress-attachment-{test_run_id}", external_ip=eip_id, compute_instance=vm["id"]
-        )
-        attachment_cr = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=attachment_id)
-        wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=attachment_cr)
-        address = poll_until(
-            fn=lambda: (
-                grpc.get_external_ip(external_ip_id=eip_id).get("object", {}).get("status", {}).get("address", "")
-            ),
-            until=bool,
-            retries=30,
-            delay=5,
-            description="ComputeInstance ExternalIP address allocation",
-        )
-        yield address
-    finally:
-        cleanup_errors: list[str] = []
-        if attachment_id:
-
-            def delete_attachment() -> None:
-                grpc.delete_external_ip_attachment(attachment_id=attachment_id)
-                if attachment_cr:
-                    wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr)
-
-            _run_cleanup(cleanup_errors, f"ExternalIPAttachment {attachment_id}", delete_attachment)
-        if eip_id:
-
-            def delete_ingress_external_ip() -> None:
-                grpc.delete_external_ip(external_ip_id=eip_id)
-                if eip_cr:
-                    wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
-
-            _run_cleanup(cleanup_errors, f"Ingress ExternalIP {eip_id}", delete_ingress_external_ip)
-        if cleanup_errors:
-            raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
-
-
-def test_same_subnet_arp_and_ping_succeed(netris_vm_network: dict[str, Any]) -> None:
-    source = netris_vm_network["vm_a1"]
-    target = netris_vm_network["vm_a2"]
-    identity_file = netris_vm_network["identity_file"]
-
-    assert poll_until(
-        fn=lambda: guest_ssh.arping(source["vm_namespace"], source["cr"], identity_file, target["ip"]),
-        until=bool,
-        retries=5,
-        delay=10,
-        description="same-Subnet VMaaS ARP reachability",
-    )
-    assert poll_until(
-        fn=lambda: guest_ssh.ping(source["vm_namespace"], source["cr"], identity_file, target["ip"]),
-        until=bool,
-        retries=5,
-        delay=10,
-        description="same-Subnet VMaaS ICMP reachability",
-    )
-
-
-def test_cross_virtual_network_arp_and_ping_are_isolated(netris_vm_network: dict[str, Any]) -> None:
-    source = netris_vm_network["vm_a1"]
-    target = netris_vm_network["vm_b1"]
-    identity_file = netris_vm_network["identity_file"]
-
-    assert not guest_ssh.arping(source["vm_namespace"], source["cr"], identity_file, target["ip"]), (
-        f"ARP from VM {source['ip']} to {target['ip']} in another VirtualNetwork succeeded unexpectedly"
-    )
-    assert not guest_ssh.ping(source["vm_namespace"], source["cr"], identity_file, target["ip"]), (
-        f"ICMP from VM {source['ip']} to {target['ip']} in another VirtualNetwork succeeded unexpectedly"
-    )
-
-
-def test_management_endpoint_is_not_reachable(netris_vm_network: dict[str, Any]) -> None:
-    vm = netris_vm_network["vm_a1"]
-    management_ip = os.environ.get("OSAC_MGMT_CLUSTER_IP", "192.168.40.2")
-
-    assert not guest_ssh.ping(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"], management_ip), (
-        f"ICMP from tenant VM {vm['ip']} to management endpoint {management_ip} succeeded unexpectedly"
-    )
-
-
-def test_nat_gateway_provides_egress(netris_vm_network: dict[str, Any], netris_nat_gateway: None) -> None:
-    vm = netris_vm_network["vm_a1"]
-    assert (
-        poll_until(
-            fn=lambda: guest_ssh.curl_status(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"]),
-            until=lambda status: status == 200,
-            retries=5,
-            delay=15,
-            description=f"NAT egress from VM {vm['ip']} to quay.io",
-        )
-        == 200
-    )
-
-
-def test_external_ip_provides_ssh_ingress(
-    netris_vm_network: dict[str, Any], netris_vm_external_ip_attachment: str
-) -> None:
-    vm = netris_vm_network["vm_a1"]
-    expected_host_key = guest_ssh.guest_host_key(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"])
+def _assert_external_ip_ssh(*, vm: dict[str, str], identity_file: str, external_ip: str, description: str) -> None:
+    expected_host_key = guest_ssh.guest_host_key(vm["vm_namespace"], vm["cr"], identity_file)
 
     def try_ssh() -> str:
         try:
             return guest_ssh.ssh_via_external_ip(
-                netris_vm_external_ip_attachment,
-                netris_vm_network["identity_file"],
-                expected_host_key=expected_host_key,
-                timeout=10,
+                external_ip, identity_file, expected_host_key=expected_host_key, timeout=10
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return ""
 
-    hostname = poll_until(
-        fn=try_ssh,
-        until=bool,
-        retries=5,
-        delay=15,
-        description=f"SSH ingress through VM ExternalIP {netris_vm_external_ip_attachment}",
-    )
-    assert hostname, f"SSH through ExternalIP did not reach ComputeInstance {vm['name']}"
+    hostname = poll_until(fn=try_ssh, until=bool, retries=5, delay=15, description=description)
+    assert hostname, f"SSH through ExternalIP {external_ip} did not reach ComputeInstance {vm['name']}"
+
+
+class TestVmaasNetworking:
+    """Ordered connectivity and ExternalIP flows for Netris-backed VMaaS."""
+
+    def test_00_l2_arping_same_subnet(self, netris_vm_network: dict[str, Any]) -> None:
+        first = netris_vm_network["vm_a1"]
+        second = netris_vm_network["vm_a2"]
+        identity_file = netris_vm_network["identity_file"]
+
+        for source, target in ((first, second), (second, first)):
+            assert poll_until(
+                fn=lambda src=source, dst=target: guest_ssh.arping(
+                    src["vm_namespace"], src["cr"], identity_file, dst["ip"]
+                ),
+                until=bool,
+                retries=5,
+                delay=10,
+                description=f"same-Subnet VMaaS ARP {source['ip']} to {target['ip']}",
+            )
+
+    def test_01_l3_ping_same_subnet(self, netris_vm_network: dict[str, Any]) -> None:
+        first = netris_vm_network["vm_a1"]
+        second = netris_vm_network["vm_a2"]
+        identity_file = netris_vm_network["identity_file"]
+
+        for source, target in ((first, second), (second, first)):
+            assert poll_until(
+                fn=lambda src=source, dst=target: guest_ssh.ping(
+                    src["vm_namespace"], src["cr"], identity_file, dst["ip"]
+                ),
+                until=bool,
+                retries=5,
+                delay=10,
+                description=f"same-Subnet VMaaS ICMP {source['ip']} to {target['ip']}",
+            )
+
+    def test_02_l2_arping_cross_virtual_network_fails(self, netris_vm_network: dict[str, Any]) -> None:
+        first = netris_vm_network["vm_a1"]
+        other_network = netris_vm_network["vm_b1"]
+        identity_file = netris_vm_network["identity_file"]
+
+        for source, target in ((first, other_network), (other_network, first)):
+            assert not guest_ssh.arping(source["vm_namespace"], source["cr"], identity_file, target["ip"]), (
+                f"ARP from VM {source['ip']} to {target['ip']} in another VirtualNetwork succeeded unexpectedly"
+            )
+
+    def test_03_l3_ping_cross_virtual_network_fails(self, netris_vm_network: dict[str, Any]) -> None:
+        first = netris_vm_network["vm_a1"]
+        other_network = netris_vm_network["vm_b1"]
+        identity_file = netris_vm_network["identity_file"]
+
+        for source, target in ((first, other_network), (other_network, first)):
+            assert not guest_ssh.ping(source["vm_namespace"], source["cr"], identity_file, target["ip"]), (
+                f"ICMP from VM {source['ip']} to {target['ip']} in another VirtualNetwork succeeded unexpectedly"
+            )
+
+    def test_04_management_endpoint_is_not_reachable(self, netris_vm_network: dict[str, Any]) -> None:
+        vm = netris_vm_network["vm_a1"]
+        management_ip = os.environ.get("OSAC_MGMT_CLUSTER_IP", "192.168.40.2")
+
+        assert not guest_ssh.ping(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"], management_ip), (
+            f"ICMP from tenant VM {vm['ip']} to management endpoint {management_ip} succeeded unexpectedly"
+        )
+
+    def test_05_nat_gateway_egress(self, netris_vm_network: dict[str, Any], netris_nat_gateway: None) -> None:
+        vm = netris_vm_network["vm_a1"]
+        assert (
+            poll_until(
+                fn=lambda: guest_ssh.curl_status(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"]),
+                until=lambda status: status == 200,
+                retries=5,
+                delay=15,
+                description=f"NAT egress from VM {vm['ip']} to quay.io",
+            )
+            == 200
+        )
+
+    def test_06_manual_external_ip_ingress_and_deletion(
+        self,
+        netris_vm_network: dict[str, Any],
+        netris_external_ip_pool: dict[str, str],
+        grpc: GRPCClient,
+        k8s_hub_client: K8sClient,
+        test_run_id: str,
+    ) -> None:
+        vm = netris_vm_network["vm_a1"]
+        eip_id: str | None = None
+        eip_cr: str | None = None
+        attachment_id: str | None = None
+        attachment_cr: str | None = None
+
+        try:
+            eip_id = grpc.create_external_ip(
+                name=f"netris-vm-manual-eip-{test_run_id}", pool=netris_external_ip_pool["id"]
+            )
+            eip_cr = wait_for_external_ip_cr(k8s=k8s_hub_client, uuid=eip_id)
+            wait_for_external_ip_allocated(k8s=k8s_hub_client, name=eip_cr)
+            attachment_id = grpc.create_external_ip_attachment(
+                name=f"netris-vm-manual-attachment-{test_run_id}", external_ip=eip_id, compute_instance=vm["id"]
+            )
+            attachment_cr = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=attachment_id)
+            wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=attachment_cr)
+            address = poll_until(
+                fn=lambda: (
+                    grpc.get_external_ip(external_ip_id=eip_id).get("object", {}).get("status", {}).get("address", "")
+                ),
+                until=bool,
+                retries=30,
+                delay=5,
+                description="manually attached ComputeInstance ExternalIP address",
+            )
+            _assert_external_ip_ssh(
+                vm=vm,
+                identity_file=netris_vm_network["identity_file"],
+                external_ip=address,
+                description=f"SSH ingress through manually attached VM ExternalIP {address}",
+            )
+
+            grpc.delete_external_ip_attachment(attachment_id=attachment_id)
+            wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr)
+            poll_until(
+                fn=lambda: attachment_id not in grpc.list_external_ip_attachment_ids(),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"manual ExternalIPAttachment {attachment_id} API deletion",
+            )
+            attachment_id = None
+
+            grpc.delete_external_ip(external_ip_id=eip_id)
+            wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
+            poll_until(
+                fn=lambda: eip_id not in grpc.list_external_ip_ids(),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"manual ExternalIP {eip_id} API deletion",
+            )
+            eip_id = None
+        finally:
+            cleanup_errors: list[str] = []
+            if attachment_id:
+
+                def delete_attachment() -> None:
+                    grpc.delete_external_ip_attachment(attachment_id=attachment_id)
+                    if attachment_cr:
+                        wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr)
+
+                _run_cleanup(cleanup_errors, f"ExternalIPAttachment {attachment_id}", delete_attachment)
+            if eip_id:
+
+                def delete_external_ip() -> None:
+                    grpc.delete_external_ip(external_ip_id=eip_id)
+                    if eip_cr:
+                        wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
+
+                _run_cleanup(cleanup_errors, f"ExternalIP {eip_id}", delete_external_ip)
+            if cleanup_errors:
+                raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
+
+    def test_07_automatic_external_ip_ingress_and_compute_instance_deletion(
+        self,
+        cli: OsacCLI,
+        grpc: GRPCClient,
+        k8s_hub_client: K8sClient,
+        k8s_virt_client: K8sClient,
+        vm_template: str,
+        test_run_id: str,
+        netris_vm_network: dict[str, Any],
+        netris_external_ip_pool: dict[str, str],
+    ) -> None:
+        network = netris_vm_network["network_a"]
+        vm_name = f"netris-vm-auto-eip-{test_run_id}"
+        ci_id: str | None = None
+        ci_cr: str | None = None
+        delete_issued = False
+        deletion_verified = False
+        attachment_id: str | None = None
+        attachment_cr: str | None = None
+        eip_id: str | None = None
+        eip_cr: str | None = None
+
+        try:
+            ci_id = cli.create_compute_instance(
+                template=vm_template,
+                name=vm_name,
+                network_attachments=[{"subnet": network["subnet_id"], "security_groups": [network["sg_id"]]}],
+                ssh_key=netris_vm_network["key_secret"],
+                external_ip_attachment=True,
+            )
+            ci_cr = wait_for_cr(k8s=k8s_hub_client, uuid=ci_id)
+            wait_for_provision(k8s=k8s_hub_client, name=ci_cr)
+            wait_for_running(k8s=k8s_hub_client, name=ci_cr)
+            vm_namespace = poll_until(
+                fn=lambda: k8s_hub_client.get_compute_instance_vm_namespace(name=ci_cr),
+                until=bool,
+                retries=60,
+                delay=5,
+                description=f"VMI namespace for auto-ExternalIP ComputeInstance {vm_name}",
+            )
+            vm_ip = wait_for_vmi_ip(k8s=k8s_virt_client, vmi_namespace=vm_namespace, compute_instance_name=ci_cr)
+
+            def find_auto_attachment() -> dict[str, Any] | None:
+                response = grpc.call(service="osac.public.v1.ExternalIPAttachments/List")
+                return next(
+                    (
+                        item
+                        for item in response.get("items", [])
+                        if item.get("spec", {}).get("computeInstance", {}).get("id") == ci_id
+                    ),
+                    None,
+                )
+
+            attachment = poll_until(
+                fn=find_auto_attachment,
+                until=lambda value: value is not None,
+                retries=60,
+                delay=5,
+                description=f"auto-created ExternalIPAttachment for ComputeInstance {vm_name}",
+            )
+            attachment_id = attachment["id"]
+            attachment_cr = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=attachment_id)
+            wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=attachment_cr)
+            eip_id = attachment.get("spec", {}).get("externalIp", {}).get("id", "")
+            assert eip_id, "Auto-created ExternalIPAttachment has no ExternalIP reference"
+            eip_cr = wait_for_external_ip_cr(k8s=k8s_hub_client, uuid=eip_id)
+            wait_for_external_ip_allocated(k8s=k8s_hub_client, name=eip_cr)
+            address = poll_until(
+                fn=lambda: (
+                    grpc.get_external_ip(external_ip_id=eip_id).get("object", {}).get("status", {}).get("address", "")
+                ),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"auto-created ExternalIP address for ComputeInstance {vm_name}",
+            )
+            vm = {"name": vm_name, "cr": ci_cr, "vm_namespace": vm_namespace, "ip": vm_ip}
+            _assert_external_ip_ssh(
+                vm=vm,
+                identity_file=netris_vm_network["identity_file"],
+                external_ip=address,
+                description=f"SSH ingress through automatically attached VM ExternalIP {address}",
+            )
+
+            cli.delete_compute_instance(uuid=ci_id)
+            delete_issued = True
+            wait_for_deletion(k8s=k8s_hub_client, name=ci_cr)
+            poll_until(
+                fn=lambda: ci_id not in grpc.list_compute_instance_ids(),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"auto-ExternalIP ComputeInstance {ci_id} API deletion",
+            )
+            wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr)
+            poll_until(
+                fn=lambda: attachment_id not in grpc.list_external_ip_attachment_ids(),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"auto-created ExternalIPAttachment {attachment_id} garbage collection",
+            )
+            wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr)
+            poll_until(
+                fn=lambda: eip_id not in grpc.list_external_ip_ids(),
+                until=bool,
+                retries=30,
+                delay=5,
+                description=f"auto-created ExternalIP {eip_id} garbage collection",
+            )
+            deletion_verified = True
+        finally:
+            if ci_id and not deletion_verified:
+                cleanup_errors: list[str] = []
+
+                def delete_compute_instance() -> None:
+                    if not delete_issued:
+                        cli.delete_compute_instance(uuid=ci_id)
+                    if ci_cr:
+                        wait_for_deletion(k8s=k8s_hub_client, name=ci_cr)
+                    poll_until(
+                        fn=lambda: ci_id not in grpc.list_compute_instance_ids(),
+                        until=bool,
+                        retries=30,
+                        delay=5,
+                        description=f"auto-ExternalIP ComputeInstance {ci_id} cleanup",
+                    )
+
+                _run_cleanup(cleanup_errors, f"ComputeInstance {ci_id}", delete_compute_instance)
+                if attachment_id and attachment_cr:
+                    _run_cleanup(
+                        cleanup_errors,
+                        f"ExternalIPAttachment {attachment_id}",
+                        lambda: wait_for_external_ip_attachment_deletion(k8s=k8s_hub_client, name=attachment_cr),
+                    )
+                if eip_id and eip_cr:
+                    _run_cleanup(
+                        cleanup_errors,
+                        f"ExternalIP {eip_id}",
+                        lambda: wait_for_external_ip_deletion(k8s=k8s_hub_client, name=eip_cr),
+                    )
+                if cleanup_errors:
+                    raise RuntimeError("E2E resource cleanup failed: " + "; ".join(cleanup_errors))
