@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -123,3 +124,17 @@ def test_stretched_netris_calls_its_runner_with_full_profile() -> None:
     assert job["with"]["osac-profile"] == "full-ci"
     assert job["uses"].endswith(f"@{job['with']['test-infra-sha']}")
     assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
+
+
+def test_netris_callers_use_a_supported_service_image_key() -> None:
+    for filename, job_name in (
+        ("e2e-bmaas-netris-full-install.yml", "e2e-bmaas-netris"),
+        ("e2e-vmaas-netris-full-install.yml", "e2e-vmaas-netris"),
+        ("e2e-stretched-netris-full-install.yml", "e2e-stretched-netris"),
+    ):
+        workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+        components = json.loads(workflow["jobs"][job_name]["with"]["components"])
+        service_component = next(
+            component for component in components if component["containerfile"] == "fulfillment-service/Containerfile"
+        )
+        assert service_component["imageKey"] == "service.images.service"

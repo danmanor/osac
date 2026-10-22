@@ -47,7 +47,7 @@ jobs:
       osac-branch: ${{ inputs.sha }}
       components: >-
         [
-        { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "fulfillment-service/Containerfile", "context": ".", "imageKey": "service.images.service.repository" },
+        { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "fulfillment-service/Containerfile", "context": ".", "imageKey": "service.images.service" },
         { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "osac-operator/Containerfile", "context": ".", "imageKey": "operator.image.repository" },
         { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "osac-aap/execution-environment/execution-environment.yaml", "context": ".", "imageKey": "aap.bootstrap.image", "buildType": "ansible-builder" },
         { "repo": "${{ inputs.repo }}", "ref": "${{ inputs.sha }}", "containerfile": "osac-aap/execution-environment/execution-environment.yaml", "context": ".", "imageKey": "aap.configAsCode.eeImage", "buildType": "ansible-builder" }
