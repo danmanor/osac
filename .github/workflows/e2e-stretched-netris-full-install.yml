@@ -39,7 +39,7 @@ jobs:
       id-token: write
       checks: write
       pull-requests: read
-    uses: osac-project/osac-test-infra/.github/workflows/e2e-stretched-netris-full-install.yml@f595b591e882d6422c8ec759e1316f0341e9aeb6
+    uses: osac-project/osac-test-infra/.github/workflows/e2e-stretched-netris-full-install.yml@3c0a5ae3b144c7b09605aa6e9fc5c903cf06c3dd
     with:
       suite: stretched_networking
       osac-profile: full-ci
@@ -54,7 +54,7 @@ jobs:
         ]
       test-infra-repository: osac-project/osac-test-infra
       test-infra-ref: codex/netris-vmaas-cudn-evpn
-      test-infra-sha: f595b591e882d6422c8ec759e1316f0341e9aeb6
+      test-infra-sha: 3c0a5ae3b144c7b09605aa6e9fc5c903cf06c3dd
       pr-repository: ${{ inputs.pr-number != '' && inputs.repo || '' }}
       pr-sha: ${{ inputs.pr-number != '' && inputs.sha || '' }}
       pr-number: ${{ inputs.pr-number }}
