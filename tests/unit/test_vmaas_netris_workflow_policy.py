@@ -52,30 +52,36 @@ def test_generic_vmaas_path_filter_skips_netris_only_tests() -> None:
     assert f"!{NETWORKING_TESTS}" in filters["vmaas-outside-known-safe"]
 
 
-def test_bmaas_and_vmaas_netris_are_separate_manual_suites() -> None:
+def test_netris_suites_are_separate_manual_suites() -> None:
     policy = yaml.safe_load((ROOT / ".github/e2e-policy.yml").read_text())
     jobs = policy["jobs"]
     assert jobs["e2e-bmaas-netris"]["manual_only"] is True
     assert jobs["e2e-bmaas-netris"]["suite"] == "bmaas-netris"
-    assert {name for name in jobs if "netris" in name} == {"e2e-bmaas-netris", "e2e-vmaas-netris"}
+    assert {name for name in jobs if "netris" in name} == {
+        "e2e-bmaas-netris",
+        "e2e-vmaas-netris",
+        "e2e-stretched-netris",
+    }
     assert jobs["e2e-vmaas-netris"]["manual_only"] is True
     assert jobs["e2e-vmaas-netris"]["suite"] == "vmaas-netris"
+    assert jobs["e2e-stretched-netris"]["manual_only"] is True
+    assert jobs["e2e-stretched-netris"]["suite"] == "stretched-netris"
     pr_workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-pr.yml").read_text())
     pr_jobs = pr_workflow["jobs"]
-    assert {"bmaas-netris", "vmaas-netris"} <= pr_jobs.keys()
+    assert {"bmaas-netris", "vmaas-netris", "stretched-netris"} <= pr_jobs.keys()
     assert "netris" not in pr_jobs
     assert '"bmaas-netris"' in pr_jobs["bmaas-netris"]["if"]
     assert '"vmaas-netris"' in pr_jobs["vmaas-netris"]["if"]
+    assert '"stretched-netris"' in pr_jobs["stretched-netris"]["if"]
     assert "bmaas-netris" in pr_jobs["finish"]["needs"]
+    assert "vmaas-netris" in pr_jobs["finish"]["needs"]
+    assert "stretched-netris" in pr_jobs["finish"]["needs"]
 
 
-def test_netris_networking_areas_have_distinct_markers() -> None:
-    expected = {
-        "tests/e2e/networking/bmaas/test_bmaas_networking.py": "requires_netris_bmaas",
-        "tests/e2e/networking/stretched/test_shared_subnet_bmi_compute_instance.py": "requires_netris_stretched",
-    }
-    for relative_path, marker in expected.items():
-        assert {"requires_netris", marker} <= _pytest_markers(ROOT / relative_path)
+def test_stretched_networking_test_uses_a_backend_agnostic_marker() -> None:
+    markers = _pytest_markers(ROOT / "tests/e2e/networking/stretched/test_shared_subnet_bmi_compute_instance.py")
+    assert {"regression", "requires_stretched_networking"} <= markers
+    assert not any(marker.startswith("requires_netris") for marker in markers)
 
 
 def test_vmaas_netris_calls_networking_runner_with_vmaas_profile() -> None:
@@ -98,10 +104,22 @@ def test_bmaas_netris_calls_networking_runner_with_bmaas_profile() -> None:
     assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
 
 
-def test_bmaas_and_vmaas_netris_share_the_test_infra_revision() -> None:
+def test_netris_workflows_share_the_test_infra_revision() -> None:
     bmaas = yaml.safe_load((ROOT / ".github/workflows/e2e-bmaas-netris-full-install.yml").read_text())
     vmaas = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-netris-full-install.yml").read_text())
+    stretched = yaml.safe_load((ROOT / ".github/workflows/e2e-stretched-netris-full-install.yml").read_text())
     assert (
         bmaas["jobs"]["e2e-bmaas-netris"]["with"]["test-infra-sha"]
         == vmaas["jobs"]["e2e-vmaas-netris"]["with"]["test-infra-sha"]
+        == stretched["jobs"]["e2e-stretched-netris"]["with"]["test-infra-sha"]
     )
+
+
+def test_stretched_netris_calls_its_runner_with_full_profile() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-stretched-netris-full-install.yml").read_text())
+    job = workflow["jobs"]["e2e-stretched-netris"]
+    assert "/e2e-stretched-netris-full-install.yml@" in job["uses"]
+    assert job["with"]["suite"] == "stretched_networking"
+    assert job["with"]["osac-profile"] == "full-ci"
+    assert job["uses"].endswith(f"@{job['with']['test-infra-sha']}")
+    assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])

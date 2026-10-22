@@ -36,11 +36,11 @@ from tests.e2e.core.runner import env, poll_until
 from tests.e2e.networking.bmaas import bmi_ssh
 from tests.e2e.networking.vmaas import guest_ssh
 
-pytestmark = [pytest.mark.regression, pytest.mark.requires_netris, pytest.mark.requires_netris_stretched]
+pytestmark = [pytest.mark.regression, pytest.mark.requires_stretched_networking]
 
 
 @pytest.fixture(scope="module")
-def netris_full_vm_template() -> str:
+def full_vm_template() -> str:
     return env("OSAC_VM_TEMPLATE", "ocp-virt-vm")
 
 
@@ -49,7 +49,7 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
     grpc: GRPCClient,
     k8s_hub_client: K8sClient,
     namespace: str,
-    netris_full_vm_template: str,
+    full_vm_template: str,
     catalog_item_name: str,
     bmi_instance_type: str,
     bmi_disk_image: str,
@@ -62,14 +62,14 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
     k8s_virt_client = K8sClient(namespace=namespace, kubeconfig=vm_kubeconfig)
     suffix = net_test_run_id
     octet = 160 + int(suffix[:2], 16) % 60
-    virtual_network_name = f"netris-shared-vn-{suffix}"
+    virtual_network_name = f"stretched-shared-vn-{suffix}"
     virtual_network_cidr = f"10.{octet}.0.0/16"
-    subnet_name = f"netris-shared-subnet-{suffix}"
+    subnet_name = f"stretched-shared-subnet-{suffix}"
     subnet_cidr = f"10.{octet}.1.0/24"
-    security_group_name = f"netris-shared-sg-{suffix}"
-    bmi_name = f"netris-shared-bmi-{suffix}"
-    compute_instance_name = f"netris-shared-vm-{suffix}"
-    ssh_secret_name = f"netris-shared-vm-key-{suffix}"
+    security_group_name = f"stretched-shared-sg-{suffix}"
+    bmi_name = f"stretched-shared-bmi-{suffix}"
+    compute_instance_name = f"stretched-shared-vm-{suffix}"
+    ssh_secret_name = f"stretched-shared-vm-key-{suffix}"
 
     virtual_network_id: str | None = None
     virtual_network_cr: str | None = None
@@ -108,7 +108,7 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
         wait_for_security_group_ready(k8s=k8s_hub_client, name=security_group_cr)
 
         subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-f", str(private_key), "-N", "", "-C", "osac-netris-full-e2e"],
+            ["ssh-keygen", "-t", "ed25519", "-f", str(private_key), "-N", "", "-C", "osac-stretched-networking-e2e"],
             check=True,
             capture_output=True,
             text=True,
@@ -140,7 +140,7 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
         bmi_ssh_host = bmi_ssh.get_ssh_host(bmh_name, bmh_ssh_hosts)
 
         compute_instance_id = cli.create_compute_instance(
-            template=netris_full_vm_template,
+            template=full_vm_template,
             name=compute_instance_name,
             network_attachments=[{"subnet": subnet_id, "security_groups": [security_group_id]}],
             ssh_key=ssh_secret_name,

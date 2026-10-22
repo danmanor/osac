@@ -97,7 +97,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "requires_netris_vmaas: test requires Netris VMaaS networking")
     config.addinivalue_line("markers", "requires_netris_bmaas: test requires Netris BMaaS networking")
     config.addinivalue_line(
-        "markers", "requires_netris_stretched: test requires Netris BMI/VM shared-subnet networking"
+        "markers", "requires_stretched_networking: test requires BM and VM connectivity on a shared subnet"
     )
     config.addinivalue_line("markers", "reference_common: reference test shared by all service profiles")
     config.addinivalue_line("markers", "reference_networking: shared networking reference test")

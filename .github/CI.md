@@ -36,6 +36,16 @@ Install”. Its ExternalIP ingress and NAT egress cases skip until the lab's
 Netris route and return policy is configured and
 `OSAC_NETRIS_VM_EXTERNAL_PATH_ENABLED=true` is set.
 
+## Optional: Stretched VMaaS/BMaaS Netris
+
+The stretched networking suite checks shared-subnet connectivity between a
+ComputeInstance and a BareMetalInstance. Start it with `/test stretched-netris`
+or its checkbox in the pull request's E2E comment. It has a separate
+`E2E / Stretched Networking Netris Full Install` line and uses the `full-ci`
+profile. The workflow provisions the Netris/EVPN infrastructure; the test
+itself checks OSAC networking behavior and is not backend-specific. The broad
+Netris `full` suite also includes this test.
+
 ## Approvals after a rebase, and pull requests from forks
 
 - A clean rebase, or "Update branch", keeps the approval and moves it to the new head. A rebase that needs conflict
@@ -112,7 +122,8 @@ comes within about a quarter of an hour). Anything else gets a person.
   `/test vmaas caas` (those suites), or from the comment the decision keeps on a pull request written by a member
   (a checkbox per suite; any approval state, a draft and a fork of a member included; a pull
   request by someone outside the organization gets no comment). `/test bmaas-netris` starts the BMaaS Netris suite;
-  `/test vmaas-netris` starts the separate VMaaS Netris suite. Both require a dedicated Netris lab. The rules they apply
+  `/test vmaas-netris` starts the separate VMaaS Netris suite; `/test stretched-netris` starts the shared-subnet
+  connectivity test. Each requires a dedicated Netris lab. The rules they apply
   are one page:
   osac-ci `docs/RULES.md`. The callers pin a full commit of an osac-ci release (the tag in a comment); the Dependabot group
   `osac-ci` opens one pull request per release, reviewed by wg-infra.

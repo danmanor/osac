@@ -44,3 +44,8 @@ jobs:
     check: "E2E / VMaaS Netris Full Install"
     suite: vmaas-netris
     manual_only: true
+  e2e-stretched-netris:
+    kind: e2e
+    check: "E2E / Stretched Networking Netris Full Install"
+    suite: stretched-netris
+    manual_only: true
