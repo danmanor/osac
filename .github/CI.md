@@ -20,7 +20,7 @@ convert it to a draft. The queue runs `CI` and
 
 The BMaaS Netris end-to-end test (a real Netris lab on an AWS box) is not part of `E2E` and is not
 required: the policy marks it `manual_only`, so the decision never chooses it and the `E2E` check does not wait for it.
-Start it on a pull request with the comment `/test netris` (any member of the organization, any approval state), or by
+Start it on a pull request with the comment `/test bmaas-netris` (any member of the organization, any approval state), or by
 checking its box in the E2E comment of the pull request; the suite has its own line, `E2E / BMaaS Netris Full Install`, and
 `e2e-pr.yml` runs it through `workflows/e2e-bmaas-netris-full-install.yml`. It can also be started from the Actions page
 ("E2E BMaaS Netris Full Install", Run workflow, with the pull request's number, repository, branch and commit). A label no longer
@@ -111,7 +111,7 @@ comes within about a quarter of an hour). Anything else gets a person.
   `bot-approve.yml` here are thin callers that keep the triggers and the suite jobs. A member of the organization can start suites by hand with the comment `/test` (the suites the change needs) or
   `/test vmaas caas` (those suites), or from the comment the decision keeps on a pull request written by a member
   (a checkbox per suite; any approval state, a draft and a fork of a member included; a pull
-  request by someone outside the organization gets no comment). `/test netris` starts the BMaaS Netris suite;
+  request by someone outside the organization gets no comment). `/test bmaas-netris` starts the BMaaS Netris suite;
   `/test vmaas-netris` starts the separate VMaaS Netris suite. Both require a dedicated Netris lab. The rules they apply
   are one page:
   osac-ci `docs/RULES.md`. The callers pin a full commit of an osac-ci release (the tag in a comment); the Dependabot group

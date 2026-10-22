@@ -39,7 +39,7 @@ jobs:
       id-token: write
       checks: write
       pull-requests: read
-    uses: osac-project/osac-test-infra/.github/workflows/e2e-vmaas-netris-full-install.yml@011e28a3a996605aae26eed1d9e2a3f855a33189
+    uses: osac-project/osac-test-infra/.github/workflows/e2e-vmaas-netris-full-install.yml@2b051ff4d4f5f678abc0f41dd80fccf515f22a94
     with:
       suite: vmaas_networking
       osac-profile: cudn-evpn-netris-test
@@ -54,7 +54,7 @@ jobs:
         ]
       test-infra-repository: osac-project/osac-test-infra
       test-infra-ref: codex/netris-vmaas-cudn-evpn
-      test-infra-sha: 011e28a3a996605aae26eed1d9e2a3f855a33189
+      test-infra-sha: 2b051ff4d4f5f678abc0f41dd80fccf515f22a94
       pr-repository: ${{ inputs.pr-number != '' && inputs.repo || '' }}
       pr-sha: ${{ inputs.pr-number != '' && inputs.sha || '' }}
       pr-number: ${{ inputs.pr-number }}

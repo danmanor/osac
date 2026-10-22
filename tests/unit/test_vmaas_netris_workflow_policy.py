@@ -7,7 +7,8 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-NETWORKING_TESTS = "tests/e2e/vmaas/regression/networking/**"
+NETWORKING_TESTS = "tests/e2e/networking/**"
+VMAAS_TEST_FILE = "tests/e2e/networking/vmaas/test_vmaas_networking.py"
 NETRIS_MARKER = "requires_netris_vmaas"
 
 
@@ -30,14 +31,20 @@ def _pytest_markers(path: Path) -> set[str]:
 
 
 def test_netris_vmaas_tests_have_a_dedicated_marker() -> None:
-    test_file = ROOT / NETWORKING_TESTS.removesuffix("/**") / "test_vmaas_networking.py"
-    assert NETRIS_MARKER in _pytest_markers(test_file)
+    test_file = ROOT / VMAAS_TEST_FILE
+    assert {"requires_netris", NETRIS_MARKER} <= _pytest_markers(test_file)
 
 
 def test_generic_vmaas_workflow_excludes_netris_tests() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-full-install.yml").read_text())
     test_marker = workflow["jobs"]["e2e-vmaas-full-install"]["with"]["test-marker"]
-    assert "and not requires_netris_vmaas" in test_marker
+    assert "and not requires_netris" in test_marker
+
+
+def test_generic_bmaas_workflow_excludes_netris_tests() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-bmaas-full-install.yml").read_text())
+    test_marker = workflow["jobs"]["e2e-bmaas-full-install"]["with"]["test-marker"]
+    assert "and not requires_netris" in test_marker
 
 
 def test_generic_vmaas_path_filter_skips_netris_only_tests() -> None:
@@ -48,10 +55,27 @@ def test_generic_vmaas_path_filter_skips_netris_only_tests() -> None:
 def test_bmaas_and_vmaas_netris_are_separate_manual_suites() -> None:
     policy = yaml.safe_load((ROOT / ".github/e2e-policy.yml").read_text())
     jobs = policy["jobs"]
-    assert jobs["e2e-netris"]["manual_only"] is True
-    assert jobs["e2e-netris"]["suite"] == "netris"
+    assert jobs["e2e-bmaas-netris"]["manual_only"] is True
+    assert jobs["e2e-bmaas-netris"]["suite"] == "bmaas-netris"
+    assert {name for name in jobs if "netris" in name} == {"e2e-bmaas-netris", "e2e-vmaas-netris"}
     assert jobs["e2e-vmaas-netris"]["manual_only"] is True
     assert jobs["e2e-vmaas-netris"]["suite"] == "vmaas-netris"
+    pr_workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-pr.yml").read_text())
+    pr_jobs = pr_workflow["jobs"]
+    assert {"bmaas-netris", "vmaas-netris"} <= pr_jobs.keys()
+    assert "netris" not in pr_jobs
+    assert '"bmaas-netris"' in pr_jobs["bmaas-netris"]["if"]
+    assert '"vmaas-netris"' in pr_jobs["vmaas-netris"]["if"]
+    assert "bmaas-netris" in pr_jobs["finish"]["needs"]
+
+
+def test_netris_networking_areas_have_distinct_markers() -> None:
+    expected = {
+        "tests/e2e/networking/bmaas/test_bmaas_networking.py": "requires_netris_bmaas",
+        "tests/e2e/networking/stretched/test_shared_subnet_bmi_compute_instance.py": "requires_netris_stretched",
+    }
+    for relative_path, marker in expected.items():
+        assert {"requires_netris", marker} <= _pytest_markers(ROOT / relative_path)
 
 
 def test_vmaas_netris_calls_networking_runner_with_vmaas_profile() -> None:
@@ -60,4 +84,24 @@ def test_vmaas_netris_calls_networking_runner_with_vmaas_profile() -> None:
     assert "/e2e-vmaas-netris-full-install.yml@" in job["uses"]
     assert job["with"]["suite"] == "vmaas_networking"
     assert job["with"]["osac-profile"] == "cudn-evpn-netris-test"
+    assert job["uses"].endswith(f"@{job['with']['test-infra-sha']}")
     assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
+
+
+def test_bmaas_netris_calls_networking_runner_with_bmaas_profile() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-bmaas-netris-full-install.yml").read_text())
+    job = workflow["jobs"]["e2e-bmaas-netris"]
+    assert "/e2e-bmaas-netris-full-install.yml@" in job["uses"]
+    assert job["with"]["suite"] == "bmaas_networking"
+    assert job["with"]["osac-profile"] == "bmaas-ci"
+    assert job["uses"].endswith(f"@{job['with']['test-infra-sha']}")
+    assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
+
+
+def test_bmaas_and_vmaas_netris_share_the_test_infra_revision() -> None:
+    bmaas = yaml.safe_load((ROOT / ".github/workflows/e2e-bmaas-netris-full-install.yml").read_text())
+    vmaas = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-netris-full-install.yml").read_text())
+    assert (
+        bmaas["jobs"]["e2e-bmaas-netris"]["with"]["test-infra-sha"]
+        == vmaas["jobs"]["e2e-vmaas-netris"]["with"]["test-infra-sha"]
+    )

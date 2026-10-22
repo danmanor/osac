@@ -40,15 +40,15 @@ from tests.e2e.core.helpers import (
 from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.osac_cli import OsacCLI
 from tests.e2e.core.runner import poll_until
+from tests.e2e.networking.vmaas import guest_ssh
+from tests.e2e.networking.vmaas.cleanup import _run_cleanup
 from tests.e2e.vmaas.networking_lifecycle_helpers import (
     delete_and_wait_for_security_group,
     delete_and_wait_for_subnet,
     delete_and_wait_for_virtual_network,
 )
-from tests.e2e.vmaas.regression.networking import guest_ssh
-from tests.e2e.vmaas.regression.networking.cleanup import _run_cleanup
 
-pytestmark = [pytest.mark.regression, pytest.mark.requires_netris_vmaas]
+pytestmark = [pytest.mark.regression, pytest.mark.requires_netris, pytest.mark.requires_netris_vmaas]
 
 _EXTERNAL_PATH_FLAG = "OSAC_NETRIS_VM_EXTERNAL_PATH_ENABLED"
 _NETWORKING_SUITE_PREREQUISITE = (

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 
-from tests.e2e.bmaas.regression.networking import bmi_ssh
-from tests.e2e.core.grpc_client import GRPCClient
+from tests.e2e.core.grpc_client import PRIVATE_API, GRPCClient
 from tests.e2e.core.runner import env
+from tests.e2e.networking.bmaas import bmi_ssh
 
 
 @pytest.fixture(scope="session")
@@ -34,6 +35,22 @@ def mgmt_cluster_ip() -> str:
 @pytest.fixture(scope="session")
 def net_test_run_id() -> str:
     return uuid.uuid4().hex[:8]
+
+
+@pytest.fixture(scope="session")
+def bmi_disk_image(private_grpc: GRPCClient, net_test_run_id: str) -> Generator[str, None, None]:
+    """Create the temporary BMaaS disk image shared by Netris connectivity tests."""
+    disk_image_name = f"e2e-netris-bmi-di-{net_test_run_id}"
+    disk_image_id = private_grpc.create_disk_image(
+        name=disk_image_name, source_ref="oci://quay.io/osac-project/fedora-cloud-bmi:44", api=PRIVATE_API
+    )
+
+    yield disk_image_name
+
+    try:
+        private_grpc.delete_disk_image(disk_image_id=disk_image_id, api=PRIVATE_API)
+    except Exception as exc:
+        print(f"WARNING: Failed to delete DiskImage {disk_image_id}: {exc}")
 
 
 @pytest.fixture(scope="session")
