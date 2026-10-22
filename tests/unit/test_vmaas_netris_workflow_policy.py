@@ -54,10 +54,10 @@ def test_bmaas_and_vmaas_netris_are_separate_manual_suites() -> None:
     assert jobs["e2e-vmaas-netris"]["suite"] == "vmaas-netris"
 
 
-def test_vmaas_netris_calls_the_netris_runner_with_vmaas_profile() -> None:
+def test_vmaas_netris_calls_networking_runner_with_vmaas_profile() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-netris-full-install.yml").read_text())
     job = workflow["jobs"]["e2e-vmaas-netris"]
-    assert "/e2e-bmaas-netris-full-install.yml@" in job["uses"]
-    assert job["with"]["suite"] == "vmaas"
+    assert "/e2e-vmaas-netris-full-install.yml@" in job["uses"]
+    assert job["with"]["suite"] == "vmaas_networking"
     assert job["with"]["osac-profile"] == "cudn-evpn-netris-test"
     assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
