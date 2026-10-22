@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.core.grpc_client import PRIVATE_API, GRPCClient
+from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.runner import env
 from tests.e2e.networking.bmaas import bmi_ssh
 
@@ -35,6 +36,27 @@ def mgmt_cluster_ip() -> str:
 @pytest.fixture(scope="session")
 def net_test_run_id() -> str:
     return uuid.uuid4().hex[:8]
+
+
+@pytest.fixture(scope="session")
+def bmi_network_interface() -> str:
+    """Configured guest-visible interface name for BareMetalInstance networking."""
+    return env("OSAC_BMI_NETWORK_INTERFACE")
+
+
+@pytest.fixture(scope="session")
+def k8s_virt_client(namespace: str) -> K8sClient:
+    """Kubernetes client for VMIs in the workload cluster used by networking E2Es."""
+    vm_kubeconfig = os.environ.get("OSAC_VM_KUBECONFIG", "").strip()
+    if not vm_kubeconfig:
+        raise RuntimeError("OSAC_VM_KUBECONFIG must identify the VM cluster kubeconfig")
+    return K8sClient(namespace=namespace, kubeconfig=vm_kubeconfig)
+
+
+@pytest.fixture(scope="session")
+def vm_template() -> str:
+    """ComputeInstance template for VMaaS networking E2Es."""
+    return env("OSAC_VM_TEMPLATE", "ocp-virt-vm")
 
 
 @pytest.fixture(scope="session")
@@ -79,9 +101,7 @@ def bmi_instance_type(private_grpc: GRPCClient) -> str:
 
     Labs often export OSAC_BMI_INSTANCE_TYPE=default even when no types are cataloged.
     """
-    requested = (
-        os.environ.get("OSAC_BMI_INSTANCE_TYPE", "").strip() or os.environ.get("OSAC_BM_HOST_TYPE", "").strip()
-    )
+    requested = os.environ.get("OSAC_BMI_INSTANCE_TYPE", "").strip() or os.environ.get("OSAC_BM_HOST_TYPE", "").strip()
     if not requested:
         return ""
     items = private_grpc.call(service="osac.private.v1.BareMetalInstanceTypes/List").get("items") or []

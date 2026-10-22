@@ -74,7 +74,7 @@ def netris_vm_network(
     k8s_hub_client: K8sClient,
     k8s_virt_client: K8sClient,
     vm_template: str,
-    test_run_id: str,
+    net_test_run_id: str,
     namespace: str,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[dict[str, Any]]:
@@ -82,7 +82,7 @@ def netris_vm_network(
     worker_octets = _network_octets()
     vn_cidrs = [f"10.{octet}.0.0/16" for octet in worker_octets]
     subnet_cidrs = [f"10.{octet}.1.0/24" for octet in worker_octets]
-    temp_dir = tmp_path_factory.mktemp(f"vmaas-netris-{test_run_id}")
+    temp_dir = tmp_path_factory.mktemp(f"vmaas-netris-{net_test_run_id}")
     private_key = temp_dir / "id_ed25519"
     public_key_file = private_key.with_suffix(".pub")
     subprocess.run(
@@ -92,7 +92,7 @@ def netris_vm_network(
         text=True,
     )
 
-    secret_name = f"netris-vm-key-{test_run_id}"
+    secret_name = f"netris-vm-key-{net_test_run_id}"
     secret_created = False
     networks: list[dict[str, str]] = []
     instances: list[dict[str, str]] = []
@@ -105,7 +105,7 @@ def netris_vm_network(
         secret_created = True
 
         for index, (vn_cidr, subnet_cidr) in enumerate(zip(vn_cidrs, subnet_cidrs, strict=True), start=1):
-            vn_name = f"netris-vn-{index}-{test_run_id}"
+            vn_name = f"netris-vn-{index}-{net_test_run_id}"
             vn_id = grpc.create_virtual_network(name=vn_name, ipv4_cidr=vn_cidr)
             network: dict[str, str] = {"vn_id": vn_id, "vn_name": vn_name, "vn_cidr": vn_cidr}
             networks.append(network)
@@ -113,7 +113,7 @@ def netris_vm_network(
             network["vn_cr"] = vn_cr
             wait_for_virtual_network_ready(k8s=k8s_hub_client, name=vn_cr)
 
-            subnet_name = f"netris-subnet-{index}-{test_run_id}"
+            subnet_name = f"netris-subnet-{index}-{net_test_run_id}"
             subnet_id = grpc.create_subnet(name=subnet_name, virtual_network=vn_id, ipv4_cidr=subnet_cidr)
             network.update(subnet_id=subnet_id, subnet_cidr=subnet_cidr)
             subnet_cr = wait_for_subnet_cr(k8s=k8s_hub_client, uuid=subnet_id)
@@ -122,7 +122,7 @@ def netris_vm_network(
             wait_for_grpc_subnet_ready(grpc=grpc, subnet_id=subnet_id)
 
             sg_id = grpc.create_security_group_with_rules(
-                name=f"netris-sg-{index}-{test_run_id}",
+                name=f"netris-sg-{index}-{net_test_run_id}",
                 virtual_network=vn_id,
                 ingress=[
                     {"protocol": "PROTOCOL_TCP", "port_from": 22, "port_to": 22, "ipv4_cidr": "0.0.0.0/0"},
@@ -136,9 +136,9 @@ def netris_vm_network(
             wait_for_security_group_ready(k8s=k8s_hub_client, name=sg_cr)
 
         for name, network in [
-            (f"netris-vm-a1-{test_run_id}", networks[0]),
-            (f"netris-vm-a2-{test_run_id}", networks[0]),
-            (f"netris-vm-b1-{test_run_id}", networks[1]),
+            (f"netris-vm-a1-{net_test_run_id}", networks[0]),
+            (f"netris-vm-a2-{net_test_run_id}", networks[0]),
+            (f"netris-vm-b1-{net_test_run_id}", networks[1]),
         ]:
             ci_id = cli.create_compute_instance(
                 template=vm_template,
@@ -239,9 +239,9 @@ def require_vm_external_path() -> None:
 
 @pytest.fixture
 def netris_external_ip_pool(
-    require_vm_external_path: None, private_grpc: GRPCClient, k8s_hub_client: K8sClient, test_run_id: str
+    require_vm_external_path: None, private_grpc: GRPCClient, k8s_hub_client: K8sClient, net_test_run_id: str
 ) -> Iterator[dict[str, str]]:
-    pool_name = f"netris-vm-pool-{test_run_id}"
+    pool_name = f"netris-vm-pool-{net_test_run_id}"
     pool_id = private_grpc.create_external_ip_pool(
         name=pool_name, cidrs=[str(allocate_worker_subnet())], implementation_strategy="netris"
     )
@@ -272,7 +272,7 @@ def netris_nat_gateway(
     netris_external_ip_pool: dict[str, str],
     grpc: GRPCClient,
     k8s_hub_client: K8sClient,
-    test_run_id: str,
+    net_test_run_id: str,
     netris_vm_network: dict[str, Any],
 ) -> Iterator[None]:
     network = netris_vm_network["network_a"]
@@ -281,12 +281,12 @@ def netris_nat_gateway(
     nat_id: str | None = None
     nat_cr: str | None = None
     try:
-        eip_name = f"netris-vm-nat-eip-{test_run_id}"
+        eip_name = f"netris-vm-nat-eip-{net_test_run_id}"
         eip_id = grpc.create_external_ip(name=eip_name, pool=netris_external_ip_pool["id"])
         eip_cr = wait_for_external_ip_cr(k8s=k8s_hub_client, uuid=eip_id)
         wait_for_external_ip_allocated(k8s=k8s_hub_client, name=eip_cr)
         nat_id = grpc.create_nat_gateway(
-            name=f"netris-vm-nat-{test_run_id}", virtual_network_name=network["vn_name"], external_ip_name=eip_name
+            name=f"netris-vm-nat-{net_test_run_id}", virtual_network_name=network["vn_name"], external_ip_name=eip_name
         )
         nat_cr = poll_until(
             fn=lambda: k8s_hub_client.get_nat_gateway_name(uuid=nat_id, checked=False),
@@ -327,7 +327,7 @@ def _assert_external_ip_ssh(*, vm: dict[str, str], identity_file: str, external_
             return guest_ssh.ssh_via_external_ip(
                 external_ip, identity_file, expected_host_key=expected_host_key, timeout=10
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return ""
 
     hostname = poll_until(fn=try_ssh, until=bool, retries=5, delay=15, description=description)
@@ -389,12 +389,25 @@ class TestVmaasNetworking:
                 f"ICMP from VM {source['ip']} to {target['ip']} in another VirtualNetwork succeeded unexpectedly"
             )
 
-    def test_04_management_endpoint_is_not_reachable(self, netris_vm_network: dict[str, Any]) -> None:
+    def test_04_management_endpoint_is_not_reachable(
+        self, netris_vm_network: dict[str, Any], mgmt_cluster_ip: str
+    ) -> None:
         vm = netris_vm_network["vm_a1"]
-        management_ip = os.environ.get("OSAC_MGMT_CLUSTER_IP", "192.168.40.2")
+        same_subnet_peer = netris_vm_network["vm_a2"]
+        identity_file = netris_vm_network["identity_file"]
 
-        assert not guest_ssh.ping(vm["vm_namespace"], vm["cr"], netris_vm_network["identity_file"], management_ip), (
-            f"ICMP from tenant VM {vm['ip']} to management endpoint {management_ip} succeeded unexpectedly"
+        assert poll_until(
+            fn=lambda: guest_ssh.ping(vm["vm_namespace"], vm["cr"], identity_file, same_subnet_peer["ip"]),
+            until=bool,
+            retries=5,
+            delay=10,
+            description=(
+                f"positive connectivity control from VM {vm['ip']} to same-Subnet peer {same_subnet_peer['ip']}"
+            ),
+        )
+
+        assert not guest_ssh.ping(vm["vm_namespace"], vm["cr"], identity_file, mgmt_cluster_ip), (
+            f"ICMP from tenant VM {vm['ip']} to management endpoint {mgmt_cluster_ip} succeeded unexpectedly"
         )
 
     def test_05_nat_gateway_egress(self, netris_vm_network: dict[str, Any], netris_nat_gateway: None) -> None:
@@ -416,7 +429,7 @@ class TestVmaasNetworking:
         netris_external_ip_pool: dict[str, str],
         grpc: GRPCClient,
         k8s_hub_client: K8sClient,
-        test_run_id: str,
+        net_test_run_id: str,
     ) -> None:
         vm = netris_vm_network["vm_a1"]
         eip_id: str | None = None
@@ -426,12 +439,12 @@ class TestVmaasNetworking:
 
         try:
             eip_id = grpc.create_external_ip(
-                name=f"netris-vm-manual-eip-{test_run_id}", pool=netris_external_ip_pool["id"]
+                name=f"netris-vm-manual-eip-{net_test_run_id}", pool=netris_external_ip_pool["id"]
             )
             eip_cr = wait_for_external_ip_cr(k8s=k8s_hub_client, uuid=eip_id)
             wait_for_external_ip_allocated(k8s=k8s_hub_client, name=eip_cr)
             attachment_id = grpc.create_external_ip_attachment(
-                name=f"netris-vm-manual-attachment-{test_run_id}", external_ip=eip_id, compute_instance=vm["id"]
+                name=f"netris-vm-manual-attachment-{net_test_run_id}", external_ip=eip_id, compute_instance=vm["id"]
             )
             attachment_cr = wait_for_external_ip_attachment_cr(k8s=k8s_hub_client, uuid=attachment_id)
             wait_for_external_ip_attachment_ready(k8s=k8s_hub_client, name=attachment_cr)
@@ -500,12 +513,12 @@ class TestVmaasNetworking:
         k8s_hub_client: K8sClient,
         k8s_virt_client: K8sClient,
         vm_template: str,
-        test_run_id: str,
+        net_test_run_id: str,
         netris_vm_network: dict[str, Any],
         netris_external_ip_pool: dict[str, str],
     ) -> None:
         network = netris_vm_network["network_a"]
-        vm_name = f"netris-vm-auto-eip-{test_run_id}"
+        vm_name = f"netris-vm-auto-eip-{net_test_run_id}"
         ci_id: str | None = None
         ci_cr: str | None = None
         delete_issued = False

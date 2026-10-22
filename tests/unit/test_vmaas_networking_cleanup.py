@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tests.e2e.vmaas.regression.networking.cleanup import _run_cleanup
+from tests.e2e.networking.vmaas.cleanup import _run_cleanup
 
 
 def test_cleanup_records_safe_error_and_continues_with_remaining_resources() -> None:

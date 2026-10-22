@@ -88,11 +88,21 @@ def test_stretched_networking_test_uses_a_backend_agnostic_marker() -> None:
 def test_vmaas_netris_calls_networking_runner_with_vmaas_profile() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-netris-full-install.yml").read_text())
     job = workflow["jobs"]["e2e-vmaas-netris"]
-    assert "/e2e-vmaas-netris-full-install.yml@" in job["uses"]
+    workflow_path, workflow_sha = job["uses"].rsplit("@", 1)
+    assert workflow_path == "osac-project/osac-test-infra/.github/workflows/e2e-vmaas-netris-full-install.yml"
     assert job["with"]["suite"] == "vmaas_networking"
     assert job["with"]["osac-profile"] == "cudn-evpn-netris-test"
-    assert job["uses"].endswith(f"@{job['with']['test-infra-sha']}")
-    assert re.fullmatch(r"[0-9a-f]{40}", job["with"]["test-infra-sha"])
+    test_infra_sha = job["with"]["test-infra-sha"]
+    assert workflow_sha == test_infra_sha
+    assert re.fullmatch(r"[0-9a-f]{40}", test_infra_sha)
+
+    caller = yaml.safe_load((ROOT / ".github/workflows/e2e-vmaas-netris-full-install-caller.yml").read_text())
+    assert caller["jobs"]["e2e-vmaas-netris"]["uses"] == "./.github/workflows/e2e-vmaas-netris-full-install.yml"
+
+    pr_workflow = yaml.safe_load((ROOT / ".github/workflows/e2e-pr.yml").read_text())
+    pr_job = pr_workflow["jobs"]["vmaas-netris"]
+    assert pr_job["uses"] == "./.github/workflows/e2e-vmaas-netris-full-install.yml"
+    assert "contains(needs.decide.outputs.suites, '\"vmaas-netris\"')" in pr_job["if"]
 
 
 def test_bmaas_netris_calls_networking_runner_with_bmaas_profile() -> None:

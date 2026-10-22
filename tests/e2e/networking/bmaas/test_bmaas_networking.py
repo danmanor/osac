@@ -173,6 +173,7 @@ class TestBmaasNetworking:
         catalog_item_name: str,
         auto_eip_catalog_item_name: str,
         bmi_instance_type: str,
+        bmi_network_interface: str,
         bmi_disk_image: str,
         net_ssh_public_key: str,
         bmh_namespace: str,
@@ -196,7 +197,9 @@ class TestBmaasNetworking:
                 instance_type=bmi_instance_type,
                 ssh_key=net_ssh_public_key,
                 disk_image=bmi_disk_image,
-                network_attachments=[f"subnet={subnet_id},interface=eth9,primary,security-groups={sg}"],
+                network_attachments=[
+                    f"subnet={subnet_id},interface={bmi_network_interface},primary,security-groups={sg}"
+                ],
                 external_ip_attachment=is_auto_eip,
             )
             print("Created BMI")

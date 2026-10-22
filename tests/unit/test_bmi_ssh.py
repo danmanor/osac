@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.e2e.bmaas.regression.networking import bmi_ssh
 from tests.e2e.core.ssh_probe import PROBE_EXIT_SENTINEL
+from tests.e2e.networking.bmaas import bmi_ssh
 
 
 @pytest.mark.parametrize(("probe", "target_ip"), [(bmi_ssh.arping, "192.0.2.2"), (bmi_ssh.ping, "192.0.2.2")])

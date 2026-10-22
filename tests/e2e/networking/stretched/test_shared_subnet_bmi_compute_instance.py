@@ -52,6 +52,7 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
     full_vm_template: str,
     catalog_item_name: str,
     bmi_instance_type: str,
+    bmi_network_interface: str,
     bmi_disk_image: str,
     net_ssh_public_key: str,
     bmh_ssh_hosts: dict[str, str],
@@ -124,7 +125,9 @@ def test_bmi_and_compute_instance_reach_each_other_on_shared_subnet(
             instance_type=bmi_instance_type or None,
             ssh_key=net_ssh_public_key,
             disk_image=bmi_disk_image,
-            network_attachments=[f"subnet={subnet_id},interface=eth9,primary,security-groups={security_group_id}"],
+            network_attachments=[
+                f"subnet={subnet_id},interface={bmi_network_interface},primary,security-groups={security_group_id}"
+            ],
         )
         bmi_cr = wait_for_bmi_cr(k8s=k8s_hub_client, uuid=bmi_id)
         wait_for_bmi_running(grpc=grpc, bmi_id=bmi_id)

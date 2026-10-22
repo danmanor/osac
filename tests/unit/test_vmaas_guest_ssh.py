@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.e2e.core.ssh_probe import PROBE_EXIT_SENTINEL
-from tests.e2e.vmaas.regression.networking import guest_ssh
+from tests.e2e.networking.vmaas import guest_ssh
 
 
 def test_ssh_guest_unchecked_uses_vm_virtctl_target_and_vm_kubeconfig(monkeypatch: pytest.MonkeyPatch) -> None:

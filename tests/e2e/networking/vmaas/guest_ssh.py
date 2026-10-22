@@ -51,14 +51,7 @@ def ssh_guest_unchecked(
         raise RuntimeError(f"failed to start virtctl SSH to {vm_namespace}/{vm_name}: {exc}") from exc
 
     output = _combined_output(result.stdout, result.stderr)
-    log.info(
-        "VM guest command (%s/%s): %s; virtctl_rc=%d; output=%r",
-        vm_namespace,
-        vm_name,
-        command,
-        result.returncode,
-        output,
-    )
+    log.info("VM guest command (%s/%s) completed with virtctl_rc=%d", vm_namespace, vm_name, result.returncode)
     return output, result.returncode
 
 
@@ -173,6 +166,5 @@ def ssh_via_external_ip(
             command,
         ]
         result = subprocess.run(args, capture_output=True, text=True, timeout=timeout + 10, check=True)
-        output = _combined_output(result.stdout, result.stderr)
-        log.info("VM ExternalIP SSH (%s): %s; ssh_rc=%d; output=%r", host, command, result.returncode, output)
+        log.info("VM ExternalIP SSH (%s) completed with ssh_rc=%d", host, result.returncode)
         return result.stdout.strip()
