@@ -51,7 +51,6 @@ def ssh_guest_unchecked(
         raise RuntimeError(f"failed to start virtctl SSH to {vm_namespace}/{vm_name}: {exc}") from exc
 
     output = _combined_output(result.stdout, result.stderr)
-    log.info("VM guest command (%s/%s) completed with virtctl_rc=%d", vm_namespace, vm_name, result.returncode)
     return output, result.returncode
 
 
