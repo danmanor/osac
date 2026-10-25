@@ -87,10 +87,6 @@ func (s *publicClusterCreationFixture) resolveNodeSetReferences(ctx context.Cont
 
 var _ = Describe("Clusters server", func() {
 	BeforeEach(func() {
-		seedReadyDefaultNetworking(testTenant, 254)
-	})
-
-	BeforeEach(func() {
 		// Put a context into the subject:
 		ctx = auth.ContextWithSubject(
 			ctx,
@@ -2168,7 +2164,7 @@ var _ = Describe("Clusters server", func() {
 							Template: publicv1.ClusterTemplateReference_builder{Id: "my_bmit_template"}.Build(),
 							NodeSets: map[string]*publicv1.ClusterNodeSet{
 								"workers": publicv1.ClusterNodeSet_builder{
-									BaremetalInstanceType: publicv1.BareMetalInstanceTypeReference_builder{Id: "bmit_standard", Shared: true}.
+									BaremetalInstanceType: publicv1.BareMetalInstanceTypeReference_builder{Id: "bmit_no_fabric", Shared: true}.
 										Build(),
 									Size: proto.Int32(3),
 								}.Build(),
@@ -2177,7 +2173,7 @@ var _ = Describe("Clusters server", func() {
 					}.Build(),
 				}.Build())
 				Expect(err).ToNot(HaveOccurred())
-				Expect(response.GetObject().GetSpec().GetNodeSets()["workers"].GetBaremetalInstanceType().GetId()).To(Equal("bmit_standard"))
+				Expect(response.GetObject().GetSpec().GetNodeSets()["workers"].GetBaremetalInstanceType().GetId()).To(Equal("bmit_no_fabric"))
 			})
 
 			It("Accepts node set with baremetal_instance_type when template has none", func() {
@@ -2346,7 +2342,7 @@ var _ = Describe("Clusters server", func() {
 				Expect(response).To(BeNil())
 				status, ok := grpcstatus.FromError(err)
 				Expect(ok).To(BeTrue())
-				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
+				Expect(status.Code()).To(Equal(grpccodes.FailedPrecondition))
 				Expect(status.Message()).To(ContainSubstring(
 					"no network port with role 'fabric'",
 				))

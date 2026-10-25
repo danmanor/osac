@@ -99,20 +99,11 @@ func nodeSetHarness(name string, requests ...v1alpha1.NodeRequest) (*Reconciler,
 		Namespace: "test",
 		Labels:    map[string]string{clusterOrderIDLabel: name + "-cluster"},
 	}, Spec: v1alpha1.ClusterOrderSpec{NodeRequests: requests}}
-	allowWorkerCreation(co)
 	kube := clientfake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(co).WithObjects(co).Build()
 	fc := &nodeSetClient{kube: kube, order: client.ObjectKeyFromObject(co)}
 	r := &Reconciler{Client: kube, apiReader: kube, scheme: scheme, fulfillment: fc, recorder: events.NewFakeRecorder(100)}
 	return r, fc, co
 }
-
-// allowWorkerCreation opens the worker creation gate: the HostedCluster exists
-// and ManagementPublicationReady is True.
-func allowWorkerCreation(co *v1alpha1.ClusterOrder) {
-	co.SetStatusCondition(v1alpha1.ConditionControlPlaneCreated, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
-	co.SetStatusCondition(string(v1alpha1.ClusterOrderConditionManagementPublicationReady), metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
-}
-
 func nodeRequest(instanceType string, count int) v1alpha1.NodeRequest {
 	return v1alpha1.NodeRequest{NodeSet: instanceType, NumberOfNodes: count, BareMetal: &v1alpha1.BareMetalNodeSpec{InstanceType: instanceType}}
 }
@@ -142,7 +133,7 @@ func capacityObservation(fc FulfillmentClient) *workerObservation {
 func runWorkerCapacityStage(r *Reconciler, co *v1alpha1.ClusterOrder) (ctrl.Result, error) {
 	GinkgoHelper()
 	observed := capacityObservation(r.fulfillment)
-	res, err := r.reconcileWorkerLifecycle(context.Background(), co, workerBMITenant)
+	res, err := r.reconcileWorkerLifecycle(context.Background(), co, "tenant")
 	if err != nil || !res.IsZero() {
 		return res, err
 	}
@@ -219,8 +210,6 @@ var _ = Describe("Bare-metal NodeSet validation", func() {
 
 var _ = It("ignores ClusterOrders without bare-metal requests", func() {
 	r, fc, co := nodeSetHarness("non-bm", v1alpha1.NodeRequest{NodeSet: "other"})
-	// Read back so condition timestamps carry the stored precision.
-	Expect(r.Get(context.Background(), client.ObjectKeyFromObject(co), co)).To(Succeed())
 	before := co.DeepCopy()
 	result, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(co)})
 	Expect(err).ToNot(HaveOccurred(), "unexpected reconcile error: %v", err)
@@ -298,9 +287,9 @@ var _ = It("rejects pending BMI recovery without a recorded name", func() {
 	// Ownership by the cluster does not prove that this BMI belongs to this slot.
 	fc.bmis = []*privatev1.BareMetalInstance{privatev1.BareMetalInstance_builder{
 		Id: "unrelated-bmi", Metadata: privatev1.Metadata_builder{
-			Name: "worker-slot", Tenant: workerBMITenant,
+			Name: "worker-slot", Tenant: "tenant",
 			Labels:      map[string]string{clusterOrderLabel: co.Name},
-			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, clusterAPIIDAnnotation: co.Labels[clusterOrderIDLabel]},
+			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name},
 		}.Build(),
 	}.Build()}
 	if err := runDeletionBMIStage(context.Background(), r, co); err == nil || !strings.Contains(err.Error(), "bareMetalInstance.name") {
@@ -319,12 +308,9 @@ var _ = It("uses the recorded BMI name rather than the worker name for recovery"
 	Expect(r.Status().Update(context.Background(), co)).To(Succeed())
 	fc.bmis = []*privatev1.BareMetalInstance{privatev1.BareMetalInstance_builder{
 		Id: "recorded-id", Metadata: privatev1.Metadata_builder{
-			Name: "actual-bmi", Tenant: workerBMITenant,
+			Name: "actual-bmi", Tenant: "tenant",
 			Labels:      map[string]string{clusterOrderLabel: co.Name},
-			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, clusterAPIIDAnnotation: co.Labels[clusterOrderIDLabel]},
-		}.Build(),
-		Status: privatev1.BareMetalInstanceStatus_builder{
-			Cluster: privatev1.ClusterLocalReference_builder{Id: co.Labels[clusterOrderIDLabel]}.Build(),
+			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name},
 		}.Build(),
 	}.Build()}
 	if _, err := r.reserveWorkerSlots(context.Background(), co); err != nil {

@@ -15,7 +15,6 @@ syntax = "proto3";
 
 package osac.private.v1;
 
-import "buf/validate/validate.proto";
 import "cleanapi/cleanapi.proto";
 import "google/api/field_behavior.proto";
 import "osac/private/v1/security_group_type.proto";
@@ -39,14 +38,7 @@ message BareMetalNetworkAttachment {
 
   // Designates this attachment as the default gateway.
   // With a single attachment, omit primary or set primary: true; primary: false is rejected.
-  optional bool primary = 4 [
-    (google.api.field_behavior) = IMMUTABLE,
-    (buf.validate.field).cel = {
-      id: "primary_true"
-      message: "primary: false is not supported; omit primary or set primary: true"
-      expression: "this"
-    }
-  ];
+  optional bool primary = 4 [(google.api.field_behavior) = IMMUTABLE];
 }
 
 // Run strategy for the bare metal instance.

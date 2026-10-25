@@ -188,16 +188,12 @@ message ClusterSpec {
   // The complete attachment, including subnet and security group references, is immutable after creation.
   ClusterNetworkAttachment network_attachment = 9 [(google.api.field_behavior) = IMMUTABLE];
 
-  // The system always creates the Cluster's two automatic ExternalIPs and ExternalIPAttachments (API server and
-  // ingress). Omit the field or set it to true; false is rejected.
-  optional bool auto_external_ip_attachment = 10 [
-    (google.api.field_behavior) = IMMUTABLE,
-    (buf.validate.field).cel = {
-      id: "auto_external_ip_attachment_true"
-      message: "auto_external_ip_attachment must be omitted or true"
-      expression: "this"
-    }
-  ];
+  // When true, the system automatically creates two ExternalIPs and two ExternalIPAttachments
+  // (one for the API server endpoint, one for the ingress endpoint) during cluster creation.
+  // The ExternalIP pool is selected automatically based on available capacity.
+  //
+  // This field is immutable after creation — it cannot be changed on update.
+  optional bool auto_external_ip_attachment = 10 [(google.api.field_behavior) = IMMUTABLE];
 
   // Reference to a Secret resource containing pull secret credentials.
   //

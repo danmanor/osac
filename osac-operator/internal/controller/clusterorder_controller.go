@@ -25,6 +25,8 @@ import (
 
 	"github.com/go-logr/logr"
 	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -45,8 +47,8 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
-	"github.com/osac-project/osac/osac-operator/internal/networktask"
 	"github.com/osac-project/osac/osac-operator/pkg/provisioning"
+	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
 // NewComponentFn is the type of a function that creates a required component
@@ -79,28 +81,14 @@ type ClusterOrderReconciler struct {
 	ClusterOrderNamespace       string
 	AgentNamespace              string
 	NetworkingNamespace         string
+	ClustersClient              automaticClustersGetter
 	ExternalIPAttachmentsClient automaticExternalIPAttachmentsClient
-	// BareMetalInstanceNamespace is the namespace of the worker BareMetalInstance CRs.
-	BareMetalInstanceNamespace string
-	// Engine runs the ClusterOrder's networking, guest endpoint and
-	// post-install jobs (status.jobs). Without it the controller does no CaaS
-	// networking work (unit tests of the core lifecycle).
-	Engine *networktask.Engine
-	// EndpointsTemplate is the guest endpoint job template (<prefix>-cluster-endpoints).
-	EndpointsTemplate string
-	// PostInstallTemplate is the hosted cluster post-install job template,
-	// launched once the ClusterOrder is Ready.
-	PostInstallTemplate string
-	// Prober runs the network checks of the management publication gate.
-	Prober PublicationProber
-	// Guest reads the hosted cluster through the in-hub admin kubeconfig.
-	Guest                GuestClusterAccess
-	ProvisioningProvider provisioning.ProvisioningProvider
-	StatusPollInterval   time.Duration
-	MaxJobHistory        int
-	StallThresholds      ClusterOrderStallThresholds
-	Recorder             events.EventRecorder
-	now                  func() time.Time
+	ProvisioningProvider        provisioning.ProvisioningProvider
+	StatusPollInterval          time.Duration
+	MaxJobHistory               int
+	StallThresholds             ClusterOrderStallThresholds
+	Recorder                    events.EventRecorder
+	now                         func() time.Time
 }
 
 const (
@@ -172,13 +160,10 @@ func NewClusterOrderReconciler(
 // +kubebuilder:rbac:groups="",resources=namespaces;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=hypershift.openshift.io,resources=hostedclusters;nodepools,verbs=get;list;watch
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=subnets;virtualnetworks;securitygroups;baremetalinstances,verbs=get;list;watch
+// +kubebuilder:rbac:groups=osac.openshift.io,resources=subnets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=networkclasses,verbs=get;list;watch
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalipattachments,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalips,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=agent-install.openshift.io,resources=infraenvs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalipattachments,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalips,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -221,12 +206,12 @@ func (r *ClusterOrderReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return res, err
 		}
 	}
-	if err == nil && r.Engine != nil {
-		networkingResult, networkingErr := r.reconcileNetworking(ctx, req.NamespacedName)
-		if networkingErr != nil {
-			return res, networkingErr
+	if err == nil && instance.DeletionTimestamp.IsZero() {
+		autoAttachmentResult, autoAttachmentErr := r.reconcileAutomaticExternalIPAttachments(ctx, instance)
+		if autoAttachmentErr != nil {
+			return res, autoAttachmentErr
 		}
-		res = mergeReconcileResult(res, networkingResult)
+		res = mergeReconcileResult(res, autoAttachmentResult)
 	}
 
 	log.Info("end reconcile")
@@ -384,18 +369,12 @@ func (r *ClusterOrderReconciler) patchStatusWithRetry(ctx context.Context, key c
 		latest.Status.NodeRequests = computed.NodeRequests
 		latest.Status.ProvisioningJobs = computed.ProvisioningJobs
 		latest.Status.DesiredConfigVersion = computed.DesiredConfigVersion
-		if computed.APIURL != "" {
-			latest.Status.APIURL = computed.APIURL
-		}
-		if computed.ConsoleURL != "" {
-			latest.Status.ConsoleURL = computed.ConsoleURL
-		}
+		latest.Status.ApiEndpoint = computed.ApiEndpoint
+		latest.Status.IngressEndpoint = computed.IngressEndpoint
 		// Workers[] and its aggregate counts are owned by the BareMetalWorkerReconciler.
 		// Leave them from the fresh read so a concurrent worker status update is preserved.
-		// The endpoints, status.jobs, status.taskInput and the networking
-		// conditions are owned by the networking pass (reconcileNetworking).
 		for _, c := range computed.Conditions {
-			if c.Type == v1alpha1.ConditionWorkersFailed || clusterNetworkingConditions[c.Type] ||
+			if c.Type == v1alpha1.ConditionWorkersFailed ||
 				(terminalPhase && c.Type == v1alpha1.ConditionProgressing) ||
 				(deleting && c.Type == v1alpha1.ConditionDeleting) ||
 				c.Type == string(v1alpha1.ClusterOrderConditionAddOnOperatorsReady) {
@@ -404,12 +383,8 @@ func (r *ClusterOrderReconciler) patchStatusWithRetry(ctx context.Context, key c
 			apimeta.SetStatusCondition(&latest.Status.Conditions, c)
 		}
 		if deleting {
-			message := "ClusterOrder is being deleted"
-			if c := apimeta.FindStatusCondition(computed.Conditions, v1alpha1.ConditionDeleting); c != nil &&
-				c.Status == metav1.ConditionTrue && c.Message != "" {
-				message = c.Message
-			}
-			latest.SetStatusCondition(v1alpha1.ConditionDeleting, metav1.ConditionTrue, message, v1alpha1.ReasonDeleting)
+			latest.SetStatusCondition(v1alpha1.ConditionDeleting, metav1.ConditionTrue,
+				"ClusterOrder is being deleted", v1alpha1.ReasonDeleting)
 		}
 		if workerPending {
 			latest.SetStatusCondition(v1alpha1.ConditionProgressing, metav1.ConditionTrue,
@@ -609,7 +584,6 @@ func (r *ClusterOrderReconciler) handleHostedCluster(ctx context.Context, instan
 	hc *hypershiftv1beta1.HostedCluster) error {
 
 	log := ctrllog.FromContext(ctx)
-	wasReady := instance.Status.Phase == v1alpha1.ClusterOrderPhaseReady
 
 	name := hc.GetName()
 	instance.SetClusterReferenceHostedClusterName(name)
@@ -630,6 +604,10 @@ func (r *ClusterOrderReconciler) handleHostedCluster(ctx context.Context, instan
 		}
 	}
 
+	// Copy VIP endpoints from annotations (written by the CaaS template's
+	// external_access step) into status fields for the feedback controller.
+	reconcileVIPEndpoints(instance)
+
 	// Fetch the node pools and handle them:
 	nodePools := &hypershiftv1beta1.NodePoolList{}
 	if err := r.List(ctx, nodePools, client.InNamespace(hc.Namespace), labelSelectorFromInstance(instance)); err != nil {
@@ -644,16 +622,6 @@ func (r *ClusterOrderReconciler) handleHostedCluster(ctx context.Context, instan
 	// NodePool observations in this reconcile.
 	finalizeReadyIfProvisioned(log, instance, hc, nodePools.Items)
 	r.reconcileClusterOrderReadiness(instance, hc)
-	if instance.Status.Phase == v1alpha1.ClusterOrderPhaseReady && !wasReady {
-		// CaaS design, Cluster Ready: the endpoints and the guest checks gate the
-		// first Ready; after it, Ready is kept (ClusterHealthy reports losses).
-		if reason, message := r.clusterReadyBlocker(ctx, instance, hc); reason != "" {
-			setClusterOrderPhase(&instance.Status, v1alpha1.ClusterOrderPhaseProgressing)
-			instance.SetStatusCondition(v1alpha1.ConditionProgressing, metav1.ConditionTrue, message, reason)
-			return nil
-		}
-		setClusterURLs(instance, hc)
-	}
 	return nil
 }
 
@@ -840,6 +808,21 @@ func (thresholds ClusterOrderStallThresholds) workersJoiningThreshold(nodeReques
 		}
 	}
 	return threshold
+}
+
+// reconcileVIPEndpoints copies VIP annotations written by the CaaS template
+// into the ClusterOrder status fields consumed by the feedback controller.
+func reconcileVIPEndpoints(instance *v1alpha1.ClusterOrder) {
+	annotations := instance.GetAnnotations()
+	if annotations == nil {
+		return
+	}
+	if v := annotations[osacAPIEndpointAnnotation]; v != "" {
+		instance.Status.ApiEndpoint = v
+	}
+	if v := annotations[osacIngressEndpointAnnotation]; v != "" {
+		instance.Status.IngressEndpoint = v
+	}
 }
 
 func (r *ClusterOrderReconciler) handleNodePools(ctx context.Context, instance *v1alpha1.ClusterOrder,
@@ -1145,18 +1128,11 @@ func (r *ClusterOrderReconciler) handleDelete(ctx context.Context, _ reconcile.R
 		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
 	}
 
-	// Hold until no automatic ExternalIPAttachment or ExternalIP CR remains (the
-	// fulfillment service deletes them) and the cancelled jobs ended (CaaS
-	// design, Delete step 4).
-	blocker, err := r.clusterOrderDeleteBlocker(ctx, instance)
-	if err != nil {
-		return ctrl.Result{}, err
+	// Delete auto-provisioned ExternalIPAttachments then ExternalIPs before deprovisioning.
+	done, cleanupResult, err := r.reconcileAutoExternalIPCleanup(ctx, instance)
+	if err != nil || !done {
+		return cleanupResult, err
 	}
-	if blocker != "" {
-		instance.SetStatusCondition(v1alpha1.ConditionDeleting, metav1.ConditionTrue, blocker, v1alpha1.ReasonDeleting)
-		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-	}
-	instance.SetStatusCondition(v1alpha1.ConditionDeleting, metav1.ConditionTrue, "deleting the hosted cluster", v1alpha1.ReasonDeleting)
 
 	// Handle deprovisioning via provider
 	// Waits for provision job termination and polls deprovision job if needed
@@ -1190,12 +1166,6 @@ func (r *ClusterOrderReconciler) handleDelete(ctx context.Context, _ reconcile.R
 			}
 		}
 	} else {
-		// The guest ingress address is released once every worker BMI record is
-		// gone; the finalizer stays until then (CaaS design, Delete step 5).
-		if pending := r.clusterOrderReleasePending(instance); pending != "" {
-			instance.SetStatusCondition(v1alpha1.ConditionDeleting, metav1.ConditionTrue, pending, v1alpha1.ReasonDeleting)
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-		}
 		// If we get this far, we are no longer monitoring any kubernetes resources.
 		// Allow kubernetes to delete the clusterorder.
 		if controllerutil.ContainsFinalizer(instance, osacFinalizer) {
@@ -1204,14 +1174,60 @@ func (r *ClusterOrderReconciler) handleDelete(ctx context.Context, _ reconcile.R
 					return ctrl.Result{}, err
 				}
 			}
-			// The engine's in-memory state of the ClusterOrder's jobs is no longer needed.
-			if r.Engine != nil {
-				r.Engine.Forget(instance.UID)
-			}
 		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// reconcileAutoExternalIPCleanup deletes automatically created ExternalIPAttachments and
+// ExternalIPs for this ClusterOrder in phase order: EIAs first, then EIPs. Returns
+// (done=true) when cleanup is complete or not applicable, (done=false) with a requeue
+// result when resources still exist.
+func (r *ClusterOrderReconciler) reconcileAutoExternalIPCleanup(ctx context.Context, instance *v1alpha1.ClusterOrder) (bool, ctrl.Result, error) {
+	return reconcileAutoExternalIPCleanup(ctx, r.Client, r.NetworkingNamespace, autoExternalIPOwner{
+		kind: clusterOrderOwner,
+		id:   instance.GetLabels()[osacClusterOrderIDLabel],
+	}, r.StatusPollInterval)
+}
+
+func (r *ClusterOrderReconciler) reconcileAutomaticExternalIPAttachments(
+	ctx context.Context,
+	instance *v1alpha1.ClusterOrder,
+) (ctrl.Result, error) {
+	if instance.Status.Phase != v1alpha1.ClusterOrderPhaseReady || r.ClustersClient == nil ||
+		r.ExternalIPAttachmentsClient == nil || r.NetworkingNamespace == "" {
+		return ctrl.Result{}, nil
+	}
+	clusterID := instance.Labels[osacClusterOrderIDLabel]
+	if clusterID == "" {
+		return ctrl.Result{}, nil
+	}
+	response, err := r.ClustersClient.Get(ctx, privatev1.ClustersGetRequest_builder{Id: clusterID}.Build())
+	if status.Code(err) == codes.NotFound {
+		return ctrl.Result{}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("get Fulfillment Cluster %q for automatic ExternalIPAttachment: %w", clusterID, err)
+	}
+	cluster := response.GetObject()
+	if cluster == nil || !cluster.GetSpec().GetAutoExternalIpAttachment() {
+		return ctrl.Result{}, nil
+	}
+
+	target := automaticExternalIPAttachmentTarget{
+		owner:     autoExternalIPOwner{kind: clusterOrderOwner, id: clusterID},
+		kind:      clusterOrderOwner,
+		kindLabel: autoExternalIPKindLabel(clusterOrderOwner),
+		tenant:    cluster.GetMetadata().GetTenant(),
+		endpoints: []string{autoCreatedEndpointAPI, autoCreatedEndpointIngress},
+		availableEndpoints: map[string]bool{
+			autoCreatedEndpointAPI:     instance.Status.ApiEndpoint != "",
+			autoCreatedEndpointIngress: instance.Status.IngressEndpoint != "",
+		},
+	}
+	return reconcileAutomaticExternalIPAttachments(ctx, r.Client, r.NetworkingNamespace,
+		r.ExternalIPAttachmentsClient, r.StatusPollInterval, target)
 }
 
 func (r *ClusterOrderReconciler) provisionState(instance *v1alpha1.ClusterOrder) *provisioning.State {

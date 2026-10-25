@@ -30,10 +30,6 @@ const (
 	clusterOrderIDLabel      = "osac.openshift.io/clusterorder-uuid"
 	clusterOrderLabel        = "osac.openshift.io/cluster-order"
 	ownerReferenceAnnotation = "osac.openshift.io/owner-reference"
-	// clusterAPIIDAnnotation carries the API ID of the Cluster a worker BMI belongs to.
-	clusterAPIIDAnnotation = "osac.openshift.io/cluster-api-id"
-	// workerBMITenant is the tenant of every CaaS worker BMI.
-	workerBMITenant = "system"
 )
 
 // authoritativeCluster loads the fulfillment Cluster that owns this order's workers. Neither the
@@ -60,9 +56,8 @@ func (r *Reconciler) authoritativeCluster(ctx context.Context, co *v1alpha1.Clus
 }
 
 // authoritativeWorkerCluster loads the fulfillment Cluster that owns this order's workers and
-// validates the order/cluster tenant match. Workers live in tenant "system", record the Cluster
-// in status.cluster and its API ID in the cluster-api-id annotation; Reconcile fetches it once
-// per invocation and passes it down.
+// validates the order/cluster tenant match. Workers live in its tenant and project and record it
+// in status.cluster; Reconcile fetches it once per invocation and passes it down.
 func (r *Reconciler) authoritativeWorkerCluster(ctx context.Context, co *v1alpha1.ClusterOrder) (*privatev1.Cluster, error) {
 	cluster, err := r.authoritativeCluster(ctx, co)
 	if err != nil {
@@ -75,13 +70,13 @@ func (r *Reconciler) authoritativeWorkerCluster(ctx context.Context, co *v1alpha
 	return cluster, nil
 }
 
-// authoritativeWorkerTenant verifies the fulfillment Cluster and returns the tenant of its
-// worker BMIs: CaaS workers live in tenant "system".
+// authoritativeWorkerTenant uses order metadata only to locate/check the fulfillment Cluster.
 func (r *Reconciler) authoritativeWorkerTenant(ctx context.Context, co *v1alpha1.ClusterOrder) (string, error) {
-	if _, err := r.authoritativeWorkerCluster(ctx, co); err != nil {
+	cluster, err := r.authoritativeWorkerCluster(ctx, co)
+	if err != nil {
 		return "", err
 	}
-	return workerBMITenant, nil
+	return cluster.GetMetadata().GetTenant(), nil
 }
 
 func (r *Reconciler) rejectWorkerIdentity(co *v1alpha1.ClusterOrder, reason string) error {
@@ -92,9 +87,7 @@ func (r *Reconciler) rejectWorkerIdentity(co *v1alpha1.ClusterOrder, reason stri
 func checkWorkerBMI(co *v1alpha1.ClusterOrder, tenant, name string, bmi *privatev1.BareMetalInstance) error {
 	if bmi == nil || bmi.GetId() == "" || bmi.GetMetadata().GetTenant() != tenant ||
 		bmi.GetMetadata().GetName() != name ||
-		bmi.GetMetadata().GetAnnotations()[ownerReferenceAnnotation] != "ClusterOrder/"+co.Name ||
-		bmi.GetMetadata().GetAnnotations()[clusterAPIIDAnnotation] != co.Labels[clusterOrderIDLabel] ||
-		bmi.GetStatus().GetCluster().GetId() != co.Labels[clusterOrderIDLabel] ||
+		bmi.GetMetadata().GetAnnotations()["osac.openshift.io/owner-reference"] != "ClusterOrder/"+co.Name ||
 		bmi.GetMetadata().GetLabels()[clusterOrderLabel] != co.Name {
 		return fmt.Errorf("BMI %s is not owned by ClusterOrder %s in tenant %s", bmi.GetId(), co.Name, tenant)
 	}

@@ -56,6 +56,10 @@ type automaticExternalIPAttachmentsClient interface {
 	Create(context.Context, *privatev1.ExternalIPAttachmentsCreateRequest, ...grpc.CallOption) (*privatev1.ExternalIPAttachmentsCreateResponse, error)
 }
 
+type automaticClustersGetter interface {
+	Get(context.Context, *privatev1.ClustersGetRequest, ...grpc.CallOption) (*privatev1.ClustersGetResponse, error)
+}
+
 type automaticBareMetalInstancesGetter interface {
 	Get(context.Context, *privatev1.BareMetalInstancesGetRequest, ...grpc.CallOption) (*privatev1.BareMetalInstancesGetResponse, error)
 }

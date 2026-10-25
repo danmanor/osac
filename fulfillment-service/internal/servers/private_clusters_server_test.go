@@ -246,10 +246,6 @@ func resolveClusterNodeSetReferencesForTest(ctx context.Context, request proto.M
 }
 
 var _ = Describe("Private clusters server", func() {
-	BeforeEach(func() {
-		seedReadyDefaultNetworking(testTenant, 254)
-	})
-
 	Describe("node-set validation", func() {
 		It("rejects a cluster without an effective node-set map", func() {
 			cluster := privatev1.Cluster_builder{Spec: privatev1.ClusterSpec_builder{}.Build()}.Build()
@@ -489,8 +485,7 @@ var _ = Describe("Private clusters server", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
-			_ = networkClassesDao
-			_, err = reuseNetworkClassDAO.Create().SetObject(privatev1.NetworkClass_builder{
+			_, err = networkClassesDao.Create().SetObject(privatev1.NetworkClass_builder{
 				Id: "test-network-class",
 				Metadata: privatev1.Metadata_builder{
 					Name:   "test-network-class",
@@ -521,7 +516,6 @@ var _ = Describe("Private clusters server", func() {
 				}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
-			seedReadyNATGateway(testTenant, "test-vnet", false)
 
 			subnetsDao, err := dao.NewGenericDAO[*privatev1.Subnet]().
 				SetLogger(logger).
@@ -693,8 +687,7 @@ var _ = Describe("Private clusters server", func() {
 						SetFilter(fmt.Sprintf("this.metadata.name == %q", request.GetObject().GetMetadata().GetName())).Do(ctx)
 					Expect(err).ToNot(HaveOccurred())
 					Expect(stored.GetTotal()).To(BeZero())
-					ips, err := tenantServer.externalIPDao.List().SetFilter(
-						fmt.Sprintf("this.metadata.labels['%s'] == 'cluster'", autoCreatedKindLabel)).Do(ctx)
+					ips, err := tenantServer.externalIPDao.List().Do(ctx)
 					Expect(err).ToNot(HaveOccurred())
 					Expect(ips.GetTotal()).To(BeZero())
 					attachments, err := tenantServer.externalIPAttachmentDao.List().Do(ctx)
@@ -818,6 +811,34 @@ var _ = Describe("Private clusters server", func() {
 			Expect(nodeSets["gpu"].GetSize()).To(BeNumerically("==", 1))
 		})
 
+		It("rejects an IPv6-only pool for automatic ExternalIP allocation", func() {
+			_, err := server.externalIPPoolDao.Create().SetObject(
+				privatev1.ExternalIPPool_builder{
+					Id: "ipv6-auto-pool",
+					Metadata: privatev1.Metadata_builder{
+						Tenant: testTenant,
+					}.Build(),
+					Spec: privatev1.ExternalIPPoolSpec_builder{
+						IpFamily: privatev1.IPFamily_IP_FAMILY_IPV6,
+					}.Build(),
+					Status: privatev1.ExternalIPPoolStatus_builder{
+						State:     privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY,
+						Available: 2,
+					}.Build(),
+				}.Build(),
+			).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			err = server.autoProvisionExternalIPs(ctx, privatev1.Cluster_builder{
+				Id: "cluster-ipv6-only",
+				Metadata: privatev1.Metadata_builder{
+					Tenant: testTenant,
+				}.Build(),
+			}.Build())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("no available capacity in any READY pool for IPv4"))
+		})
+
 		It("rejects a cluster whose subnet and security group are assigned to different Hubs", func() {
 			virtualNetworksDao, err := dao.NewGenericDAO[*privatev1.VirtualNetwork]().
 				SetLogger(logger).SetTenancyLogic(tenancy).Build()
@@ -827,7 +848,6 @@ var _ = Describe("Private clusters server", func() {
 				Spec:     privatev1.VirtualNetworkSpec_builder{}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
-			seedReadyNATGateway(testTenant, virtualNetwork.GetObject().GetId(), false)
 
 			subnetsDao, err := dao.NewGenericDAO[*privatev1.Subnet]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
 			Expect(err).ToNot(HaveOccurred())
@@ -877,7 +897,7 @@ var _ = Describe("Private clusters server", func() {
 			Expect(stored.GetItems()).To(BeEmpty())
 		})
 
-		It("creates automatic ExternalIPs without attachments and leaves their cleanup to the reconciler", func() {
+		It("creates automatic ExternalIPs without attachments and cleans them up", func() {
 			poolDao, err := dao.NewGenericDAO[*privatev1.ExternalIPPool]().
 				SetLogger(logger).
 				SetTenancyLogic(tenancy).
@@ -931,13 +951,11 @@ var _ = Describe("Private clusters server", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(eiaList.GetItems()).To(BeEmpty())
 
-			// The cluster reconciler deletes the automatic resources after the Cluster delete; the delete itself
-			// keeps them:
 			_, err = server.Delete(ctx, privatev1.ClustersDeleteRequest_builder{Id: clusterID}.Build())
 			Expect(err).ToNot(HaveOccurred())
 			eipList, err = eipDao.List().SetFilter(filter).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(eipList.GetItems()).To(HaveLen(2))
+			Expect(eipList.GetItems()).To(BeEmpty())
 		})
 
 		It("Preserves direct add-on operators through create and get", func() {
@@ -1700,9 +1718,6 @@ var _ = Describe("Private clusters server", func() {
 				}.Build(),
 			}, privatev1.ClusterNetworkAttachment_builder{
 				Subnet: privatev1.SubnetLocalReference_builder{Id: "subnet-1"}.Build(),
-				SecurityGroups: []*privatev1.SecurityGroupLocalReference{
-					privatev1.SecurityGroupLocalReference_builder{Id: "default-sg"}.Build(),
-				},
 			}.Build()))
 			Expect(err).ToNot(HaveOccurred())
 			resolved := response.GetObject().GetSpec().GetNodeSets()["workers"]
@@ -2714,6 +2729,32 @@ var _ = Describe("Private clusters server", func() {
 				Expect(status.Message()).To(ContainSubstring("CLUSTER_STATE_FAILED"))
 			})
 
+			It("Rejects spec update when cluster state is delete_failed", func() {
+				object := createClusterWithState(privatev1.ClusterState_CLUSTER_STATE_DELETE_FAILED)
+
+				_, err := server.Update(ctx, privatev1.ClustersUpdateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Id: object.GetId(),
+						Spec: privatev1.ClusterSpec_builder{
+							NodeSets: map[string]*privatev1.ClusterNodeSet{
+								"compute": privatev1.ClusterNodeSet_builder{
+									Size: proto.Int32(5),
+								}.Build(),
+							},
+						}.Build(),
+					}.Build(),
+					UpdateMask: &fieldmaskpb.FieldMask{
+						Paths: []string{"spec.node_sets.compute.size"},
+					},
+				}.Build())
+				Expect(err).To(HaveOccurred())
+				status, ok := grpcstatus.FromError(err)
+				Expect(ok).To(BeTrue())
+				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
+				Expect(status.Message()).To(ContainSubstring("cannot update cluster spec"))
+				Expect(status.Message()).To(ContainSubstring("CLUSTER_STATE_DELETE_FAILED"))
+			})
+
 			It("Rejects spec update when cluster state is deleting", func() {
 				object := createClusterWithState(privatev1.ClusterState_CLUSTER_STATE_DELETING)
 
@@ -2963,6 +3004,43 @@ var _ = Describe("Private clusters server", func() {
 				Expect(proto.Equal(stored.GetObject().GetSpec().GetNetworkAttachment(), object.GetSpec().GetNetworkAttachment())).To(BeTrue())
 			})
 
+			It("Rejects adding network_attachment when none existed", func() {
+				createResponse, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Metadata: privatev1.Metadata_builder{Name: "test-cluster"}.Build(),
+						Spec: privatev1.ClusterSpec_builder{
+							Template: privatev1.ClusterTemplateReference_builder{Id: "my-template-id"}.Build(),
+						}.Build(),
+					}.Build(),
+				}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				object := createResponse.GetObject()
+
+				_, err = server.Update(ctx, privatev1.ClustersUpdateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Id: object.GetId(),
+						Spec: privatev1.ClusterSpec_builder{
+							NetworkAttachment: privatev1.ClusterNetworkAttachment_builder{
+								Subnet: privatev1.SubnetLocalReference_builder{Id: "subnet-1"}.Build(),
+							}.Build(),
+						}.Build(),
+					}.Build(),
+					UpdateMask: &fieldmaskpb.FieldMask{
+						Paths: []string{"spec.network_attachment"},
+					},
+				}.Build())
+				Expect(err).To(HaveOccurred())
+				status, ok := grpcstatus.FromError(err)
+				Expect(ok).To(BeTrue())
+				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
+				Expect(status.Message()).To(Equal(
+					"cannot change spec.network_attachment.subnet from '' to 'subnet-1': subnet is immutable",
+				))
+				stored, err := server.Get(ctx, privatev1.ClustersGetRequest_builder{Id: object.GetId()}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(stored.GetObject().GetSpec().GetNetworkAttachment()).To(BeNil())
+			})
+
 			It("Rejects changing security_groups with same subnet", func() {
 				object := createClusterWithNetworkAttachment(privatev1.SubnetLocalReference_builder{Id: "subnet-1"}.Build(), []*privatev1.SecurityGroupLocalReference{privatev1.SecurityGroupLocalReference_builder{Id: "default-sg"}.Build()})
 
@@ -3125,6 +3203,68 @@ var _ = Describe("Private clusters server", func() {
 				Expect(attachment.GetSecurityGroups()).To(HaveLen(2))
 				Expect(attachment.GetSecurityGroups()[0].GetId()).To(Equal("default-sg"))
 				Expect(attachment.GetSecurityGroups()[1].GetId()).To(Equal("sg-2"))
+			})
+		})
+
+		Context("Auto external IP attachment immutability", func() {
+			createClusterWithAttachment := func() *privatev1.Cluster {
+				createResponse, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Metadata: privatev1.Metadata_builder{Name: "test-cluster"}.Build(),
+						Spec: privatev1.ClusterSpec_builder{
+							Template: privatev1.ClusterTemplateReference_builder{Id: "my-template-id"}.Build(),
+							NetworkAttachment: privatev1.ClusterNetworkAttachment_builder{
+								Subnet:         privatev1.SubnetLocalReference_builder{Id: "subnet-1"}.Build(),
+								SecurityGroups: []*privatev1.SecurityGroupLocalReference{privatev1.SecurityGroupLocalReference_builder{Id: "default-sg"}.Build()},
+							}.Build(),
+						}.Build(),
+					}.Build(),
+				}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				return createResponse.GetObject()
+			}
+
+			It("Rejects enabling auto_external_ip_attachment and provisions nothing", func() {
+				object := createClusterWithAttachment()
+
+				_, err := server.Update(ctx, privatev1.ClustersUpdateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Id: object.GetId(),
+						Spec: privatev1.ClusterSpec_builder{
+							AutoExternalIpAttachment: proto.Bool(true),
+						}.Build(),
+					}.Build(),
+					UpdateMask: &fieldmaskpb.FieldMask{
+						Paths: []string{"spec.auto_external_ip_attachment"},
+					},
+				}.Build())
+				Expect(err).To(HaveOccurred())
+				status, ok := grpcstatus.FromError(err)
+				Expect(ok).To(BeTrue())
+				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
+				Expect(status.Message()).To(ContainSubstring("auto_external_ip_attachment is immutable"))
+
+				eipDao, err := dao.NewGenericDAO[*privatev1.ExternalIP]().
+					SetLogger(logger).SetTenancyLogic(tenancy).Build()
+				Expect(err).ToNot(HaveOccurred())
+				eipList, err := eipDao.List().
+					SetFilter(fmt.Sprintf("this.metadata.labels['%s'] == '%s'", autoCreatedForLabel, object.GetId())).
+					Do(ctx)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(eipList.GetItems()).To(BeEmpty())
+
+				attDao, err := dao.NewGenericDAO[*privatev1.ExternalIPAttachment]().
+					SetLogger(logger).SetTenancyLogic(tenancy).Build()
+				Expect(err).ToNot(HaveOccurred())
+				attList, err := attDao.List().
+					SetFilter(fmt.Sprintf("this.metadata.labels['%s'] == '%s'", autoCreatedForLabel, object.GetId())).
+					Do(ctx)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(attList.GetItems()).To(BeEmpty())
+
+				stored, err := server.Get(ctx, privatev1.ClustersGetRequest_builder{Id: object.GetId()}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(stored.GetObject().GetSpec().GetAutoExternalIpAttachment()).To(BeFalse())
 			})
 		})
 
@@ -5924,7 +6064,6 @@ var _ = Describe("Private clusters server", func() {
 				Expect(getCluster.GetObject().GetSpec().GetNodeSets()["compute"].GetFabricInterface()).
 					To(Equal("data-0"), "stored fabric_interface must not track later BMIT changes")
 			})
-
 			It("Returns FailedPrecondition when BMIT has no fabric port", func() {
 				_, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
 					Object: privatev1.Cluster_builder{
@@ -5948,8 +6087,32 @@ var _ = Describe("Private clusters server", func() {
 				Expect(err).To(HaveOccurred())
 				st, ok := grpcstatus.FromError(err)
 				Expect(ok).To(BeTrue())
-				Expect(st.Code()).To(Equal(grpccodes.InvalidArgument))
+				Expect(st.Code()).To(Equal(grpccodes.FailedPrecondition))
 				Expect(st.Message()).To(ContainSubstring("no network port with role 'fabric'"))
+			})
+
+			It("Skips fabric resolution when cluster has no network attachment", func() {
+				response, err := server.Create(ctx, privatev1.ClustersCreateRequest_builder{
+					Object: privatev1.Cluster_builder{
+						Metadata: privatev1.Metadata_builder{Name: "fabric-no-net"}.Build(),
+						Spec: privatev1.ClusterSpec_builder{
+							Template: privatev1.ClusterTemplateReference_builder{Id: "my-template-id"}.Build(),
+							NodeSets: map[string]*privatev1.ClusterNodeSet{
+								"compute": privatev1.ClusterNodeSet_builder{
+									BaremetalInstanceType: privatev1.BareMetalInstanceTypeReference_builder{Id: "bmit-no-fabric-id", Shared: true}.
+										Build(),
+									Size: proto.Int32(3),
+								}.Build(),
+							},
+						}.Build(),
+					}.Build(),
+				}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(response).ToNot(BeNil())
+				nodeSet := response.GetObject().GetSpec().GetNodeSets()["compute"]
+				Expect(nodeSet).ToNot(BeNil())
+				// Without network_attachment, fabric_interface should be empty
+				Expect(nodeSet.GetFabricInterface()).To(BeEmpty())
 			})
 
 			It("Selects the first fabric port when multiple exist", func() {

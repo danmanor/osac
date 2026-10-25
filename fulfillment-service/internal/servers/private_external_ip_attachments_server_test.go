@@ -80,11 +80,10 @@ func createClusterInState(
 				Template: privatev1.ClusterTemplateReference_builder{Id: "ocp_small"}.Build(),
 			}.Build(),
 			Status: privatev1.ClusterStatus_builder{
-				State:                      privatev1.ClusterState_CLUSTER_STATE_READY,
-				Hub:                        "network-hub-a",
-				ApiEndpoint:                "10.0.0.20",
-				ManagementPublicationReady: true,
-				IngressEndpoint:            "10.0.0.21",
+				State:           privatev1.ClusterState_CLUSTER_STATE_READY,
+				Hub:             "network-hub-a",
+				ApiEndpoint:     "10.0.0.20",
+				IngressEndpoint: "10.0.0.21",
 			}.Build(),
 		}.Build(),
 	).Do(ctx)

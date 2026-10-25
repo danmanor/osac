@@ -240,8 +240,6 @@ func (s *PrivateFabricDomainsServer) validateFabricDomain(ctx context.Context, o
 		return grpcstatus.Error(grpccodes.FailedPrecondition,
 			"FabricDomains need BMaaS, which is not enabled in this deployment")
 	}
-	tenant := object.GetMetadata().GetTenant()
-
 	// Hold the VirtualNetwork row lock, as VirtualNetworks.Delete does, until this request transaction finishes.
 	vn, err := lockParentVirtualNetwork(ctx, s.guards, s.virtualNetworks, spec.GetVirtualNetwork(), object.GetMetadata())
 	if err != nil {
@@ -261,22 +259,5 @@ func (s *PrivateFabricDomainsServer) validateFabricDomain(ctx context.Context, o
 			"the NetworkClass does not set east_west_capabilities.supports_east_west_ethernet")
 	}
 
-	// Every server is the host of a BareMetalInstance of the tenant that is not being deleted.
-	hosts := map[string]bool{}
-	err = forEachRecord(ctx, s.guards.bareMetalInstances, func(instance *privatev1.BareMetalInstance) {
-		if instance.GetMetadata().GetTenant() == tenant && !instance.GetMetadata().HasDeletionTimestamp() &&
-			instance.GetStatus().GetHostName() != "" {
-			hosts[instance.GetStatus().GetHostName()] = true
-		}
-	})
-	if err != nil {
-		return grpcstatus.Error(grpccodes.Internal, "failed to check the FabricDomain servers")
-	}
-	for _, server := range spec.GetServers() {
-		if !hosts[server] {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"FabricDomain server %s is not a bare-metal host of this tenant", server)
-		}
-	}
 	return nil
 }

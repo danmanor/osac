@@ -23,9 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,7 +31,7 @@ import (
 	v1alpha1 "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 )
 
-var _ = Describe("ClusterOrder automatic external access hold", func() {
+var _ = Describe("reconcileAutoExternalIPCleanup", func() {
 	const (
 		networkingNS = "default"
 		clusterUUID  = "test-cluster-uuid"
@@ -46,13 +44,11 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 		for _, obj := range indexedObjects {
 			waitForIndexedClientObject(obj)
 		}
-		engine, _ := newTestEngine(true)
 		return &ClusterOrderReconciler{
 			Client:              autoExternalIPCleanupTestClient(),
 			apiReader:           k8sClient,
 			NetworkingNamespace: networkingNamespace,
 			StatusPollInterval:  pollInterval,
-			Engine:              engine,
 		}
 	}
 
@@ -78,7 +74,9 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "test-eia-",
 				Namespace:    networkingNS,
-				Labels:       map[string]string{autoCreatedLabel: labelValueTrue},
+				Labels: map[string]string{
+					autoProvisionedLabel: labelValueTrue,
+				},
 			},
 			Spec: v1alpha1.ExternalIPAttachmentSpec{
 				ExternalIP:     "test-eip",
@@ -94,26 +92,47 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 				GenerateName: "test-eip-",
 				Namespace:    networkingNS,
 				Labels: map[string]string{
-					autoCreatedLabel:    labelValueTrue,
-					autoCreatedForLabel: clusterID,
+					autoProvisionedLabel:    "true",
+					autoProvisionedForLabel: clusterID,
 				},
 			},
-			Spec: v1alpha1.ExternalIPSpec{Pool: "test-pool"},
+			Spec: v1alpha1.ExternalIPSpec{
+				Pool: "test-pool",
+			},
 		}
 	}
 
-	owner := autoExternalIPOwner{kind: clusterOrderOwner, id: clusterUUID}
+	listEIAs := func() []v1alpha1.ExternalIPAttachment {
+		list := &v1alpha1.ExternalIPAttachmentList{}
+		ExpectWithOffset(1, k8sClient.List(ctx, list, client.InNamespace(networkingNS))).To(Succeed())
+		return list.Items
+	}
+
+	listEIPs := func() []v1alpha1.ExternalIP {
+		list := &v1alpha1.ExternalIPList{}
+		ExpectWithOffset(1, k8sClient.List(ctx, list, client.InNamespace(networkingNS))).To(Succeed())
+		return list.Items
+	}
+
+	cleanupEIAs := func() {
+		list := &v1alpha1.ExternalIPAttachmentList{}
+		Expect(k8sClient.List(ctx, list, client.InNamespace(networkingNS))).To(Succeed())
+		for i := range list.Items {
+			_ = k8sClient.Delete(ctx, &list.Items[i])
+		}
+	}
+
+	cleanupEIPs := func() {
+		list := &v1alpha1.ExternalIPList{}
+		Expect(k8sClient.List(ctx, list, client.InNamespace(networkingNS))).To(Succeed())
+		for i := range list.Items {
+			_ = k8sClient.Delete(ctx, &list.Items[i])
+		}
+	}
 
 	AfterEach(func() {
-		for _, list := range []client.ObjectList{&v1alpha1.ExternalIPAttachmentList{}, &v1alpha1.ExternalIPList{}} {
-			Expect(k8sClient.List(ctx, list, client.InNamespace(networkingNS))).To(Succeed())
-			Expect(apimeta.EachListItem(list, func(obj runtime.Object) error {
-				object := obj.(client.Object)
-				object.SetFinalizers(nil)
-				_ = k8sClient.Update(ctx, object)
-				return client.IgnoreNotFound(k8sClient.Delete(ctx, object))
-			})).To(Succeed())
-		}
+		cleanupEIAs()
+		cleanupEIPs()
 		Eventually(func() bool {
 			attachments := &v1alpha1.ExternalIPAttachmentList{}
 			addresses := &v1alpha1.ExternalIPList{}
@@ -123,7 +142,7 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 		}).WithTimeout(5 * time.Second).Should(BeTrue())
 	})
 
-	It("holds ClusterOrder teardown until the automatic attachment and address are gone, deleting neither", func() {
+	It("holds ClusterOrder teardown until current-marker attachments and addresses finish deletion", func() {
 		co := newClusterOrder(clusterUUID)
 		co.Finalizers = []string{osacFinalizer}
 		Expect(k8sClient.Create(ctx, co)).To(Succeed())
@@ -136,8 +155,17 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 		})
 
 		eia := newAutoEIA(clusterUUID)
+		eia.Labels = map[string]string{
+			autoCreatedLabel: labelValueTrue,
+		}
+		eia.Finalizers = []string{"test.provider/detach"}
 		Expect(k8sClient.Create(ctx, eia)).To(Succeed())
 		eip := newAutoEIP(clusterUUID)
+		eip.Labels = map[string]string{
+			autoCreatedLabel:    labelValueTrue,
+			autoCreatedForLabel: clusterUUID,
+		}
+		eip.Finalizers = []string{"test.provider/release"}
 		Expect(k8sClient.Create(ctx, eip)).To(Succeed())
 
 		Expect(k8sClient.Delete(ctx, co)).To(Succeed())
@@ -152,31 +180,37 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 			stored := &v1alpha1.ClusterOrder{}
 			Expect(k8sClient.Get(ctx, key, stored)).To(Succeed())
 			Expect(stored.Finalizers).To(ContainElement(osacFinalizer))
-			deleting := apimeta.FindStatusCondition(stored.Status.Conditions, v1alpha1.ConditionDeleting)
-			Expect(deleting).NotTo(BeNil())
-			Expect(deleting.Message).To(Equal(clusterOrderDeletingWaitExternal))
 		}
 
 		Expect(reconcile().RequeueAfter).To(Equal(pollInterval))
 		assertParentHeld()
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eia), eia)).To(Succeed())
-		Expect(eia.DeletionTimestamp).To(BeNil(), "the ClusterOrder controller deletes no automatic resource")
+		Expect(eia.DeletionTimestamp).NotTo(BeNil())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
 		Expect(eip.DeletionTimestamp).To(BeNil())
 
-		// The fulfillment service deletes the attachment, then the address.
-		Expect(k8sClient.Delete(ctx, eia)).To(Succeed())
+		Expect(reconcile().RequeueAfter).To(Equal(pollInterval))
+		assertParentHeld()
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
+		Expect(eip.DeletionTimestamp).To(BeNil())
+
+		eia.Finalizers = nil
+		Expect(k8sClient.Update(ctx, eia)).To(Succeed())
 		waitForIndexedClientObjectGone(eia)
 		Expect(reconcile().RequeueAfter).To(Equal(pollInterval))
 		assertParentHeld()
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), eip)).To(Succeed())
+		Expect(eip.DeletionTimestamp).NotTo(BeNil())
 
-		Expect(k8sClient.Delete(ctx, eip)).To(Succeed())
+		Expect(reconcile().RequeueAfter).To(Equal(pollInterval))
+		assertParentHeld()
+		eip.Finalizers = nil
+		Expect(k8sClient.Update(ctx, eip)).To(Succeed())
 		waitForIndexedClientObjectGone(eip)
 		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
-		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &v1alpha1.ClusterOrder{}))
-		}).WithTimeout(5 * time.Second).Should(BeTrue())
+		getErr := k8sClient.Get(ctx, key, &v1alpha1.ClusterOrder{})
+		Expect(apierrors.IsNotFound(getErr)).To(BeTrue())
 	})
 
 	It("preserves deletion when a stale provisioning reconcile writes Ready", func() {
@@ -225,37 +259,213 @@ var _ = Describe("ClusterOrder automatic external access hold", func() {
 		Expect(latest.GetFinalizers()).To(ContainElement(osacFinalizer))
 	})
 
-	Context("automaticExternalAccessRemains", func() {
-		It("is false without a networking namespace or an owner ID", func() {
-			Expect(automaticExternalAccessRemains(ctx, autoExternalIPCleanupTestClient(), "", owner)).To(BeFalse())
-			Expect(automaticExternalAccessRemains(ctx, autoExternalIPCleanupTestClient(), networkingNS,
-				autoExternalIPOwner{kind: clusterOrderOwner})).To(BeFalse())
+	Context("no-op cases", func() {
+		It("returns done=true when NetworkingNamespace is empty", func() {
+			r := newReconciler("")
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
 		})
 
-		It("counts only automatic resources of the owner", func() {
-			foreignEIA := newAutoEIA("other-cluster")
-			Expect(k8sClient.Create(ctx, foreignEIA)).To(Succeed())
-			manualEIA := newAutoEIA(clusterUUID)
-			manualEIA.Labels = nil
-			Expect(k8sClient.Create(ctx, manualEIA)).To(Succeed())
-			foreignEIP := newAutoEIP("other-cluster")
-			Expect(k8sClient.Create(ctx, foreignEIP)).To(Succeed())
-			for _, obj := range []client.Object{foreignEIA, manualEIA, foreignEIP} {
-				waitForIndexedClientObject(obj)
-			}
-			Expect(automaticExternalAccessRemains(ctx, autoExternalIPCleanupTestClient(), networkingNS, owner)).To(BeFalse())
-
-			eip := newAutoEIP(clusterUUID)
-			Expect(k8sClient.Create(ctx, eip)).To(Succeed())
-			waitForIndexedClientObject(eip)
-			Expect(automaticExternalAccessRemains(ctx, autoExternalIPCleanupTestClient(), networkingNS, owner)).To(BeTrue())
+		It("returns done=true when ClusterOrder has no UUID label", func() {
+			r := newReconciler(networkingNS)
+			co := newClusterOrder("")
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
 		})
 
-		It("counts an automatic attachment of the owner", func() {
+		It("returns done=true when no auto-provisioned resources exist", func() {
+			r := newReconciler(networkingNS)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
+		})
+	})
+
+	Context("ExternalIPAttachment cleanup", func() {
+		It("deletes auto-provisioned EIAs targeting this cluster and requeues", func() {
 			eia := newAutoEIA(clusterUUID)
 			Expect(k8sClient.Create(ctx, eia)).To(Succeed())
-			waitForIndexedClientObject(eia)
-			Expect(automaticExternalAccessRemains(ctx, autoExternalIPCleanupTestClient(), networkingNS, owner)).To(BeTrue())
+
+			r := newReconciler(networkingNS, eia)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeFalse())
+			Expect(result.RequeueAfter).To(Equal(pollInterval))
+
+			// EIA should have a deletion timestamp or be gone
+			remaining := listEIAs()
+			for _, e := range remaining {
+				Expect(e.DeletionTimestamp).NotTo(BeNil())
+			}
+		})
+
+		It("does not delete EIAs targeting a different cluster", func() {
+			otherEIA := newAutoEIA("different-uuid")
+			Expect(k8sClient.Create(ctx, otherEIA)).To(Succeed())
+
+			r := newReconciler(networkingNS, otherEIA)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			// Other cluster's EIA must not be deleted
+			remaining := listEIAs()
+			Expect(remaining).To(HaveLen(1))
+			Expect(remaining[0].DeletionTimestamp).To(BeNil())
+		})
+
+		It("does not delete EIAs without the auto-provisioned label", func() {
+			clusterIDCopy := clusterUUID
+			ep := v1alpha1.ExternalIPAttachmentTargetEndpointAPI
+			manualEIA := &v1alpha1.ExternalIPAttachment{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "manual-eia-",
+					Namespace:    networkingNS,
+				},
+				Spec: v1alpha1.ExternalIPAttachmentSpec{
+					ExternalIP:     "test-eip",
+					Cluster:        &clusterIDCopy,
+					TargetEndpoint: &ep,
+				},
+			}
+			Expect(k8sClient.Create(ctx, manualEIA)).To(Succeed())
+
+			r := newReconciler(networkingNS, manualEIA)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			remaining := listEIAs()
+			Expect(remaining).To(HaveLen(1))
+			Expect(remaining[0].DeletionTimestamp).To(BeNil())
+		})
+	})
+
+	Context("ExternalIP cleanup", func() {
+		It("deletes auto-provisioned EIPs for this cluster after EIAs are gone and requeues", func() {
+			eip := newAutoEIP(clusterUUID)
+			Expect(k8sClient.Create(ctx, eip)).To(Succeed())
+
+			r := newReconciler(networkingNS, eip)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeFalse())
+			Expect(result.RequeueAfter).To(Equal(pollInterval))
+
+			remaining := listEIPs()
+			for _, e := range remaining {
+				Expect(e.DeletionTimestamp).NotTo(BeNil())
+			}
+		})
+
+		It("does not delete EIPs labeled for a different cluster", func() {
+			eip := newAutoEIP("different-uuid")
+			Expect(k8sClient.Create(ctx, eip)).To(Succeed())
+
+			r := newReconciler(networkingNS, eip)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			remaining := listEIPs()
+			Expect(remaining).To(HaveLen(1))
+			Expect(remaining[0].DeletionTimestamp).To(BeNil())
+		})
+
+		It("does not match an owner ID from the other marker generation", func() {
+			eips := []*v1alpha1.ExternalIP{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: "cross-generation-current-eip-",
+						Namespace:    networkingNS,
+						Labels: map[string]string{
+							autoCreatedLabel:        labelValueTrue,
+							autoCreatedForLabel:     "different-uuid",
+							autoProvisionedForLabel: clusterUUID,
+						},
+					},
+					Spec: v1alpha1.ExternalIPSpec{Pool: "test-pool"},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: "cross-generation-legacy-eip-",
+						Namespace:    networkingNS,
+						Labels: map[string]string{
+							autoCreatedForLabel:     clusterUUID,
+							autoProvisionedLabel:    labelValueTrue,
+							autoProvisionedForLabel: "different-uuid",
+						},
+					},
+					Spec: v1alpha1.ExternalIPSpec{Pool: "test-pool"},
+				},
+			}
+			for _, eip := range eips {
+				Expect(k8sClient.Create(ctx, eip)).To(Succeed())
+			}
+
+			indexedObjects := make([]client.Object, 0, len(eips))
+			for _, eip := range eips {
+				indexedObjects = append(indexedObjects, eip)
+			}
+			r := newReconciler(networkingNS, indexedObjects...)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			for _, eip := range eips {
+				remaining := &v1alpha1.ExternalIP{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(eip), remaining)).To(Succeed())
+				Expect(remaining.DeletionTimestamp).To(BeNil())
+			}
+		})
+	})
+
+	Context("phased ordering", func() {
+		It("waits for EIAs to be gone before deleting EIPs", func() {
+			eia := newAutoEIA(clusterUUID)
+			Expect(k8sClient.Create(ctx, eia)).To(Succeed())
+			eip := newAutoEIP(clusterUUID)
+			Expect(k8sClient.Create(ctx, eip)).To(Succeed())
+
+			r := newReconciler(networkingNS, eia, eip)
+			co := newClusterOrder(clusterUUID)
+
+			// First call: EIA phase — EIA gets deleted, EIP untouched
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeFalse())
+			Expect(result.RequeueAfter).To(Equal(pollInterval))
+
+			// EIP must not be deleted yet
+			eipList := listEIPs()
+			Expect(eipList).To(HaveLen(1))
+			Expect(eipList[0].DeletionTimestamp).To(BeNil())
+		})
+
+		It("returns done=true when both EIAs and EIPs are gone", func() {
+			r := newReconciler(networkingNS)
+			co := newClusterOrder(clusterUUID)
+			done, result, err := r.reconcileAutoExternalIPCleanup(ctx, co)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(done).To(BeTrue())
+			Expect(result.RequeueAfter).To(BeZero())
 		})
 	})
 })

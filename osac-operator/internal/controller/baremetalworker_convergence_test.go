@@ -201,7 +201,7 @@ var _ = Describe("Unified worker reconciliation", Label("baremetalworker"), func
 		fc.AddDiskImage(privatev1.DiskImage_builder{Id: "image", Metadata: privatev1.Metadata_builder{Name: "image"}.Build()}.Build())
 		fc.AddBareMetalInstanceType(newInstanceType("standard", "data-0"))
 		r = buildReconciler(k8sClient)
-		Expect(createWorkerOrder(ctx, co)).To(Succeed())
+		Expect(k8sClient.Create(ctx, co)).To(Succeed())
 		DeferCleanup(func() {
 			ignition.Close()
 			latest := &api.ClusterOrder{}
@@ -962,9 +962,9 @@ var _ = Describe("Unified worker reconciliation", Label("baremetalworker"), func
 		Expect(err).NotTo(HaveOccurred())
 		reserved := getOrder().Status.Workers
 		candidate := privatev1.BareMetalInstance_builder{Id: "incarnation", Metadata: privatev1.Metadata_builder{
-			Name: reserved[0].BareMetalInstance.Name, Tenant: "system",
+			Name: reserved[0].BareMetalInstance.Name, Tenant: tenant,
 			Labels:      map[string]string{"osac.openshift.io/cluster-order": co.Name},
-			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, "osac.openshift.io/cluster-api-id": co.Labels["osac.openshift.io/clusterorder-uuid"]},
+			Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name},
 		}.Build()}.Build()
 		candidates := []*privatev1.BareMetalInstance{candidate}
 		switch kind {
@@ -1099,7 +1099,7 @@ var _ = Describe("Unified worker reconciliation", Label("baremetalworker"), func
 			},
 			Spec: *co.Spec.DeepCopy(),
 		}
-		Expect(createWorkerOrder(ctx, other)).To(Succeed())
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		DeferCleanup(func() {
 			latest := &api.ClusterOrder{}
 			if k8sClient.Get(ctx, client.ObjectKeyFromObject(other), latest) == nil {
@@ -1165,7 +1165,7 @@ var _ = Describe("Unified worker reconciliation", Label("baremetalworker"), func
 	It("repairs identity and early Ready phase before the InfraEnv gate", func() {
 		ready()
 		reserveExistingWorker(co, "recorded")
-		bmi, err := fc.CreateBareMetalInstance(ctx, privatev1.BareMetalInstance_builder{Id: "owned-id", Metadata: privatev1.Metadata_builder{Name: "recorded", Tenant: "system", Labels: map[string]string{"osac.openshift.io/cluster-order": co.Name}, Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, "osac.openshift.io/cluster-api-id": co.Labels["osac.openshift.io/clusterorder-uuid"]}}.Build(), Status: privatev1.BareMetalInstanceStatus_builder{Cluster: privatev1.ClusterLocalReference_builder{Id: co.Labels["osac.openshift.io/clusterorder-uuid"]}.Build()}.Build()}.Build())
+		bmi, err := fc.CreateBareMetalInstance(ctx, privatev1.BareMetalInstance_builder{Id: "owned-id", Metadata: privatev1.Metadata_builder{Name: "recorded", Tenant: tenant, Labels: map[string]string{"osac.openshift.io/cluster-order": co.Name}, Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name}}.Build()}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		fc.SetHostMAC(bmi.GetId(), "aa:bb:cc:dd:ee:ff")
 		agent := &unstructured.Unstructured{}
@@ -1371,7 +1371,7 @@ var _ = Describe("Unified worker reconciliation", Label("baremetalworker"), func
 		future := metav1.NewTime(time.Now().Add(time.Hour))
 		w.NextRetryTime = &future
 		Expect(k8sClient.Status().Update(ctx, latest)).To(Succeed())
-		_, err := fc.CreateBareMetalInstance(ctx, privatev1.BareMetalInstance_builder{Id: "old-bmi", Metadata: privatev1.Metadata_builder{Name: "failed-reservation", Tenant: "system", DeletionTimestamp: timestamppb.Now(), Labels: map[string]string{"osac.openshift.io/cluster-order": co.Name}, Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, "osac.openshift.io/cluster-api-id": co.Labels["osac.openshift.io/clusterorder-uuid"]}}.Build(), Status: privatev1.BareMetalInstanceStatus_builder{State: privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING, Cluster: privatev1.ClusterLocalReference_builder{Id: co.Labels["osac.openshift.io/clusterorder-uuid"]}.Build()}.Build()}.Build())
+		_, err := fc.CreateBareMetalInstance(ctx, privatev1.BareMetalInstance_builder{Id: "old-bmi", Metadata: privatev1.Metadata_builder{Name: "failed-reservation", Tenant: tenant, DeletionTimestamp: timestamppb.Now(), Labels: map[string]string{"osac.openshift.io/cluster-order": co.Name}, Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name}}.Build(), Status: privatev1.BareMetalInstanceStatus_builder{State: privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING}.Build()}.Build())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Delete(ctx, latest)).To(Succeed())
 		createsBefore := len(fc.CreateCalls())

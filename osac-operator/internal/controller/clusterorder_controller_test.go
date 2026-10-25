@@ -2333,6 +2333,38 @@ var _ = Describe("ClusterOrder Controller", func() {
 		})
 	})
 
+	Context("VIP endpoint reconciliation", func() {
+		It("copies VIP annotations to status", func() {
+			instance := &v1alpha1.ClusterOrder{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vip",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"osac.openshift.io/api-endpoint":     "10.0.1.240",
+						"osac.openshift.io/ingress-endpoint": "10.0.1.241",
+					},
+				},
+			}
+
+			reconcileVIPEndpoints(instance)
+			Expect(instance.Status.ApiEndpoint).To(Equal("10.0.1.240"))
+			Expect(instance.Status.IngressEndpoint).To(Equal("10.0.1.241"))
+		})
+
+		It("does nothing when annotations are absent", func() {
+			instance := &v1alpha1.ClusterOrder{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-no-vip",
+					Namespace: "default",
+				},
+			}
+
+			reconcileVIPEndpoints(instance)
+			Expect(instance.Status.ApiEndpoint).To(BeEmpty())
+			Expect(instance.Status.IngressEndpoint).To(BeEmpty())
+		})
+	})
+
 })
 
 var _ = Describe("ClusterOrder phase transition time", func() {
