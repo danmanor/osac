@@ -181,90 +181,6 @@
           },
           "additionalProperties": false
         },
-        "networkManagers": {
-          "type": "object",
-          "description": "Network manager ConfigMaps consumed by the operator subchart (nested fabricManagers/k8sManagers map). This is the user-facing registration API — there is no top-level networkManagers array on the umbrella chart. Defaults live in the osac-operator subchart; override here to enable extra managers or change the sync interval.",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "description": "Create fabric/k8s manager ConfigMaps from the maps below",
-              "default": true
-            },
-            "capabilitiesSyncInterval": {
-              "type": "string",
-              "description": "How often the operator recomputes NetworkClass capabilities from manager ConfigMaps, in addition to reacting immediately to ConfigMap changes. Common values: 30s, 1m, 5m, 15m, 30m, 1h (any valid Go duration is accepted).",
-              "default": "5m",
-              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-            },
-            "fabricManagers": {
-              "type": "object",
-              "description": "Map of fabric manager name → registration. Keys become ConfigMap names (underscores converted to hyphens) and the NetworkClass fabricManager value.",
-              "additionalProperties": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean",
-                    "description": "Create a ConfigMap for this fabric manager"
-                  },
-                  "description": {
-                    "type": "string",
-                    "description": "Human-readable description stored on the ConfigMap"
-                  },
-                  "capabilities": {
-                    "type": "array",
-                    "description": "Fabric manager capability tokens: ipv4 and eastWestEthernet (physical Ethernet east-west). eastWestEthernet publishes supports_east_west_ethernet independently of k8s manager capabilities, unless disabled by NetworkClass.spec.disable_capabilities.",
-                    "items": {
-                      "type": "string",
-                      "enum": ["ipv4", "eastWestEthernet"]
-                    },
-                    "uniqueItems": true
-                  },
-                  "externalIPContractVersion": {
-                    "type": "string",
-                    "description": "ExternalIP result contract supported by this manager. Empty uses the unversioned flow.",
-                    "enum": ["", "v1"],
-                    "default": ""
-                  }
-                },
-                "additionalProperties": false
-              }
-            },
-            "k8sManagers": {
-              "type": "object",
-              "description": "Map of k8s manager name → registration. Keys become ConfigMap names and the NetworkClass k8sManager value.",
-              "additionalProperties": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean",
-                    "description": "Create a ConfigMap for this k8s manager"
-                  },
-                  "description": {
-                    "type": "string",
-                    "description": "Human-readable description stored on the ConfigMap"
-                  },
-                  "capabilities": {
-                    "type": "array",
-                    "description": "Capability tokens advertised for this manager. Only ipv4 is supported in the current release.",
-                    "items": {
-                      "type": "string",
-                      "enum": ["ipv4"]
-                    },
-                    "uniqueItems": true
-                  },
-                  "externalIPContractVersion": {
-                    "type": "string",
-                    "description": "ExternalIP result contract supported by this manager. Empty uses the unversioned flow.",
-                    "enum": ["", "v1"],
-                    "default": ""
-                  }
-                },
-                "additionalProperties": false
-              }
-            }
-          },
-          "additionalProperties": false
-        },
         "enabled": {
           "type": "boolean",
           "description": "Deploy the OSAC operator",
@@ -286,7 +202,11 @@
             "pullPolicy": {
               "type": "string",
               "description": "Image pull policy",
-              "enum": ["Always", "IfNotPresent", "Never"],
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
               "default": "Always"
             }
           },
@@ -345,33 +265,16 @@
         },
         "stall": {
           "type": "object",
-          "description": "Stall detection thresholds for CaaS cluster provisioning stages. Each value is a Go duration string (e.g. 15m, 30m, 1h).",
+          "description": "ClusterOrder provisioning stage stall thresholds",
           "properties": {
-            "preparingInfrastructureThreshold": {
-              "type": "string",
-              "description": "Maximum duration allowed for the PreparingInfrastructure stage before the operator marks the cluster as stalled",
-              "default": "15m",
-              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-            },
-            "controlPlaneStartingThreshold": {
-              "type": "string",
-              "description": "Maximum duration allowed for the ControlPlaneStarting stage before the operator marks the cluster as stalled",
-              "default": "30m",
-              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-            },
-            "workersJoiningThreshold": {
-              "type": "string",
-              "description": "Maximum duration allowed for the WorkersJoining stage before the operator marks the cluster as stalled",
-              "default": "20m",
-              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-            },
+            "preparingInfrastructureThreshold": {"$ref": "#/$defs/positiveDuration"},
+            "controlPlaneStartingThreshold": {"$ref": "#/$defs/positiveDuration"},
+            "workersJoiningThreshold": {"$ref": "#/$defs/positiveDuration"},
             "workersJoiningByInstanceType": {
               "type": "object",
-              "description": "Per-BareMetalInstanceType overrides for the WorkersJoining stall threshold. Keys are exact instance type names, values are Go duration strings.",
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-              }
+              "description": "Per-BareMetalInstanceType worker-join threshold durations, keyed by the exact instance type name",
+              "propertyNames": {"minLength": 1, "maxLength": 253},
+              "additionalProperties": {"$ref": "#/$defs/positiveDuration"}
             }
           },
           "additionalProperties": false
@@ -588,6 +491,39 @@
           },
           "additionalProperties": false
         },
+        "stall": {
+          "type": "object",
+          "description": "Stall detection thresholds for CaaS cluster provisioning stages. Each value is a Go duration string (e.g. 15m, 30m, 1h).",
+          "properties": {
+            "preparingInfrastructureThreshold": {
+              "type": "string",
+              "description": "Maximum duration allowed for the PreparingInfrastructure stage before the operator marks the cluster as stalled",
+              "default": "15m",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+            },
+            "controlPlaneStartingThreshold": {
+              "type": "string",
+              "description": "Maximum duration allowed for the ControlPlaneStarting stage before the operator marks the cluster as stalled",
+              "default": "30m",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+            },
+            "workersJoiningThreshold": {
+              "type": "string",
+              "description": "Maximum duration allowed for the WorkersJoining stage before the operator marks the cluster as stalled",
+              "default": "20m",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+            },
+            "workersJoiningByInstanceType": {
+              "type": "object",
+              "description": "Per-BareMetalInstanceType overrides for the WorkersJoining stall threshold. Keys are exact instance type names, values are Go duration strings.",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "tenants": {
           "type": "array",
           "description": "Tenant namespace seed list",
@@ -733,16 +669,8 @@
                   "type": "object",
                   "required": ["cpu", "memory"],
                   "properties": {
-                    "cpu": {
-                      "type": "string",
-                      "minLength": 1,
-                      "default": "50m"
-                    },
-                    "memory": {
-                      "type": "string",
-                      "minLength": 1,
-                      "default": "128Mi"
-                    }
+                    "cpu": {"type": "string", "minLength": 1, "default": "50m"},
+                    "memory": {"type": "string", "minLength": 1, "default": "128Mi"}
                   },
                   "additionalProperties": false
                 },
@@ -750,16 +678,8 @@
                   "type": "object",
                   "required": ["cpu", "memory"],
                   "properties": {
-                    "cpu": {
-                      "type": "string",
-                      "minLength": 1,
-                      "default": "500m"
-                    },
-                    "memory": {
-                      "type": "string",
-                      "minLength": 1,
-                      "default": "512Mi"
-                    }
+                    "cpu": {"type": "string", "minLength": 1, "default": "500m"},
+                    "memory": {"type": "string", "minLength": 1, "default": "512Mi"}
                   },
                   "additionalProperties": false
                 }
@@ -767,31 +687,17 @@
               "additionalProperties": false
             }
           },
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "enabled": {
-                    "const": true
-                  }
-                }
-              },
-              "then": {
-                "required": ["externalHostname", "exchangeClientId", "exchangeCredentialsSecret"],
-                "properties": {
-                  "externalHostname": {
-                    "minLength": 1
-                  },
-                  "exchangeClientId": {
-                    "minLength": 1
-                  },
-                  "exchangeCredentialsSecret": {
-                    "minLength": 1
-                  }
-                }
+          "allOf": [{
+            "if": {"properties": {"enabled": {"const": true}}},
+            "then": {
+              "required": ["externalHostname", "exchangeClientId", "exchangeCredentialsSecret"],
+              "properties": {
+                "externalHostname": {"minLength": 1},
+                "exchangeClientId": {"minLength": 1},
+                "exchangeCredentialsSecret": {"minLength": 1}
               }
             }
-          ],
+          }],
           "additionalProperties": false
         },
         "variant": {
@@ -1097,15 +1003,9 @@
         {
           "if": {
             "properties": {
-              "variant": {
-                "const": "openshift"
-              },
+              "variant": {"const": "openshift"},
               "mcp": {
-                "properties": {
-                  "enabled": {
-                    "const": true
-                  }
-                },
+                "properties": {"enabled": {"const": true}},
                 "required": ["enabled"]
               }
             },
@@ -1114,11 +1014,7 @@
           "then": {
             "properties": {
               "mcp": {
-                "properties": {
-                  "externalPort": {
-                    "const": 443
-                  }
-                }
+                "properties": {"externalPort": {"const": 443}}
               }
             }
           }
@@ -1218,7 +1114,11 @@
                 "imagePullPolicy": {
                   "type": "string",
                   "description": "Image pull policy for AAP pods",
-                  "enum": ["Always", "IfNotPresent", "Never"],
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ],
                   "default": "IfNotPresent"
                 }
               },
@@ -1356,6 +1256,26 @@
                   "type": "object",
                   "description": "Environment variables for the cluster-fulfillment instance group",
                   "properties": {
+                    "NETWORK_CLASS": {
+                      "type": "string",
+                      "description": "Supported values: netris, agentless_net, ci (CUDN CaaS only). Legacy backends (esi, nico) are removed from the standard schema.",
+                      "enum": [
+                        "",
+                        "netris",
+                        "agentless_net",
+                        "ci"
+                      ]
+                    },
+                    "NETWORK_STEPS_COLLECTION": {
+                      "type": "string",
+                      "description": "Supported values: netris.steps, ci.steps, agentless_net.steps. Legacy collections (nico.steps, osac.steps) are removed from the standard schema.",
+                      "enum": [
+                        "",
+                        "netris.steps",
+                        "ci.steps",
+                        "agentless_net.steps"
+                      ]
+                    },
                     "DNS_CLASS": {
                       "type": "string",
                       "description": "Fully-qualified Ansible role name of the DNS driver. dns.route53.dns manages Route 53 records; dns.noop.dns skips external DNS for environments that do not manage DNS records.",
@@ -1367,6 +1287,38 @@
                     "DNS_ZONE": {
                       "type": "string",
                       "description": "DNS zone to operate in (defaults to EXTERNAL_ACCESS_BASE_DOMAIN)"
+                    },
+                    "NETRIS_MGMT_VPC_ID": {
+                      "type": "string",
+                      "description": "Netris management VPC ID"
+                    },
+                    "NETRIS_MGMT_VPC_NAME": {
+                      "type": "string",
+                      "description": "Netris management VPC name"
+                    },
+                    "NETRIS_RESOURCE_CLASS_MAP": {
+                      "type": "string",
+                      "description": "JSON mapping of resource classes to Netris server labels"
+                    },
+                    "SERVER_SSH_BASTION_HOST": {
+                      "type": "string",
+                      "description": "SSH bastion host for server access"
+                    },
+                    "SERVER_SSH_BASTION_USER": {
+                      "type": "string",
+                      "description": "SSH bastion user"
+                    },
+                    "SERVER_SSH_USER": {
+                      "type": "string",
+                      "description": "SSH user for direct server access"
+                    },
+                    "SERVER_MGMT_ROUTE_DESTINATION": {
+                      "type": "string",
+                      "description": "Management network route destination CIDR"
+                    },
+                    "SERVER_MGMT_ROUTE_GATEWAY": {
+                      "type": "string",
+                      "description": "Management network route gateway"
                     },
                     "EXTERNAL_ACCESS_BASE_DOMAIN": {
                       "type": "string",
@@ -1401,6 +1353,26 @@
                         "HighlyAvailable",
                         "SingleReplica"
                       ]
+                    },
+                    "PARKING_VNET_NAME": {
+                      "type": "string",
+                      "description": "Name of the parking V-Net where idle CaaS agents sit before cluster assignment (effective default: idle-agents-network)"
+                    },
+                    "NETRIS_SITE_ID": {
+                      "type": "string",
+                      "description": "Netris site identifier"
+                    },
+                    "NETRIS_TENANT_ID": {
+                      "type": "string",
+                      "description": "Netris tenant identifier"
+                    },
+                    "NETRIS_TENANT_NAME": {
+                      "type": "string",
+                      "description": "Netris tenant display name"
+                    },
+                    "NETRIS_USERNAME": {
+                      "type": "string",
+                      "description": "Netris API username"
                     }
                   },
                   "additionalProperties": false
@@ -1409,6 +1381,10 @@
                   "type": "object",
                   "description": "Secret values for the cluster-fulfillment instance group",
                   "properties": {
+                    "NETRIS_PASSWORD": {
+                      "type": "string",
+                      "description": "Netris controller password for the CaaS Netris steps"
+                    },
                     "AWS_ACCESS_KEY_ID": {
                       "type": "string",
                       "description": "AWS access key for Route 53 DNS backend"
@@ -1416,6 +1392,14 @@
                     "AWS_SECRET_ACCESS_KEY": {
                       "type": "string",
                       "description": "AWS secret key for Route 53 DNS backend"
+                    },
+                    "SERVER_SSH_KEY": {
+                      "type": "string",
+                      "description": "SSH private key for server access"
+                    },
+                    "SERVER_SSH_BASTION_KEY": {
+                      "type": "string",
+                      "description": "SSH private key for bastion access"
                     }
                   },
                   "additionalProperties": false
@@ -1425,7 +1409,7 @@
             },
             "networkFulfillment": {
               "type": "object",
-              "description": "ConfigMap and Secret network-fulfillment-ig: the network managers' settings and credentials, written verbatim (network manager contract section 4.3). Keys start with the manager's registration name in upper case. Required when global.networking.provisioningEnabled is true.",
+              "description": "ConfigMap and Secret network-fulfillment-ig: the network managers' settings and credentials, written verbatim (network manager contract section 4.3). Keys start with the manager's registration name in upper case, for example NETRIS_CONTROLLER_URL or CUDN_EVPN_DNS_RESOLVERS. Required when global.networking.provisioningEnabled is true.",
               "properties": {
                 "enabled": {
                   "type": "boolean",
@@ -1438,7 +1422,7 @@
                 },
                 "secret": {
                   "$ref": "#/$defs/managerSettings",
-                  "description": "Network manager credentials (Secret network-fulfillment-ig), stored under keys prefixed with the registration name."
+                  "description": "Network manager credentials (Secret network-fulfillment-ig), for example NETRIS_PASSWORD."
                 }
               },
               "additionalProperties": false
@@ -1695,7 +1679,11 @@
             },
             "pullPolicy": {
               "type": "string",
-              "enum": ["Always", "IfNotPresent", "Never"]
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
             }
           },
           "additionalProperties": false
@@ -1886,7 +1874,11 @@
             "pullPolicy": {
               "type": "string",
               "description": "Image pull policy",
-              "enum": ["Always", "IfNotPresent", "Never"],
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
               "default": "Always"
             }
           },
@@ -2043,7 +2035,7 @@
             },
             "enableNetworkingProvisioning": {
               "type": "string",
-              "description": "BMF-specific networking provisioning toggle; retained until the BMF component adopts global.networking.provisioningEnabled",
+              "description": "Enable networking resource provisioning in the BMF operator (set to 'true' or 'false')",
               "default": ""
             },
             "aapTokenSecretName": {
@@ -2416,8 +2408,11 @@
         },
         "k8sManager": {
           "type": "string",
-          "description": "Registration name of the OSAC Kubernetes Manager. Required when VMaaS is enabled. Fixed at installation.",
-          "pattern": "^$|^[a-z][a-z0-9_]*$",
+          "description": "OSAC Kubernetes Manager. Required when VMaaS is enabled. Fixed at installation.",
+          "enum": [
+            "",
+            "cudn_evpn"
+          ],
           "default": ""
         },
         "networkClass": {
@@ -2500,11 +2495,6 @@
       },
       "additionalProperties": false
     },
-    "ipv4Cidr": {
-      "type": "string",
-      "description": "IPv4 CIDR.",
-      "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$"
-    },
     "addressShare": {
       "type": "number",
       "description": "Share of each Subnet's addresses: a multiple of 0.0625 from 0 to 1.",
@@ -2574,6 +2564,11 @@
       ],
       "additionalProperties": false
     },
+    "ipv4Cidr": {
+      "type": "string",
+      "description": "IPv4 CIDR.",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$"
+    },
     "managerSettings": {
       "type": "object",
       "description": "Settings written verbatim, one key per setting. Keys start with the network manager's registration name in upper case.",
@@ -2608,15 +2603,38 @@
         }
       },
       "then": {
-        "properties": {
-          "global": {
+        "anyOf": [
+          {
             "properties": {
-              "services": {
+              "global": {
                 "properties": {
-                  "bmaas": {
+                  "services": {
                     "properties": {
-                      "enabled": {
-                        "const": true
+                      "vmaas": {
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "global": {
+                "properties": {
+                  "services": {
+                    "properties": {
+                      "bmaas": {
+                        "properties": {
+                          "enabled": {
+                            "const": true
+                          }
+                        }
                       }
                     }
                   }
@@ -2624,7 +2642,7 @@
               }
             }
           }
-        }
+        ]
       }
     },
     {

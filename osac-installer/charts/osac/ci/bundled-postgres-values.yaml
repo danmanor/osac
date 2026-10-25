@@ -7,8 +7,8 @@ global:
   networking:
     # The Fabric Manager registration is applied by the admin; rendering only
     # needs its name.
-    fabricManager: example_fabric
-    k8sManager: example_k8s
+    fabricManager: netris
+    k8sManager: cudn_evpn
 
 ui:
   enabled: true

@@ -12,7 +12,9 @@ Two instance groups carry networking and CaaS settings:
 - `network-fulfillment-ig` (`aap.instanceGroups.networkFulfillment`): the
   network managers' settings (`config`, a ConfigMap) and credentials
   (`secret`, a Secret), written verbatim. Each key starts with the manager's
-  registration name in upper case. See [Networking configuration](network-backend.md).
+  registration name in upper case, for example `NETRIS_CONTROLLER_URL`,
+  `NETRIS_PASSWORD` or `CUDN_EVPN_DNS_RESOLVERS`. See
+  [Networking configuration](network-backend.md).
 
 ## How It Works
 
@@ -44,7 +46,7 @@ Kubernetes Secret. Do not pre-encode them.
 | `AWS_SECRET_ACCESS_KEY` | AWS credentials for Route53 DNS |
 
 Network manager credentials go in `aap.instanceGroups.networkFulfillment.secret`
-(Secret `network-fulfillment-ig`), never in `cluster-fulfillment-ig`.
+(Secret `network-fulfillment-ig`).
 
 > **Note on SSH keys:** SSH private keys are not set via environment variables.
 > They must be added directly to the `cluster-fulfillment-ig` Kubernetes Secret.

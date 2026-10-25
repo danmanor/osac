@@ -6,8 +6,8 @@ global:
     provisioningEnabled: true
     excludedIpv4Cidrs:
     - 192.0.2.0/24
-    fabricManager: example_fabric
-    k8sManager: example_k8s
+    fabricManager: netris
+    k8sManager: cudn_evpn
     networkClass:
       defaults:
         virtualNetworkIPv4CIDR: 10.200.0.0/16
@@ -124,7 +124,10 @@ aap:
       secret: {}
     networkFulfillment:
       enabled: true
-      config: {}
+      config:
+        NETRIS_CONTROLLER_URL: "https://test-ctl.netris.io"
+        NETRIS_VALIDATE_CERTS: "false"
+        CUDN_EVPN_DNS_RESOLVERS: "192.0.2.53"
       secret: {}
 
 bmf:

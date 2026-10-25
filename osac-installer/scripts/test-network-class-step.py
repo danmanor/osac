@@ -17,8 +17,8 @@ step = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(step)
 
 INPUT = {
-    "fabric_manager": "example_fabric",
-    "k8s_manager": "example_k8s",
+    "fabric_manager": "netris",
+    "k8s_manager": "cudn_evpn",
     "defaults": {
         "virtual_network_ipv4_cidr": "10.200.0.0/16",
         "subnet_ipv4_cidr": "10.200.0.0/20",
@@ -31,6 +31,7 @@ INPUT = {
     "services": {"vmaas": True, "bmaas": True, "caas": True},
     "excluded_ipv4_cidrs": ["192.0.2.0/24"],
     "provisioning_enabled": True,
+    "cudn_evpn_dns_resolvers": "192.0.2.53,192.0.2.54",
 }
 
 
@@ -39,8 +40,8 @@ def stored_class(**changes) -> dict:
     nc = {
         "id": "nc-1",
         "title": step.TITLE,
-        "fabric_manager": "example_fabric",
-        "k8s_manager": "example_k8s",
+        "fabric_manager": "netris",
+        "k8s_manager": "cudn_evpn",
         "spec": {
             "defaults": {
                 "virtual_network_ipv4_cidr": "10.200.0.0/16",
@@ -143,8 +144,8 @@ class NetworkClassStepTest(unittest.TestCase):
         self.assertEqual(self.run_step(), "created")
         method, path, body = self.api.requests[-1]
         self.assertEqual((method, path), ("POST", step.NETWORK_CLASSES))
-        self.assertEqual(body["fabric_manager"], "example_fabric")
-        self.assertEqual(body["k8s_manager"], "example_k8s")
+        self.assertEqual(body["fabric_manager"], "netris")
+        self.assertEqual(body["k8s_manager"], "cudn_evpn")
         self.assertEqual(body["title"], step.TITLE)
         self.assertEqual(body["spec"]["defaults"], INPUT["defaults"])
         self.assertEqual(body["spec"]["east_west_capabilities"], {"supports_east_west_ethernet": False})
@@ -192,7 +193,7 @@ class NetworkClassStepTest(unittest.TestCase):
         self.assertEqual(self.api.methods(), ["GET"])
 
     def test_one_changed_field(self):
-        self.api.network_classes = [stored_class(fabric_manager="other_fabric")]
+        self.api.network_classes = [stored_class(fabric_manager="agentless_net")]
         self.assert_fails(
             "NetworkClass fabric_manager cannot change after installation; see Replacing the NetworkClass"
         )
@@ -258,6 +259,38 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(str(ctx.exception), message)
 
     def test_valid_input(self):
+        step.validate(self.input)
+
+    def test_dns_resolvers_missing(self):
+        self.input["cudn_evpn_dns_resolvers"] = ""
+        self.assert_invalid(step.DNS_RESOLVERS_MESSAGE)
+
+    def test_dns_resolvers_with_spaces(self):
+        self.input["cudn_evpn_dns_resolvers"] = "192.0.2.53, 192.0.2.54"
+        self.assert_invalid(step.DNS_RESOLVERS_MESSAGE)
+
+    def test_dns_resolvers_not_ipv4(self):
+        for value in ("dns.example.com", "2001:db8::53", "192.0.2.053", "192.0.2.53,"):
+            self.input["cudn_evpn_dns_resolvers"] = value
+            self.assert_invalid(step.DNS_RESOLVERS_MESSAGE)
+
+    def test_dns_resolver_outside_excluded_ranges(self):
+        self.input["cudn_evpn_dns_resolvers"] = "192.0.2.53,198.51.100.53"
+        self.assert_invalid(
+            "CUDN_EVPN_DNS_RESOLVERS must list the DNS resolver addresses, each inside excludedIpv4Cidrs"
+        )
+
+    def test_dns_resolvers_skipped_without_provisioning(self):
+        self.input.update(provisioning_enabled=False, cudn_evpn_dns_resolvers="")
+        step.validate(self.input)
+
+    def test_dns_resolvers_skipped_without_cudn_evpn(self):
+        self.input.update(
+            k8s_manager="",
+            cudn_evpn_dns_resolvers="",
+            address_plan={"overlay": 0, "fabric": 0.75, "lb_vip": 0.25},
+            services={"vmaas": False, "bmaas": True, "caas": True},
+        )
         step.validate(self.input)
 
     def test_plan_rules(self):
