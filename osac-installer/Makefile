@@ -894,7 +894,7 @@ chart-name-independence-render-test: helm-osac-deps ## Check cross-chart secret/
 	uv run --project .. python scripts/test-chart-name-independence-render.py
 
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test evpn-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test network-class-step-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test evpn-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
 	@# bmaas-netbox-ci layers bmaas-ci as its base (see the profile-selection
 	@# block); validate the same combination the installer deploys.
 	@for d in values/*/; do \
@@ -914,5 +914,10 @@ helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-
 	@echo "Validation passed."
 
 .PHONY: helm-networking-test
-helm-networking-test: helm-deps helm-infra-deps ## Test networking fabricManager/k8sManager validation and derivation
-	./scripts/test-networking-values.sh
+helm-networking-test: helm-deps ## Test global.networking values, validation, and networking manifests
+	uv run --project .. python scripts/test-networking-values.py
+	python3 scripts/test_it_networking_checks.py
+
+.PHONY: network-class-step-test
+network-class-step-test: ## Test the installer NetworkClass step against a fake fulfillment API
+	python3 scripts/test-network-class-step.py
