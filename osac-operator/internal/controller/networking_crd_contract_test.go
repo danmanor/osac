@@ -241,21 +241,4 @@ var _ = Describe("Networking CRD contracts", func() {
 			Expect(k8sClient.Status().Update(ctx, eipa)).To(Succeed())
 		})
 	})
-
-	Describe("ClusterOrder fabricInterface", func() {
-		It("cannot change once set, while node sets can be added", func() {
-			co := &v1alpha1.ClusterOrder{ObjectMeta: crdMeta("co"), Spec: v1alpha1.ClusterOrderSpec{
-				TemplateID: "tpl",
-				NodeRequests: []v1alpha1.NodeRequest{{NodeSet: "a", NumberOfNodes: 1,
-					BareMetal: &v1alpha1.BareMetalNodeSpec{InstanceType: "gpu"}, FabricInterface: "data-0"}},
-			}}
-			Expect(k8sClient.Create(ctx, co)).To(Succeed())
-			co.Spec.NodeRequests = append(co.Spec.NodeRequests, v1alpha1.NodeRequest{NodeSet: "b", NumberOfNodes: 2,
-				BareMetal: &v1alpha1.BareMetalNodeSpec{InstanceType: "gpu"}, FabricInterface: "data-1"})
-			co.Spec.NodeRequests[0].NumberOfNodes = 3
-			Expect(k8sClient.Update(ctx, co)).To(Succeed())
-			co.Spec.NodeRequests[0].FabricInterface = "data-9"
-			expectRejected(k8sClient.Update(ctx, co), "nodeRequests fabricInterface is immutable once set")
-		})
-	})
 })

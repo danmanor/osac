@@ -56,8 +56,6 @@ type Reconciler struct {
 	recorder              events.EventRecorder
 	clusterOrderNamespace string
 	macResolver           MACResolver
-	networkingNamespace   string
-	provisioningEnabled   bool
 }
 
 // NewReconciler builds the bare-metal worker reconciler.
@@ -95,7 +93,6 @@ func (r *Reconciler) SetMACResolver(resolver MACResolver) {
 // +kubebuilder:rbac:groups=agent-install.openshift.io,resources=infraenvs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agent-install.openshift.io,resources=agents,verbs=get;list;watch;patch;delete
 // +kubebuilder:rbac:groups=hypershift.openshift.io,resources=nodepools,verbs=get;list;watch;patch;update
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=networkattachments,verbs=get
 
 // Reconcile ensures the InfraEnv for a bare-metal ClusterOrder exists, creates BMIs, correlates
 // registered Agents by MAC, and converges NodePool replicas.

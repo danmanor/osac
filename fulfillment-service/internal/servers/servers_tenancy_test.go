@@ -74,18 +74,7 @@ var _ = Describe("Tenancy logic", func() {
 		Expect(err).ToNot(HaveOccurred())
 		_, err = instanceTypesDao.Create().SetObject(privatev1.BareMetalInstanceType_builder{
 			Id: "worker-bmit", Metadata: privatev1.Metadata_builder{Name: "worker-bmit", Tenant: auth.SharedTenant}.Build(),
-			Spec: privatev1.BareMetalInstanceTypeSpec_builder{
-				Hardware: privatev1.BareMetalHardwareSpec_builder{
-					NetworkPorts: []*privatev1.BareMetalNetworkPortSpec{
-						privatev1.BareMetalNetworkPortSpec_builder{Name: "data-0", Role: "fabric"}.Build(),
-					},
-				}.Build(),
-			}.Build(),
 		}.Build()).Do(ctx)
-		// The tenants that these tests create clusters in have READY default networking:
-		for _, tenant := range []string{"my-tenant", "your-tenant", "sales", "engineering", testTenant} {
-			seedReadyDefaultNetworking(tenant, 10)
-		}
 		Expect(err).ToNot(HaveOccurred())
 	})
 
@@ -636,6 +625,6 @@ var _ = Describe("Tenancy logic", func() {
 		status, ok := grpcstatus.FromError(err)
 		Expect(ok).To(BeTrue())
 		Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-		Expect(status.Message()).To(ContainSubstring("does-not-exist"))
+		Expect(status.Message()).To(Equal("tenant 'does-not-exist' doesn't exist"))
 	})
 })

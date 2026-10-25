@@ -55,7 +55,7 @@ var _ = Describe("BareMetalWorker failed excess tenant safety", func() {
 			Id: "foreign-id", Metadata: privatev1.Metadata_builder{
 				Tenant: "tenant2", Name: w.Name,
 				Labels:      map[string]string{"osac.openshift.io/cluster-order": co.Name},
-				Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name, clusterAPIIDAnnotation: co.Labels[clusterOrderIDLabel]},
+				Annotations: map[string]string{"osac.openshift.io/owner-reference": "ClusterOrder/" + co.Name},
 			}.Build(),
 		}.Build()}
 		r := &Reconciler{fulfillment: foreign, recorder: events.NewFakeRecorder(10)}

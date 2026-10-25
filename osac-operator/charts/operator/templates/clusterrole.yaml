@@ -51,8 +51,13 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
   - services
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods
   verbs:
   - get
   - list
@@ -61,14 +66,6 @@ rules:
   - cdi.kubevirt.io
   resources:
   - datavolumes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes
   verbs:
   - get
   - list

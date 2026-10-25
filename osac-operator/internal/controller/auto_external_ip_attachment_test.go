@@ -27,13 +27,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	bmfov1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
@@ -42,15 +40,6 @@ type testExternalIPAttachmentsClient struct {
 	attachments []*privatev1.ExternalIPAttachment
 	created     []*privatev1.ExternalIPAttachment
 	createErr   error
-}
-
-type testBareMetalInstancesGetter struct {
-	object *privatev1.BareMetalInstance
-	err    error
-}
-
-func (c *testBareMetalInstancesGetter) Get(context.Context, *privatev1.BareMetalInstancesGetRequest, ...grpc.CallOption) (*privatev1.BareMetalInstancesGetResponse, error) {
-	return &privatev1.BareMetalInstancesGetResponse{Object: c.object}, c.err
 }
 
 func (c *testExternalIPAttachmentsClient) List(_ context.Context, request *privatev1.ExternalIPAttachmentsListRequest, _ ...grpc.CallOption) (*privatev1.ExternalIPAttachmentsListResponse, error) {
@@ -224,138 +213,6 @@ func TestReconcileAutomaticExternalIPAttachmentsStopsForFailedExternalIP(t *test
 	}
 	if result.RequeueAfter != 0 || len(c.created) != 0 {
 		t.Fatalf("a FAILED ExternalIP must stop the recheck: requeue %s, created %d", result.RequeueAfter, len(c.created))
-	}
-}
-
-func testClusterOrderForRequests(apiEndpoint, ingressEndpoint string, publicationReady bool) *clusterNetworking {
-	order := &v1alpha1.ClusterOrder{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:   "clusters",
-			Labels:      map[string]string{osacClusterOrderIDLabel: "cluster-1"},
-			Annotations: map[string]string{osacTenantKey: "tenant-1"},
-		},
-		Status: v1alpha1.ClusterOrderStatus{ApiEndpoint: apiEndpoint, IngressEndpoint: ingressEndpoint},
-	}
-	status := metav1.ConditionFalse
-	if publicationReady {
-		status = metav1.ConditionTrue
-	}
-	order.SetStatusCondition(string(v1alpha1.ClusterOrderConditionManagementPublicationReady), status, "", "Test")
-	return &clusterNetworking{co: order, clusterID: "cluster-1", enabled: true}
-}
-
-func TestClusterOrderRequestsAutomaticAttachmentsForReadyEndpoints(t *testing.T) {
-	target := testAutomaticAttachmentTarget(clusterOrderOwner, "cluster-1", "tenant-1")
-	attachments := &testExternalIPAttachmentsClient{}
-	reconciler := &ClusterOrderReconciler{
-		Client: testAutomaticExternalIPClient(t,
-			testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10"),
-			testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")),
-		NetworkingNamespace:         "networking",
-		ExternalIPAttachmentsClient: attachments,
-	}
-	if err := reconciler.requestAutomaticExternalIPAttachments(context.Background(),
-		testClusterOrderForRequests("198.51.100.5", "10.0.0.200", true)); err != nil {
-		t.Fatalf("request CaaS automatic attachments: %v", err)
-	}
-	if len(attachments.created) != 2 {
-		t.Fatalf("created %d attachments, want API and ingress", len(attachments.created))
-	}
-}
-
-func TestClusterOrderRequestsNoAPIAttachmentWithoutPublication(t *testing.T) {
-	target := testAutomaticAttachmentTarget(clusterOrderOwner, "cluster-1", "tenant-1")
-	attachments := &testExternalIPAttachmentsClient{}
-	reconciler := &ClusterOrderReconciler{
-		Client: testAutomaticExternalIPClient(t,
-			testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10"),
-			testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")),
-		NetworkingNamespace:         "networking",
-		ExternalIPAttachmentsClient: attachments,
-	}
-	n := testClusterOrderForRequests("198.51.100.5", "", false)
-	if err := reconciler.requestAutomaticExternalIPAttachments(context.Background(), n); err != nil {
-		t.Fatalf("request CaaS automatic attachments: %v", err)
-	}
-	if len(attachments.created) != 0 {
-		t.Fatalf("created %d attachments before an endpoint was ready", len(attachments.created))
-	}
-	if n.result.RequeueAfter != clusterNetworkingRecheck {
-		t.Fatalf("RequeueAfter = %s, want the 30-second recheck", n.result.RequeueAfter)
-	}
-}
-
-func TestBareMetalNetworkingReconcilerRequestsAutomaticAttachmentAfterBMIIsReady(t *testing.T) {
-	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
-	instance := &privatev1.BareMetalInstance{}
-	instance.SetMetadata(privatev1.Metadata_builder{Tenant: "tenant-1"}.Build())
-	instance.SetSpec(privatev1.BareMetalInstanceSpec_builder{AutoExternalIpAttachment: proto.Bool(true)}.Build())
-	attachments := &testExternalIPAttachmentsClient{}
-	reconciler := &BareMetalInstanceCleanupReconciler{
-		Client:                      testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")),
-		networkingNamespace:         "networking",
-		BareMetalInstancesClient:    &testBareMetalInstancesGetter{object: instance},
-		ExternalIPAttachmentsClient: attachments,
-	}
-	bmi := &bmfov1alpha1.BareMetalInstance{Status: bmfov1alpha1.BareMetalInstanceStatus{
-		Phase:                     bmfov1alpha1.BareMetalInstancePhaseReady,
-		RunStrategy:               bmfov1alpha1.RunStrategyAlways,
-		NetworkAttachmentStatuses: []bmfov1alpha1.BareMetalNetworkAttachmentStatus{{Primary: true, IPAddress: "192.0.2.20"}},
-	}}
-	_, err := reconciler.reconcileAutomaticExternalIPAttachments(context.Background(), bmi, "bmi-1")
-	if err != nil {
-		t.Fatalf("reconcile BM automatic attachment: %v", err)
-	}
-	if len(attachments.created) != 1 {
-		t.Fatalf("created %d attachments, want 1", len(attachments.created))
-	}
-	if got := attachments.created[0].GetSpec().GetBaremetalInstance().GetId(); got != "bmi-1" {
-		t.Fatalf("BareMetalInstance target = %q, want bmi-1", got)
-	}
-}
-
-func TestBareMetalInstanceEndpointReady(t *testing.T) {
-	ready := bmfov1alpha1.BareMetalInstance{Status: bmfov1alpha1.BareMetalInstanceStatus{
-		Phase:                     bmfov1alpha1.BareMetalInstancePhaseReady,
-		RunStrategy:               bmfov1alpha1.RunStrategyAlways,
-		NetworkAttachmentStatuses: []bmfov1alpha1.BareMetalNetworkAttachmentStatus{{IPAddress: "10.0.0.130"}},
-	}}
-	if !bareMetalInstanceEndpointReady(&ready) {
-		t.Fatal("a Ready, running BMI with an address is a ready endpoint")
-	}
-	halted := ready.DeepCopy()
-	halted.Status.RunStrategy = bmfov1alpha1.RunStrategyHalted
-	noAddress := ready.DeepCopy()
-	noAddress.Status.NetworkAttachmentStatuses = nil
-	progressing := ready.DeepCopy()
-	progressing.Status.Phase = bmfov1alpha1.BareMetalInstancePhaseProgressing
-	deleting := ready.DeepCopy()
-	now := metav1.Now()
-	deleting.DeletionTimestamp = &now
-	for name, bmi := range map[string]*bmfov1alpha1.BareMetalInstance{
-		"halted": halted, "no address": noAddress, "progressing": progressing, "deleting": deleting,
-	} {
-		if bareMetalInstanceEndpointReady(bmi) {
-			t.Errorf("%s BMI must not be a ready endpoint", name)
-		}
-	}
-}
-
-func TestBareMetalNetworkingReconcilerWaitsUntilBMIHasPrimaryAddress(t *testing.T) {
-	instance := &privatev1.BareMetalInstance{}
-	instance.SetMetadata(privatev1.Metadata_builder{Tenant: "tenant-1"}.Build())
-	instance.SetSpec(privatev1.BareMetalInstanceSpec_builder{AutoExternalIpAttachment: proto.Bool(true)}.Build())
-	attachments := &testExternalIPAttachmentsClient{}
-	reconciler := &BareMetalInstanceCleanupReconciler{
-		BareMetalInstancesClient:    &testBareMetalInstancesGetter{object: instance},
-		ExternalIPAttachmentsClient: attachments,
-	}
-	bmi := &bmfov1alpha1.BareMetalInstance{Status: bmfov1alpha1.BareMetalInstanceStatus{Phase: bmfov1alpha1.BareMetalInstancePhaseReady}}
-	if _, err := reconciler.reconcileAutomaticExternalIPAttachments(context.Background(), bmi, "bmi-1"); err != nil {
-		t.Fatalf("reconcile BM without primary address: %v", err)
-	}
-	if len(attachments.created) != 0 {
-		t.Fatalf("created %d attachments before BMI had its primary address", len(attachments.created))
 	}
 }
 

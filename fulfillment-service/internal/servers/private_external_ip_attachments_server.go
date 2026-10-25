@@ -571,8 +571,7 @@ func (s *PrivateExternalIPAttachmentsServer) validateComputeInstanceReference(
 }
 
 // validateClusterReference locks the target Cluster and checks its endpoint readiness. The API endpoint needs the
-// API address and the management publication ready, the ingress endpoint needs the ingress address; a manual
-// attachment also needs the Cluster READY.
+// API address, the ingress endpoint needs the ingress address; a manual attachment also needs the Cluster READY.
 func (s *PrivateExternalIPAttachmentsServer) validateClusterReference(ctx context.Context,
 	spec *privatev1.ExternalIPAttachmentSpec, automatic bool) (networkingHubReference, error) {
 	key := refKey(spec.GetCluster())
@@ -600,7 +599,7 @@ func (s *PrivateExternalIPAttachmentsServer) validateClusterReference(ctx contex
 	}
 	switch spec.GetTargetEndpoint() {
 	case privatev1.ExternalIPAttachmentEndpoint_EXTERNAL_IP_ATTACHMENT_ENDPOINT_API:
-		if cluster.GetStatus().GetApiEndpoint() == "" || !cluster.GetStatus().GetManagementPublicationReady() {
+		if cluster.GetStatus().GetApiEndpoint() == "" {
 			return networkingHubReference{}, grpcstatus.Errorf(grpccodes.FailedPrecondition,
 				"Cluster '%s' API endpoint is not ready for an ExternalIPAttachment", key)
 		}

@@ -70,10 +70,8 @@ func (f *bmiObservationClient) ListBareMetalInstances(ctx context.Context, filte
 }
 func ownedBMIFixture(co *v1alpha1.ClusterOrder, name, id string) *privatev1.BareMetalInstance {
 	return privatev1.BareMetalInstance_builder{Id: id, Metadata: privatev1.Metadata_builder{
-		Name: name, Tenant: workerBMITenant, Labels: map[string]string{clusterOrderLabel: co.Name},
-		Annotations: map[string]string{ownerReferenceAnnotation: "ClusterOrder/" + co.Name, clusterAPIIDAnnotation: co.Labels[clusterOrderIDLabel]},
-	}.Build(), Status: privatev1.BareMetalInstanceStatus_builder{
-		Cluster: privatev1.ClusterLocalReference_builder{Id: co.Labels[clusterOrderIDLabel]}.Build(),
+		Name: name, Tenant: "tenant", Labels: map[string]string{clusterOrderLabel: co.Name},
+		Annotations: map[string]string{ownerReferenceAnnotation: "ClusterOrder/" + co.Name},
 	}.Build()}.Build()
 }
 func bmiStageHarness(phase, id string) (*Reconciler, *bmiObservationClient, *v1alpha1.ClusterOrder) {
@@ -93,7 +91,7 @@ func runBMIStage(ctx context.Context, r *Reconciler, co *v1alpha1.ClusterOrder) 
 	if err != nil || !res.IsZero() {
 		return false, res, err
 	}
-	workers, err := r.observeExistingWorkers(ctx, co, workerBMITenant, observed)
+	workers, err := r.observeExistingWorkers(ctx, co, "tenant", observed)
 	if err != nil {
 		return false, ctrl.Result{}, err
 	}
@@ -116,7 +114,7 @@ func runDeletionBMIStage(ctx context.Context, r *Reconciler, co *v1alpha1.Cluste
 	if !res.IsZero() {
 		return errWorkerObservationChanged
 	}
-	workers, err := r.observeDeletionWorkers(ctx, co, workerBMITenant, o)
+	workers, err := r.observeDeletionWorkers(ctx, co, "tenant", o)
 	if err != nil {
 		return err
 	}

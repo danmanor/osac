@@ -205,9 +205,6 @@ message BareMetalInstanceStatus {
     },
     (osac.private.v1.metering) = {kind: METERING_FIELD_KIND_FIXED_ONCE_SET}
   ];
-
-  // Inventory name of the assigned host (copied from the hub CR). FabricDomain servers are checked against it.
-  string host_name = 10 [(cleanapi.field).private = true];
 }
 
 // Runtime networking state for a single bare metal network attachment.
@@ -282,12 +279,6 @@ enum BareMetalInstanceConditionType {
 
   // Configuration changes require a restart to take effect.
   BARE_METAL_INSTANCE_CONDITION_TYPE_RESTART_REQUIRED      = 6;
-
-  // Whether the server's network attachment is ready: attached, handed off and with its DHCP address.
-  //
-  // Reasons: NetworkAttachmentProgressing, NetworkAttachmentFailed, NetworkHandoffFailed, LeasePending,
-  // IPDiscoveryFailed, IPDiscovered, ProvisioningDisabled.
-  BARE_METAL_INSTANCE_CONDITION_TYPE_NETWORK_READY         = 7;
 }
 
 // Local reference to a BareMetalInstance resource.

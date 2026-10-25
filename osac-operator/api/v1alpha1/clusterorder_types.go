@@ -20,7 +20,6 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 const (
@@ -55,9 +54,6 @@ type ClusterOrderSpec struct {
 	// NodeRequests defines the types of nodes and number of each type of node that will be used
 	// to build the cluster. Each request selects a BareMetalInstanceType.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:MaxItems=64
-	// +listType=map
-	// +listMapKey=nodeSet
 	NodeRequests []NodeRequest `json:"nodeRequests,omitempty"`
 	// AddOnOperators lists the stable names of operators requested for the cluster.
 	// +kubebuilder:validation:Optional
@@ -115,23 +111,20 @@ type ClusterNetworkSpec struct {
 // ClusterNetworkAttachment defines the network attachment for a cluster,
 // connecting it to a tenant subnet with optional security groups.
 type ClusterNetworkAttachment struct {
-	// SubnetRef is the API ID of the Subnet that the cluster connects to.
+	// SubnetRef is the name of the Subnet CR that the cluster connects to.
 	// The subnet must be in Ready state at creation time.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	SubnetRef string `json:"subnetRef"`
 
-	// SecurityGroupRefs lists the SecurityGroup API IDs to apply to the cluster's
-	// network attachment, the automatic SecurityGroup last. All security groups
-	// must belong to the same virtual network as the subnet.
+	// SecurityGroupRefs lists SecurityGroup CR names to apply to the cluster's
+	// network attachment. All security groups must belong to the same virtual
+	// network as the subnet.
 	// +kubebuilder:validation:Optional
 	SecurityGroupRefs []string `json:"securityGroupRefs,omitempty"`
 }
 
-// The fabric interface cannot be removed or changed once set (the field-level
-// rule does not run when the new object omits it).
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.fabricInterface) || oldSelf.fabricInterface == '' || (has(self.fabricInterface) && self.fabricInterface == oldSelf.fabricInterface)",message="nodeRequests fabricInterface is immutable once set"
 type NodeRequest struct {
 	// NodeSet is the logical group key from the Fulfillment Cluster's spec.node_sets.
 	// It is independent of the hardware profile selected by BareMetal.InstanceType.
@@ -150,10 +143,7 @@ type NodeRequest struct {
 	// When set, IP discovery filters Agent inventory interfaces by this name,
 	// preventing the provisioning NIC address from being returned.
 	// Resolved from the instance type's fabric network port; may also be set explicitly.
-	// It cannot change once set.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:XValidation:rule="size(oldSelf) == 0 || self == oldSelf",message="nodeRequests fabricInterface is immutable once set"
 	FabricInterface string `json:"fabricInterface,omitempty"`
 	// ReleaseImage is the desired OpenShift release image for this node set.
 	// +kubebuilder:validation:Optional
@@ -262,34 +252,6 @@ const (
 	ClusterOrderConditionAddOnOperatorsReady ClusterOrderConditionType = "AddOnOperatorsReady"
 	// ClusterOrderConditionFulfillmentTrustReady indicates whether fulfillment trust is synchronized.
 	ClusterOrderConditionFulfillmentTrustReady ClusterOrderConditionType = "FulfillmentTrustReady"
-
-	// ClusterOrderConditionManagementPublicationReady means the management API is
-	// published so workers can reach it (CaaS networking design).
-	ClusterOrderConditionManagementPublicationReady ClusterOrderConditionType = "ManagementPublicationReady"
-	// ClusterOrderConditionWorkerNetworkingReady reports the networking of the worker BareMetalInstances.
-	ClusterOrderConditionWorkerNetworkingReady ClusterOrderConditionType = "WorkerNetworkingReady"
-	// ClusterOrderConditionEndpointsReady reports the guest ingress and DNS publication of the cluster endpoints.
-	ClusterOrderConditionEndpointsReady ClusterOrderConditionType = "EndpointsReady"
-	// ClusterOrderConditionClusterHealthy reports the cluster health after it became Ready.
-	ClusterOrderConditionClusterHealthy ClusterOrderConditionType = "ClusterHealthy"
-)
-
-// ClusterOrder networking condition reasons (CaaS networking design).
-const (
-	ClusterOrderReasonManagementPublicationPending = "ManagementPublicationPending"
-	ClusterOrderReasonManagementPublicationFailed  = "ManagementPublicationFailed"
-	ClusterOrderReasonWorkersProgressing           = "WorkersProgressing"
-	ClusterOrderReasonWorkersReady                 = "WorkersReady"
-	ClusterOrderReasonWorkerNetworkingFailed       = "WorkerNetworkingFailed"
-	ClusterOrderReasonExternalAccessFailed         = "ExternalAccessFailed"
-	ClusterOrderReasonIngressReservationFailed     = "IngressReservationFailed"
-	ClusterOrderReasonGuestIngressFailed           = "GuestIngressFailed"
-	ClusterOrderReasonDNSPublishFailed             = "DNSPublishFailed"
-	ClusterOrderReasonGuestIngressProgressing      = "GuestIngressProgressing"
-	ClusterOrderReasonEndpointsProgressing         = "EndpointsProgressing"
-	ClusterOrderReasonEndpointsPublished           = "EndpointsPublished"
-	// ReasonProvisioningDisabled (networking_common_types.go) is also an
-	// EndpointsReady and WorkerNetworkingReady reason.
 )
 
 // ClusterOrderClusterReferenceType contains a reference to the namespace created by this ClusterOrder
@@ -365,47 +327,15 @@ type ClusterOrderStatus struct {
 	// +kubebuilder:validation:Optional
 	DesiredConfigVersion string `json:"desiredConfigVersion,omitempty"`
 
-	// ApiEndpoint is the management API VIP: the kube-apiserver Service address of the
-	// hosted control plane. The operator records it at the first ManagementPublicationReady=True.
+	// ApiEndpoint is the internal API server VIP allocated by MetalLB.
+	// Written by the CaaS template after VIP discovery.
 	// +kubebuilder:validation:Optional
 	ApiEndpoint string `json:"apiEndpoint,omitempty"`
 
-	// IngressEndpoint is the guest ingress VIP. The operator records it from the
-	// reserve_cluster_ingress_ip result (ingressAllocatedAddress) once configure_guest_ingress succeeds.
+	// IngressEndpoint is the internal ingress VIP allocated by MetalLB.
+	// Written by the CaaS template after VIP discovery.
 	// +kubebuilder:validation:Optional
 	IngressEndpoint string `json:"ingressEndpoint,omitempty"`
-
-	// APIURL is the cluster API URL, set once the cluster is Ready.
-	// +kubebuilder:validation:Optional
-	APIURL string `json:"apiURL,omitempty"`
-
-	// ConsoleURL is the cluster console URL, set once the cluster is Ready.
-	// +kubebuilder:validation:Optional
-	ConsoleURL string `json:"consoleURL,omitempty"`
-
-	// APIRecordsPublishedTime is when the first publish_public_dns_api succeeded.
-	// +kubebuilder:validation:Optional
-	APIRecordsPublishedTime *metav1.Time `json:"apiRecordsPublishedTime,omitempty"`
-
-	// IngressAllocatedAddress is the guest ingress address accepted from
-	// reserve_cluster_ingress_ip.
-	// +kubebuilder:validation:Optional
-	IngressAllocatedAddress string `json:"ingressAllocatedAddress,omitempty"`
-
-	// TaskInput is the stored input of the cluster's networking tasks
-	// (reserve_cluster_ingress_ip; contract §4.5).
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	TaskInput *runtime.RawExtension `json:"taskInput,omitempty"`
-
-	// Jobs tracks the cluster's networking and guest endpoint jobs
-	// (contract §4.7 Job tracking). The core install and delete jobs stay in
-	// provisioningJobs.
-	// +kubebuilder:validation:Optional
-	// +listType=map
-	// +listMapKey=task
-	// +listMapKey=manager
-	Jobs []NetworkJobStatus `json:"jobs,omitempty"`
 
 	// DesiredWorkers is the sum of the positive numberOfNodes values of the
 	// requested bare-metal node sets. It reports the requested capacity even before

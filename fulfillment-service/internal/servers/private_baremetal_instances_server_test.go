@@ -82,10 +82,6 @@ func createTestBareMetalInstanceType(ctx context.Context, id string, ports ...*p
 
 var _ = Describe("Private bare metal instances server", func() {
 	BeforeEach(func() {
-		seedReadyDefaultNetworking(testTenant, 0)
-	})
-
-	BeforeEach(func() {
 		types, err := dao.NewGenericDAO[*privatev1.BareMetalInstanceType]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
 		Expect(err).ToNot(HaveOccurred())
 		_, err = types.Create().SetObject(bareMetalInstanceTypeFixture(
@@ -1915,7 +1911,7 @@ var _ = Describe("Private bare metal instances server", func() {
 				Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(eipList.GetItems()).To(HaveLen(1))
-			Expect(eipList.GetItems()[0].GetMetadata().GetLabels()[autoCreatedKindLabel]).To(Equal("baremetal_instance"))
+			Expect(eipList.GetItems()[0].GetMetadata().GetLabels()[autoCreatedKindLabel]).To(Equal("bare_metal_instance"))
 
 			attDao, err := dao.NewGenericDAO[*privatev1.ExternalIPAttachment]().
 				SetLogger(logger).SetTenancyLogic(tenancy).Build()
@@ -1927,6 +1923,44 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(attList.GetItems()).To(BeEmpty())
 
+		})
+
+		It("leaves automatic attachment creation to the ready BareMetalInstance reconciler and cleans up an unattached ExternalIP", func() {
+			response, err := server.Create(ctx, privatev1.BareMetalInstancesCreateRequest_builder{
+				Object: privatev1.BareMetalInstance_builder{
+					Metadata: privatev1.Metadata_builder{Name: fmt.Sprintf("deferred-%s", uuid.NewString()[:8])}.Build(),
+					Spec: privatev1.BareMetalInstanceSpec_builder{
+						DiskImage:                privatev1.DiskImageReference_builder{Id: "default-bmi-disk-image"}.Build(),
+						CatalogItem:              privatev1.BareMetalInstanceCatalogItemReference_builder{Id: catalogItemID}.Build(),
+						SshPublicKey:             new(testSSHPublicKey),
+						AutoExternalIpAttachment: proto.Bool(true),
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			bmiID := response.GetObject().GetId()
+
+			eipDao, err := dao.NewGenericDAO[*privatev1.ExternalIP]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			filter := fmt.Sprintf("this.metadata.labels['osac.openshift.io/auto-created-for'] == '%s'", bmiID)
+			eipList, err := eipDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eipList.GetItems()).To(HaveLen(1))
+			Expect(eipList.GetItems()[0].GetMetadata().GetLabels()[autoCreatedKindLabel]).To(Equal("bare_metal_instance"))
+			Expect(eipList.GetItems()[0].GetMetadata().GetAnnotations()[ownerReferenceAnnotation]).To(Equal(bmiID))
+			Expect(eipList.GetItems()[0].GetMetadata().GetAnnotations()["osac.openshift.io/tenant"]).To(Equal(testTenant))
+
+			eiaDao, err := dao.NewGenericDAO[*privatev1.ExternalIPAttachment]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
+			Expect(err).ToNot(HaveOccurred())
+			eiaList, err := eiaDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eiaList.GetItems()).To(BeEmpty())
+
+			_, err = server.Delete(ctx, privatev1.BareMetalInstancesDeleteRequest_builder{Id: bmiID}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			eipList, err = eipDao.List().SetFilter(filter).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(eipList.GetItems()).To(BeEmpty())
 		})
 
 		It("Rejects PATCH that changes auto_external_ip_attachment", func() {
@@ -2100,9 +2134,8 @@ var _ = Describe("Private bare metal instances server", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
-			_ = ncDao
 			fm := "test-fabric"
-			_, err = reuseNetworkClassDAO.Create().SetObject(privatev1.NetworkClass_builder{
+			_, err = ncDao.Create().SetObject(privatev1.NetworkClass_builder{
 				FabricManager: fm,
 				Metadata: privatev1.Metadata_builder{
 					Tenant: testTenant,
@@ -2779,7 +2812,7 @@ var _ = Describe("Private bare metal instances server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(status.Message()).To(ContainSubstring("primary"))
+			Expect(status.Message()).To(ContainSubstring("primary is immutable"))
 			stored, err := server.Get(ctx, privatev1.BareMetalInstancesGetRequest_builder{Id: id}.Build())
 			Expect(err).ToNot(HaveOccurred())
 			Expect(proto.Equal(stored.GetObject().GetSpec(), createResp.GetObject().GetSpec())).To(BeTrue())
@@ -3076,7 +3109,6 @@ var _ = Describe("Private bare metal instances server", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
-			_ = networkClassDao
 
 			vnDao, err = dao.NewGenericDAO[*privatev1.VirtualNetwork]().
 				SetLogger(logger).
@@ -3122,16 +3154,11 @@ var _ = Describe("Private bare metal instances server", func() {
 
 		// createSubnet creates a NetworkClass with the given managers, a VirtualNetwork referencing
 		// it, a Subnet referencing that VirtualNetwork, and a READY SecurityGroup on that VN.
-		createSubnet := func(fabricManager, k8sManager *string) (subnetID, sgID string) {
-			_, err := reuseNetworkClassDAO.Create().SetObject(
+		createSubnet := func(fabricManager string, k8sManager *string) (subnetID, sgID string) {
+			_, err := networkClassDao.Create().SetObject(
 				privatev1.NetworkClass_builder{
-					FabricManager: func() string {
-						if fabricManager == nil {
-							return ""
-						}
-						return *fabricManager
-					}(),
-					K8SManager: k8sManager,
+					FabricManager: fabricManager,
+					K8SManager:    k8sManager,
 					Metadata: privatev1.Metadata_builder{
 						Tenant: testTenant,
 						Name:   uuid.NewString(),
@@ -3193,7 +3220,7 @@ var _ = Describe("Private bare metal instances server", func() {
 		}
 
 		It("allows Create when the attachment's NetworkClass has a fabric_manager", func() {
-			subnetID, sgID := createSubnet(new("netris"), nil)
+			subnetID, sgID := createSubnet("netris", nil)
 			_, err := server.Create(ctx, privatev1.BareMetalInstancesCreateRequest_builder{
 				Object: privatev1.BareMetalInstance_builder{
 					Metadata: privatev1.Metadata_builder{
@@ -3218,7 +3245,7 @@ var _ = Describe("Private bare metal instances server", func() {
 		})
 
 		It("rejects Create when a security group is assigned to a different Hub than its subnet", func() {
-			subnetID, _ := createSubnet(new("netris"), nil)
+			subnetID, _ := createSubnet("netris", nil)
 			subnet, err := subnetDao.Get().SetId(subnetID).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			groupsDao, err := dao.NewGenericDAO[*privatev1.SecurityGroup]().SetLogger(logger).SetTenancyLogic(tenancy).Build()
@@ -3262,7 +3289,7 @@ var _ = Describe("Private bare metal instances server", func() {
 		})
 
 		DescribeTable("validates resolved attachment dependencies", func(subnetReady, groupReady, sameNetwork bool, code grpccodes.Code, message string) {
-			subnetID, _ := createSubnet(new("netris"), nil)
+			subnetID, _ := createSubnet("netris", nil)
 			subnet, err := subnetDao.Get().SetId(subnetID).Do(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			networkID := subnet.GetObject().GetSpec().GetVirtualNetwork().GetId()
@@ -3311,7 +3338,7 @@ var _ = Describe("Private bare metal instances server", func() {
 		},
 			Entry("pending subnet", false, true, true, grpccodes.FailedPrecondition, "subnet"),
 			Entry("pending security group", true, false, true, grpccodes.FailedPrecondition, "security group"),
-			Entry("security group from another network", true, true, false, grpccodes.InvalidArgument, "belongs to another VirtualNetwork"),
+			Entry("security group from another network", true, true, false, grpccodes.InvalidArgument, "different virtual network"),
 		)
 
 		It("allows Create with no network_attachments regardless of fabric manager availability", func() {
@@ -3333,10 +3360,6 @@ var _ = Describe("Private bare metal instances server", func() {
 	})
 
 	Describe("Default network_attachments population", func() {
-		BeforeEach(func() {
-			clearSeededDefaultNetworking(testTenant)
-		})
-
 		var (
 			server          *PrivateBareMetalInstancesServer
 			catalogServer   *PrivateBareMetalInstanceCatalogItemsServer
@@ -3454,9 +3477,6 @@ var _ = Describe("Private bare metal instances server", func() {
 				SetTenancyLogic(tenancy).
 				Build()
 			Expect(err).ToNot(HaveOccurred())
-			_, err = vnDao.Get().SetId(vnID).Do(ctx)
-			Expect(err).ToNot(HaveOccurred())
-
 			// Custom subnet on the default VN (for partial fill / no-overwrite cases).
 			customCidr := "10.100.2.0/24"
 			customSubnetResp, err := subnetDao.Create().SetObject(privatev1.Subnet_builder{
@@ -3692,7 +3712,7 @@ var _ = Describe("Private bare metal instances server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(status.Message()).To(ContainSubstring("at least one SecurityGroup is required"))
+			Expect(status.Message()).To(ContainSubstring("security_groups are required"))
 		})
 
 		It("Accepts a fully specified attachment on a non-default VirtualNetwork", func() {
@@ -3784,7 +3804,7 @@ var _ = Describe("Private bare metal instances server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(status.Message()).To(ContainSubstring("has no default Subnet"))
+			Expect(status.Message()).To(ContainSubstring("no tenant default subnet"))
 		})
 
 		It("Rejects Create when no default security group exists", func() {
@@ -3812,7 +3832,7 @@ var _ = Describe("Private bare metal instances server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(status.Message()).To(ContainSubstring("has no default SecurityGroup"))
+			Expect(status.Message()).To(ContainSubstring("no tenant default security group"))
 		})
 
 		It("Fails when the instance type has no fabric network port", func() {
@@ -3863,17 +3883,13 @@ var _ = Describe("Private bare metal instances server", func() {
 			Expect(err).To(HaveOccurred())
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
-			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
+			Expect(status.Code()).To(Equal(grpccodes.FailedPrecondition))
 			Expect(status.Message()).To(ContainSubstring("fabric"))
 		})
 	})
 })
 
 var _ = Describe("BareMetalInstance ExternalIP referential integrity", func() {
-	BeforeEach(func() {
-		seedReadyDefaultNetworking(testTenant, 0)
-	})
-
 	var (
 		externalIPPoolDao       *dao.GenericDAO[*privatev1.ExternalIPPool]
 		externalIPDao           *dao.GenericDAO[*privatev1.ExternalIP]

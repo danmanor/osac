@@ -271,12 +271,6 @@ enum BareMetalInstanceConditionType {
 
   // Configuration changes require a restart to take effect.
   BARE_METAL_INSTANCE_CONDITION_TYPE_RESTART_REQUIRED      = 6;
-
-  // Whether the server's network attachment is ready: attached, handed off and with its DHCP address.
-  //
-  // Reasons: NetworkAttachmentProgressing, NetworkAttachmentFailed, NetworkHandoffFailed, LeasePending,
-  // IPDiscoveryFailed, IPDiscovered, ProvisioningDisabled.
-  BARE_METAL_INSTANCE_CONDITION_TYPE_NETWORK_READY         = 7;
 }
 
 // Local reference to a BareMetalInstance resource.
