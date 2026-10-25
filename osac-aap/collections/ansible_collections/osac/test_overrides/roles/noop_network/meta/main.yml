@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  author: OSAC
+  description: Reference no-op network manager for OSAC tests
+  license: Apache-2.0
+  min_ansible_version: "2.19"
+dependencies: []

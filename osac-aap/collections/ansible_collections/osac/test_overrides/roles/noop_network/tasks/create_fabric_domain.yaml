@@ -1,0 +1,6 @@
+---
+# Reference no-op network manager (contract test plan, test fixtures): a
+# documented no-op that changes nothing and publishes no typed output.
+- name: Skip create_fabric_domain as a documented no-op
+  ansible.builtin.debug:
+    msg: "noop_network: create_fabric_domain for {{ osac_job_vars.resource.id | default('') }} is a documented no-op"

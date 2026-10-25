@@ -25,9 +25,10 @@ User ─► fulfillment-service (API) ─► osac-operator (watches K8s CRs) ─
    SecurityGroup, ComputeInstance, ClusterOrder, etc.) and triggers AAP job
    templates to provision them.
 3. **osac-aap (this repo)** — The Ansible automation that actually creates
-   infrastructure. Each playbook receives the full K8s CR as its payload,
-   reads an `implementation_strategy` annotation, and dynamically includes the
-   matching template role to do the provisioning.
+   infrastructure. Networking jobs run the generic playbook
+   `playbook_osac_network_task.yml`, which includes the task file of the
+   manager role the operator names in `osac_job_vars` (network manager
+   contract); other playbooks receive their CR in `osac_job_vars.resource`.
 
 ## What it provisions
 
@@ -271,13 +272,13 @@ osac-aap/
 
 ### Key design pattern
 
-Every template role declares its capabilities in `meta/osac.yaml`. Network
-roles identify themselves via `fabric_manager`/`k8s_manager` (the dispatcher's
-routing keys); other template types still use `implementation_strategy`:
+Every template role declares its capabilities in `meta/osac.yaml`. For network
+roles the file is informational; a registration ConfigMap (`ansible_role`)
+selects the role:
 
 ```yaml
 template_type: network
-fabric_manager: cudn_net
+fabric_manager: <registration-name>
 capabilities:
   supports_ipv4: true
   supports_ipv6: false
