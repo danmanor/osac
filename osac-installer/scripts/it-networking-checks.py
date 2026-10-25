@@ -421,7 +421,7 @@ def check_network_class(c: Checks, ns: str, release: str, values: dict) -> None:
     conditions = (cr.get("status") or {}).get("conditions") or []
     ready = [cond for cond in conditions if cond.get("type") == "Ready"]
     c.check(
-        f"NetworkClass CR {cr_name} is Ready (both registrations resolve)",
+        f"NetworkClass CR {cr_name} is Ready",
         bool(ready) and ready[0].get("status") == "True",
         f"conditions={short(conditions)}",
     )
