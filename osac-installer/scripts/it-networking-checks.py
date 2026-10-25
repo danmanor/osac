@@ -102,8 +102,17 @@ def kubectl_json(*args: str) -> dict:
 def manifests_to_json(text: str) -> list[dict]:
     """Convert YAML manifests to JSON objects without a YAML library."""
     out = run(["kubectl", "create", "--dry-run=client", "-o", "json", "-f", "-"], stdin=text).stdout
-    doc = json.loads(out)
-    return doc.get("items", [doc]) if doc.get("kind") == "List" else [doc]
+    decoder = json.JSONDecoder()
+    docs = []
+    offset = 0
+    while offset < len(out):
+        while offset < len(out) and out[offset].isspace():
+            offset += 1
+        if offset == len(out):
+            break
+        doc, offset = decoder.raw_decode(out, offset)
+        docs.extend(doc.get("items", [doc]) if doc.get("kind") == "List" else [doc])
+    return docs
 
 
 def short(value: object, limit: int = 600) -> str:
