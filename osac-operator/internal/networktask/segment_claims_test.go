@@ -204,6 +204,85 @@ func TestBootstrapBatchesSharedL3Owners(t *testing.T) {
 	}
 }
 
+func bootstrapClaimFixture(ownerCount int) []client.Object {
+	objects := make([]client.Object, 0, ownerCount*3)
+	for i := range ownerCount {
+		virtualNetwork := fmt.Sprintf("vn-%d", i)
+		l2VNI, l3VNI := int32(100+i), int32(900+i)
+		subnet := claimSubnet(fmt.Sprintf("owner-%d", i), virtualNetwork)
+		subnet.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: l2VNI, L3VNI: l3VNI}
+		owner := claimOwner(subnet)
+		objects = append(objects, subnet,
+			&v1alpha1.NetworkSegmentClaim{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "networking", Name: fmt.Sprintf("vni-%d", l2VNI)},
+				Spec:       v1alpha1.NetworkSegmentClaimSpec{VNI: l2VNI, L2Owner: &owner},
+			},
+			&v1alpha1.NetworkSegmentClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "networking", Name: fmt.Sprintf("vni-%d", l3VNI),
+					Labels: map[string]string{VirtualNetworkIDLabel: virtualNetwork},
+				},
+				Spec: v1alpha1.NetworkSegmentClaimSpec{
+					VNI: l3VNI, L3VirtualNetwork: virtualNetwork,
+					L3Owners: []v1alpha1.SegmentClaimOwner{owner},
+				},
+			},
+		)
+	}
+	return objects
+}
+
+func TestBootstrapUsesOneSubnetSnapshotForClaimCleanup(t *testing.T) {
+	ctx := context.Background()
+	c := claimClient(t, bootstrapClaimFixture(3)...)
+	var subnetGets, subnetLists int
+	observed := interceptor.NewClient(c, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*v1alpha1.Subnet); ok {
+				subnetGets++
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*v1alpha1.SubnetList); ok {
+				subnetLists++
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
+	index := NewSegmentClaimIndex(observed, observed, "networking")
+	if err := index.Bootstrap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if subnetGets != 0 {
+		t.Fatalf("read %d Subnets individually during bootstrap cleanup, want none", subnetGets)
+	}
+	if subnetLists != 1 {
+		t.Fatalf("listed Subnets %d times during bootstrap, want one complete snapshot", subnetLists)
+	}
+}
+
+func TestBootstrapSkipsUnchangedClaimUpdates(t *testing.T) {
+	ctx := context.Background()
+	c := claimClient(t, bootstrapClaimFixture(3)...)
+	var claimUpdates int
+	observed := interceptor.NewClient(c, interceptor.Funcs{
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, ok := obj.(*v1alpha1.NetworkSegmentClaim); ok {
+				claimUpdates++
+			}
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+	index := NewSegmentClaimIndex(observed, observed, "networking")
+	if err := index.Bootstrap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if claimUpdates != 0 {
+		t.Fatalf("updated %d unchanged claims during bootstrap", claimUpdates)
+	}
+}
+
 func TestSegmentClaimsSharingDoesNotReadUncontendedOwners(t *testing.T) {
 	ctx := context.Background()
 	first, second := claimSubnet("first", "vn1"), claimSubnet("second", "vn1")
