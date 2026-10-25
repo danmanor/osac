@@ -171,19 +171,6 @@ func (f *wlFakeAAP) finish(task, status, artifacts string) {
 	}
 }
 
-// newTestEngine returns a network task engine on the test manager's clients and a fake AAP.
-func newTestEngine(enabled bool) (*networktask.Engine, *wlFakeAAP) {
-	fake := newWLFakeAAP()
-	local := testMcManager.GetLocalManager()
-	engine := networktask.New(local.GetClient(), local.GetAPIReader(), fake, networktask.Config{
-		TemplatePrefix:      "osac",
-		Organization:        "osac",
-		ProvisioningEnabled: enabled,
-		PollInterval:        100 * time.Millisecond,
-	})
-	return engine, fake
-}
-
 // newTestCIReconciler returns a ComputeInstance reconciler with provider
 // networking disabled (the VM runs in the Tenant namespace, as before the
 // networking designs) and a fake AAP.

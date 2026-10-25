@@ -95,21 +95,15 @@ func newTaskForDelete(bmiID, hubID string, hubCache controllers.HubCache) *task 
 }
 
 type fakeWorkloadNetworkingCleanup struct {
-	securityGroupCalls int
-	complete           bool
-	calls              int
-	workloadID         string
-	err                error
+	complete   bool
+	calls      int
+	workloadID string
+	err        error
 }
 
 func (f *fakeWorkloadNetworkingCleanup) Cleanup(_ context.Context, workloadID string) (bool, error) {
 	f.calls++
 	f.workloadID = workloadID
-	return f.complete, f.err
-}
-
-func (f *fakeWorkloadNetworkingCleanup) CleanupSecurityGroups(_ context.Context, workloadID string) (bool, error) {
-	f.securityGroupCalls++
 	return f.complete, f.err
 }
 
@@ -1792,14 +1786,14 @@ var _ = Describe("syncStatus", func() {
 			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_STOPPED))
 	})
 
-	It("should map Ready phase with PowerSynced Progressing and RunStrategy Always to STARTING state", func() {
+	It("should map Progressing phase with PowerSynced Progressing and RunStrategy Always to STARTING state", func() {
 		t := newTask(0)
 		object := &bmfov1alpha1.BareMetalInstance{
 			Spec: bmfov1alpha1.BareMetalInstanceSpec{
 				RunStrategy: bmfov1alpha1.RunStrategyAlways,
 			},
 			Status: bmfov1alpha1.BareMetalInstanceStatus{
-				Phase: bmfov1alpha1.BareMetalInstancePhaseReady,
+				Phase: bmfov1alpha1.BareMetalInstancePhaseProgressing,
 				Conditions: []metav1.Condition{
 					{
 						Type:    string(bmfov1alpha1.HostConditionPowerSynced),
@@ -1815,14 +1809,14 @@ var _ = Describe("syncStatus", func() {
 			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_STARTING))
 	})
 
-	It("should map Ready phase with PowerSynced Progressing and RunStrategy Halted to STOPPING state", func() {
+	It("should map Progressing phase with PowerSynced Progressing and RunStrategy Halted to STOPPING state", func() {
 		t := newTask(0)
 		object := &bmfov1alpha1.BareMetalInstance{
 			Spec: bmfov1alpha1.BareMetalInstanceSpec{
 				RunStrategy: bmfov1alpha1.RunStrategyHalted,
 			},
 			Status: bmfov1alpha1.BareMetalInstanceStatus{
-				Phase: bmfov1alpha1.BareMetalInstancePhaseReady,
+				Phase: bmfov1alpha1.BareMetalInstancePhaseProgressing,
 				Conditions: []metav1.Condition{
 					{
 						Type:    string(bmfov1alpha1.HostConditionPowerSynced),
@@ -1842,7 +1836,6 @@ var _ = Describe("syncStatus", func() {
 		t := newTask(0)
 		object := &bmfov1alpha1.BareMetalInstance{
 			Status: bmfov1alpha1.BareMetalInstanceStatus{
-				Phase: bmfov1alpha1.BareMetalInstancePhaseReady,
 				Conditions: []metav1.Condition{
 					{
 						Type:   string(bmfov1alpha1.HostConditionPowerSynced),
@@ -1869,23 +1862,7 @@ var _ = Describe("syncStatus", func() {
 			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_FAILED))
 	})
 
-	It("should map a record being deleted to DELETING state whatever the phase", func() {
-		t := newTask(0)
-		if !t.bareMetalInstance.HasMetadata() {
-			t.bareMetalInstance.SetMetadata(&privatev1.Metadata{})
-		}
-		t.bareMetalInstance.GetMetadata().SetDeletionTimestamp(timestamppb.Now())
-		object := &bmfov1alpha1.BareMetalInstance{
-			Status: bmfov1alpha1.BareMetalInstanceStatus{
-				Phase: bmfov1alpha1.BareMetalInstancePhaseReady,
-			},
-		}
-		t.syncStatus(object)
-		Expect(t.bareMetalInstance.GetStatus().GetState()).To(
-			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING))
-	})
-
-	It("should not map the CR Deleting phase to DELETING while the record isn't deleted", func() {
+	It("should map Deleting phase to DELETING state", func() {
 		t := newTask(0)
 		object := &bmfov1alpha1.BareMetalInstance{
 			Status: bmfov1alpha1.BareMetalInstanceStatus{
@@ -1894,24 +1871,7 @@ var _ = Describe("syncStatus", func() {
 		}
 		t.syncStatus(object)
 		Expect(t.bareMetalInstance.GetStatus().GetState()).To(
-			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_PROVISIONING))
-	})
-
-	It("should map PROVISIONING before phase Ready whatever the power state", func() {
-		t := newTask(0)
-		object := &bmfov1alpha1.BareMetalInstance{
-			Status: bmfov1alpha1.BareMetalInstanceStatus{
-				Phase: bmfov1alpha1.BareMetalInstancePhaseProgressing,
-				Conditions: []metav1.Condition{{
-					Type:   string(bmfov1alpha1.HostConditionPowerSynced),
-					Status: metav1.ConditionTrue,
-					Reason: bmfov1alpha1.HostConditionReasonPowerOn,
-				}},
-			},
-		}
-		t.syncStatus(object)
-		Expect(t.bareMetalInstance.GetStatus().GetState()).To(
-			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_PROVISIONING))
+			Equal(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING))
 	})
 
 	It("should set PROVISIONED reason=NetworkSetup when ProvisionTemplateComplete is True but network absent", func() {

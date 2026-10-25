@@ -49,13 +49,12 @@ func validateBareMetalUserData(userData []byte) error {
 }
 
 type PrivateBareMetalInstancesServerBuilder struct {
-	logger             *slog.Logger
-	attributionLogic   auth.AttributionLogic
-	tenancyLogic       auth.TenancyLogic
-	metricsRegisterer  prometheus.Registerer
-	filterDesc         protoreflect.MessageDescriptor
-	secretStore        vault.SecretStore
-	networkingSettings *NetworkingSettings
+	logger            *slog.Logger
+	attributionLogic  auth.AttributionLogic
+	tenancyLogic      auth.TenancyLogic
+	metricsRegisterer prometheus.Registerer
+	filterDesc        protoreflect.MessageDescriptor
+	secretStore       vault.SecretStore
 }
 
 var _ privatev1.BareMetalInstancesServer = (*PrivateBareMetalInstancesServer)(nil)
@@ -79,8 +78,6 @@ type PrivateBareMetalInstancesServer struct {
 	secretsDao              *dao.GenericDAO[*privatev1.Secret]
 	secretStore             vault.SecretStore
 	lifecycle               *externalIPLifecycle
-	settings                NetworkingSettings
-	guards                  *networkingGuards
 }
 
 func NewPrivateBareMetalInstancesServer() *PrivateBareMetalInstancesServerBuilder {
@@ -116,13 +113,6 @@ func (b *PrivateBareMetalInstancesServerBuilder) SetFilterDesc(value protoreflec
 
 func (b *PrivateBareMetalInstancesServerBuilder) SetSecretStore(value vault.SecretStore) *PrivateBareMetalInstancesServerBuilder {
 	b.secretStore = value
-	return b
-}
-
-// SetNetworkingSettings sets the networking installation settings. This is optional; the default is
-// DefaultNetworkingSettings.
-func (b *PrivateBareMetalInstancesServerBuilder) SetNetworkingSettings(value NetworkingSettings) *PrivateBareMetalInstancesServerBuilder {
-	b.networkingSettings = &value
 	return b
 }
 
@@ -256,13 +246,7 @@ func (b *PrivateBareMetalInstancesServerBuilder) Build() (result *PrivateBareMet
 		return
 	}
 
-	guards, err := newNetworkingGuards(b.logger)
-	if err != nil {
-		return
-	}
 	result = &PrivateBareMetalInstancesServer{
-		settings:                resolveNetworkingSettings(b.networkingSettings),
-		guards:                  guards,
 		logger:                  b.logger,
 		tenancyLogic:            b.tenancyLogic,
 		generic:                 generic,
@@ -308,9 +292,6 @@ func (s *PrivateBareMetalInstancesServer) Get(ctx context.Context,
 func (s *PrivateBareMetalInstancesServer) Create(ctx context.Context, request *privatev1.BareMetalInstancesCreateRequest) (response *privatev1.BareMetalInstancesCreateResponse, err error) {
 	var warnings []string
 	err = s.generic.CreateWithCandidatePreparation(ctx, request, &response, func(ctx context.Context, _ *privatev1.BareMetalInstance, candidate *privatev1.BareMetalInstance) error {
-		if err := lockTenantForCreate(ctx, candidate.GetMetadata().GetTenant()); err != nil {
-			return err
-		}
 		warnings, err = s.prepareCreate(ctx, candidate)
 		return err
 	})
@@ -318,9 +299,7 @@ func (s *PrivateBareMetalInstancesServer) Create(ctx context.Context, request *p
 		return
 	}
 	if !isDryRun(ctx) && response.GetObject().GetSpec().GetAutoExternalIpAttachment() {
-		created := response.GetObject()
-		err = createAutomaticExternalIPs(ctx, s.logger, s.settings, s.externalIPPoolDao, s.externalIPDao,
-			created.GetMetadata(), created.GetId(), "baremetal_instance")
+		err = s.autoProvisionExternalIP(ctx, response.GetObject())
 		if err != nil {
 			if tx, txErr := database.TxFromContext(ctx); txErr == nil {
 				tx.ReportError(&err)
@@ -363,12 +342,51 @@ func (s *PrivateBareMetalInstancesServer) prepareCreate(ctx context.Context, can
 	if err != nil {
 		return
 	}
-	if !candidate.GetSpec().HasRunStrategy() ||
-		candidate.GetSpec().GetRunStrategy() == privatev1.BareMetalInstanceRunStrategy_BARE_METAL_INSTANCE_RUN_STRATEGY_UNSPECIFIED {
-		candidate.GetSpec().SetRunStrategy(privatev1.BareMetalInstanceRunStrategy_BARE_METAL_INSTANCE_RUN_STRATEGY_ALWAYS)
-	}
-	if err = s.resolveNetworkAttachments(ctx, candidate, instanceType); err != nil {
+	if err = s.applyDefaultNetworkAttachments(ctx, candidate, instanceType); err != nil {
 		return
+	}
+	if err = s.validateNetworkAttachments(candidate, instanceType); err != nil {
+		return
+	}
+	normalizeSoleBareMetalAttachmentPrimary(candidate.GetSpec().GetNetworkAttachments())
+	hubReferences := make([]networkingHubReference, 0, len(candidate.GetSpec().GetNetworkAttachments())*2)
+	for i, attachment := range candidate.GetSpec().GetNetworkAttachments() {
+		source := fmt.Sprintf(" in spec.network_attachments[%d]", i)
+		subnet, resolveErr := resolveNetworkingReference(ctx, s.subnetsDao, candidate.GetMetadata(), attachment.GetSubnet(), "subnet", grpccodes.InvalidArgument, true)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if err = validateResolvedSubnetReady(subnet, refKey(attachment.GetSubnet()), source); err != nil {
+			return
+		}
+		hubReferences = append(hubReferences, networkingHubReference{
+			resourceType: "Subnet",
+			id:           subnet.GetId(),
+			hubID:        subnet.GetStatus().GetHub(),
+		})
+		for _, ref := range attachment.GetSecurityGroups() {
+			group, resolveErr := resolveNetworkingReference(ctx, s.securityGroupsDao, candidate.GetMetadata(), ref, "security group", grpccodes.InvalidArgument, true)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			if err = validateResolvedSecurityGroup(group, refKey(ref), source, refKey(subnet.GetSpec().GetVirtualNetwork())); err != nil {
+				return
+			}
+			hubReferences = append(hubReferences, networkingHubReference{
+				resourceType: "SecurityGroup",
+				id:           group.GetId(),
+				hubID:        group.GetStatus().GetHub(),
+			})
+		}
+	}
+	if len(hubReferences) > 0 {
+		canonicalHubID, resolveErr := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if err = validateNetworkingHubReferences(canonicalHubID, hubReferences...); err != nil {
+			return
+		}
 	}
 
 	if ref := candidate.GetSpec().GetDiskImage(); ref != nil {
@@ -427,7 +445,7 @@ func (s *PrivateBareMetalInstancesServer) Update(ctx context.Context,
 		if err := validateBareMetalImmutability(current, candidate, request.GetUpdateMask()); err != nil {
 			return err
 		}
-		return rejectStateChangeWhileDeleting(current, candidate, current.GetMetadata())
+		return nil
 	})
 	return
 }
@@ -460,18 +478,63 @@ func (s *PrivateBareMetalInstancesServer) Delete(ctx context.Context,
 	if err != nil {
 		return
 	}
-	if deleteAlreadyAccepted(instance.GetMetadata()) {
-		return &privatev1.BareMetalInstancesDeleteResponse{}, nil
-	}
 	if err = s.lifecycle.rejectManualAttachmentDelete(ctx, "BareMetalInstance", id, instance.GetMetadata()); err != nil {
 		return
 	}
-	// The automatic ExternalIPAttachment and ExternalIP are deleted by the reconciler, in order, after this.
-	if err = markDeleting(ctx, s.generic.dao, instance); err != nil {
-		return
+	if instance.GetSpec().GetAutoExternalIpAttachment() {
+		s.logger.InfoContext(ctx, "BMI has auto_external_ip_attachment, running cascade cleanup",
+			slog.String("bmi_id", id))
+		err = s.autoCleanupExternalIP(ctx, id)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "Auto-EIP cascade cleanup failed",
+				slog.String("bmi_id", id), slog.Any("error", err))
+			return
+		}
 	}
 	err = s.generic.Delete(ctx, request, &response)
 	return
+}
+
+func (s *PrivateBareMetalInstancesServer) autoCleanupExternalIP(ctx context.Context, bmiID string) error {
+	filter := autoCreatedExternalIPAttachmentFilter(bmiID)
+	s.logger.InfoContext(ctx, "Auto-EIP cleanup: listing attachments",
+		slog.String("bmi_id", bmiID), slog.String("filter", filter))
+
+	listResp, err := s.externalIPAttachmentDao.List().SetFilter(filter).Do(ctx)
+	if err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: failed to list attachments: %w", err)
+	}
+
+	items := listResp.GetItems()
+	s.logger.InfoContext(ctx, "Auto-EIP cleanup: found attachments",
+		slog.String("bmi_id", bmiID), slog.Int("count", len(items)))
+
+	for _, attachment := range items {
+		attachmentID := attachment.GetId()
+		eipRef := attachment.GetSpec().GetExternalIp()
+		eipID := refKey(eipRef)
+		s.logger.InfoContext(ctx, "Auto-EIP cleanup: deleting attachment",
+			slog.String("attachment_id", attachmentID), slog.String("eip_id", eipID))
+
+		if eipID != "" {
+			err = s.lifecycle.deleteAttachmentAndExternalIP(ctx, attachmentID, eipID)
+			if err != nil {
+				return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
+			}
+			s.logger.InfoContext(ctx, "Auto-EIP cleanup: deleted attachment and EIP",
+				slog.String("attachment_id", attachmentID), slog.String("eip_id", eipID))
+		} else {
+			if err = s.lifecycle.deleteAttachment(ctx, attachmentID); err != nil {
+				return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
+			}
+		}
+	}
+
+	if err := s.lifecycle.deleteAutoCreatedExternalIPs(ctx, bmiID); err != nil {
+		return fmt.Errorf("auto_external_ip_attachment cleanup: %w", err)
+	}
+
+	return nil
 }
 
 func (s *PrivateBareMetalInstancesServer) Signal(ctx context.Context,
@@ -511,6 +574,171 @@ func (s *PrivateBareMetalInstancesServer) validateSpec(bmi *privatev1.BareMetalI
 	return nil
 }
 
+// applyDefaultNetworkAttachments completes network_attachments at Create time.
+// len==0 injects a sole tenant-default attachment; len==1 fills missing subnet /
+// empty security_groups / interface without overwriting supplied values; len>1 is a no-op.
+func (s *PrivateBareMetalInstancesServer) applyDefaultNetworkAttachments(
+	ctx context.Context, bmi *privatev1.BareMetalInstance, instanceType *privatev1.BareMetalInstanceType) error {
+	attachments := bmi.GetSpec().GetNetworkAttachments()
+	if len(attachments) > 1 {
+		return nil
+	}
+	if len(attachments) == 1 && attachments[0] != nil &&
+		refKey(attachments[0].GetSubnet()) != "" &&
+		!securityGroupsMissing(attachments[0]) &&
+		attachments[0].GetInterface() != "" {
+		return nil
+	}
+
+	tenantName := bmi.GetMetadata().GetTenant()
+	if tenantName == "" {
+		var err error
+		tenantName, err = s.tenancyLogic.DetermineDefaultTenant(ctx)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "Failed to determine default tenant for network attachment defaults",
+				slog.Any("error", err))
+			return grpcstatus.Errorf(grpccodes.Internal, "failed to determine tenant")
+		}
+	}
+	project := bmi.GetMetadata().GetProject()
+
+	var defaultSubnet *privatev1.Subnet
+	if len(attachments) == 0 || needsDefaultSubnetLookup(attachments[0]) {
+		var err error
+		defaultSubnet, err = findDefaultSubnet(ctx, s.logger, s.subnetsDao, tenantName, project)
+		if err != nil {
+			return err
+		}
+	}
+	defaultVN := ""
+	if defaultSubnet != nil {
+		defaultVN = refKey(defaultSubnet.GetSpec().GetVirtualNetwork())
+	}
+
+	if len(attachments) == 0 {
+		return s.injectFullDefaultNetworkAttachment(ctx, bmi, tenantName, project, defaultSubnet, instanceType)
+	}
+
+	attachment := attachments[0]
+	if attachment == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument, "network_attachments[0]: attachment cannot be null")
+	}
+
+	var resolvedSubnet *privatev1.Subnet
+	var err error
+	if attachment.GetSubnet() == nil || refKey(attachment.GetSubnet()) == "" {
+		if defaultSubnet == nil {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument,
+				"spec.network_attachments: subnet is required and no tenant default subnet is available")
+		}
+		attachment.SetSubnet(privatev1.SubnetLocalReference_builder{Id: defaultSubnet.GetId()}.Build())
+		resolvedSubnet = defaultSubnet
+	} else if securityGroupsMissing(attachment) {
+		resolvedSubnet, err = resolveNetworkingReference(ctx, s.subnetsDao, bmi.GetMetadata(),
+			attachment.GetSubnet(), "subnet", grpccodes.InvalidArgument, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	if securityGroupsMissing(attachment) {
+		subnetVN := refKey(resolvedSubnet.GetSpec().GetVirtualNetwork())
+		if !subnetOnDefaultVirtualNetwork(subnetVN, defaultVN) {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument,
+				"spec.network_attachments[0]: security_groups are required when the subnet is not on the tenant default virtual network")
+		}
+		sg, sgErr := findDefaultSecurityGroup(ctx, s.logger, s.securityGroupsDao, subnetVN, tenantName, project)
+		if sgErr != nil {
+			s.logger.ErrorContext(ctx, "Failed to look up default security group",
+				slog.Any("error", sgErr))
+			return grpcstatus.Errorf(grpccodes.Internal, "failed to find default security group")
+		}
+		if sg == nil {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument,
+				"spec.network_attachments[0]: security_groups are required and no tenant default security group is available")
+		}
+		attachment.SetSecurityGroups([]*privatev1.SecurityGroupLocalReference{
+			privatev1.SecurityGroupLocalReference_builder{Id: sg.GetId()}.Build(),
+		})
+	}
+
+	if attachment.GetInterface() == "" {
+		ifaceName, ifaceErr := s.resolveDefaultInterface(instanceType)
+		if ifaceErr != nil {
+			return ifaceErr
+		}
+		if ifaceName != "" {
+			attachment.SetInterface(ifaceName)
+		}
+	}
+
+	bmi.GetSpec().SetNetworkAttachments([]*privatev1.BareMetalNetworkAttachment{attachment})
+	return nil
+}
+
+// needsDefaultSubnetLookup reports whether completing an attachment requires
+// looking up the tenant's default subnet.
+func needsDefaultSubnetLookup(a *privatev1.BareMetalNetworkAttachment) bool {
+	if a == nil {
+		return true
+	}
+	if a.GetSubnet() == nil || refKey(a.GetSubnet()) == "" {
+		return true
+	}
+	return securityGroupsMissing(a)
+}
+
+// injectFullDefaultNetworkAttachment adds a complete tenant-default attachment
+// when the caller omits network_attachments.
+func (s *PrivateBareMetalInstancesServer) injectFullDefaultNetworkAttachment(
+	ctx context.Context, bmi *privatev1.BareMetalInstance, tenantName, project string,
+	defaultSubnet *privatev1.Subnet, instanceType *privatev1.BareMetalInstanceType) error {
+	if defaultSubnet == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"spec.network_attachments: at least one network attachment is required and no tenant default subnet is available")
+	}
+	subnetVN := refKey(defaultSubnet.GetSpec().GetVirtualNetwork())
+	sg, err := findDefaultSecurityGroup(ctx, s.logger, s.securityGroupsDao, subnetVN, tenantName, project)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "Failed to look up default security group",
+			slog.Any("error", err))
+		return grpcstatus.Errorf(grpccodes.Internal, "failed to find default security group")
+	}
+	if sg == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"spec.network_attachments: no tenant default security group is available")
+	}
+
+	ifaceName, err := s.resolveDefaultInterface(instanceType)
+	if err != nil {
+		return err
+	}
+
+	attachment := privatev1.BareMetalNetworkAttachment_builder{
+		Subnet: privatev1.SubnetLocalReference_builder{Id: defaultSubnet.GetId()}.Build(),
+		SecurityGroups: []*privatev1.SecurityGroupLocalReference{
+			privatev1.SecurityGroupLocalReference_builder{Id: sg.GetId()}.Build(),
+		},
+	}.Build()
+	if ifaceName != "" {
+		attachment.SetInterface(ifaceName)
+	}
+
+	bmi.GetSpec().SetNetworkAttachments([]*privatev1.BareMetalNetworkAttachment{attachment})
+	return nil
+}
+
+// securityGroupsMissing reports whether an attachment has no security groups.
+func securityGroupsMissing(a *privatev1.BareMetalNetworkAttachment) bool {
+	return a == nil || len(a.GetSecurityGroups()) == 0
+}
+
+// subnetOnDefaultVirtualNetwork reports whether an attachment subnet belongs to
+// the tenant's selected default virtual network.
+func subnetOnDefaultVirtualNetwork(subnetVN, defaultSubnetVN string) bool {
+	return subnetVN != "" && defaultSubnetVN != "" && subnetVN == defaultSubnetVN
+}
+
 // resolveDefaultInterface returns the first fabric-role port on the selected instance type.
 func (s *PrivateBareMetalInstancesServer) resolveDefaultInterface(instanceType *privatev1.BareMetalInstanceType) (string, error) {
 	for _, port := range instanceType.GetSpec().GetHardware().GetNetworkPorts() {
@@ -518,7 +746,7 @@ func (s *PrivateBareMetalInstancesServer) resolveDefaultInterface(instanceType *
 			return port.GetName(), nil
 		}
 	}
-	return "", grpcstatus.Errorf(grpccodes.InvalidArgument,
+	return "", grpcstatus.Errorf(grpccodes.FailedPrecondition,
 		"bare metal instance type '%s' has no fabric-role network port for default network attachment", instanceType.GetId())
 }
 
@@ -721,6 +949,19 @@ func compareNetworkAttachmentsImmutability(existing, updated []*privatev1.BareMe
 	return nil
 }
 
+func (s *PrivateBareMetalInstancesServer) validateNetworkAttachments(
+	bmi *privatev1.BareMetalInstance, instanceType *privatev1.BareMetalInstanceType,
+) error {
+	attachments := bmi.GetSpec().GetNetworkAttachments()
+	if err := validateBareMetalNetworkAttachmentStructure("", attachments); err != nil {
+		return err
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+	return validateBareMetalAttachmentsForInstanceType("", attachments, instanceType)
+}
+
 func validateBareMetalNetworkAttachmentStructure(source string, attachments []*privatev1.BareMetalNetworkAttachment) error {
 	prefix := ""
 	if source != "" {
@@ -736,12 +977,22 @@ func validateBareMetalNetworkAttachmentStructure(source string, attachments []*p
 		if a == nil {
 			return grpcstatus.Errorf(grpccodes.InvalidArgument, "%snetwork_attachments[%d]: attachment cannot be null", prefix, i)
 		}
+		if a.GetSubnet() == nil {
+			return grpcstatus.Errorf(grpccodes.InvalidArgument, "%snetwork_attachments[%d]: subnet is required", prefix, i)
+		}
 		if a.HasPrimary() && !a.GetPrimary() {
 			return grpcstatus.Errorf(grpccodes.InvalidArgument,
 				"%snetwork_attachments[%d]: primary: false is not supported; omit primary or set primary: true", prefix, i)
 		}
 	}
 	return nil
+}
+
+func normalizeSoleBareMetalAttachmentPrimary(attachments []*privatev1.BareMetalNetworkAttachment) {
+	if len(attachments) != 1 || attachments[0] == nil {
+		return
+	}
+	attachments[0].SetPrimary(true)
 }
 
 func validateBareMetalAttachmentsForInstanceType(
@@ -795,182 +1046,54 @@ func validateBareMetalAttachmentsForInstanceType(
 	return nil
 }
 
-// resolveNetworkAttachments resolves the network attachment field of a new bare metal instance: at most one
-// attachment, primary, defaulted from the tenant defaults, on a fabric port of the instance type. A CaaS worker (tenant
-// system) is checked against its Cluster instead.
-func (s *PrivateBareMetalInstancesServer) resolveNetworkAttachments(ctx context.Context,
-	bmi *privatev1.BareMetalInstance, instanceType *privatev1.BareMetalInstanceType) error {
-	spec := bmi.GetSpec()
-	attachments := spec.GetNetworkAttachments()
-	if err := validateBareMetalNetworkAttachmentStructure("", attachments); err != nil {
-		return err
-	}
-	attachment := &privatev1.BareMetalNetworkAttachment{}
-	if len(attachments) == 1 {
-		attachment = attachments[0]
-	}
-	request := networkAttachmentRequest{
-		tenant:            bmi.GetMetadata().GetTenant(),
-		project:           bmi.GetMetadata().GetProject(),
-		subnetsDao:        s.subnetsDao,
-		securityGroupsDao: s.securityGroupsDao,
-		subnet:            attachment.GetSubnet(),
-		securityGroups:    attachment.GetSecurityGroups(),
-		source:            "spec.network_attachments[0]",
-	}
-	var cluster *privatev1.Cluster
-	if bmi.GetMetadata().GetTenant() == auth.SystemTenant {
-		var err error
-		cluster, err = s.authorizeWorker(ctx, bmi, attachment)
-		if err != nil {
-			return err
-		}
-		// The worker (tenant system) references the Cluster tenant's records: resolve them with the guard DAOs
-		// in the Cluster's tenant and project.
-		request.tenant = cluster.GetMetadata().GetTenant()
-		request.project = cluster.GetMetadata().GetProject()
-		request.subnetsDao = s.guards.subnets
-		request.securityGroupsDao = s.guards.securityGroups
-		request.automaticGroupOwner = cluster.GetId()
-	} else {
-		if attachment.GetInterface() == "" {
-			name, err := s.resolveDefaultInterface(instanceType)
-			if err != nil {
-				return err
-			}
-			attachment.SetInterface(name)
-		}
-		if err := validateBareMetalAttachmentsForInstanceType("",
-			[]*privatev1.BareMetalNetworkAttachment{attachment}, instanceType); err != nil {
-			return err
-		}
-	}
-	resolution, err := resolveNetworkAttachment(ctx, s.logger, s.guards, s.settings, request)
+func (s *PrivateBareMetalInstancesServer) autoProvisionExternalIP(
+	ctx context.Context, bmi *privatev1.BareMetalInstance,
+) error {
+	pool, err := SelectExternalIPPool(ctx, s.logger, s.externalIPPoolDao, 1)
 	if err != nil {
-		return err
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition, "auto_external_ip_attachment: %s", err)
 	}
-	if cluster != nil && s.settings.ProvisioningEnabled {
-		if err := requireReadyNATGateway(ctx, s.guards, resolution.virtualNetwork); err != nil {
-			return err
-		}
-	}
-	attachment.SetSubnet(resolution.subnetReference())
-	attachment.SetSecurityGroups(resolution.securityGroupReferences())
-	attachment.SetPrimary(true)
-	spec.SetNetworkAttachments([]*privatev1.BareMetalNetworkAttachment{attachment})
 
-	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
-	if err != nil {
-		return err
+	tenant := bmi.GetMetadata().GetTenant()
+	bmiID := bmi.GetId()
+	shortID := bmiID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
 	}
-	return validateNetworkingHubReferences(canonicalHubID, resolution.hubReferences()...)
-}
 
-// authorizeWorker checks the create of a CaaS worker bare metal instance (tenant system): status.cluster names a
-// Cluster that isn't being deleted, and the network attachment field is exactly the Cluster's: its Subnet, its
-// SecurityGroups plus the automatic Cluster SecurityGroup, and the fabric port of a node set of the instance type.
-func (s *PrivateBareMetalInstancesServer) authorizeWorker(ctx context.Context, bmi *privatev1.BareMetalInstance,
-	attachment *privatev1.BareMetalNetworkAttachment) (*privatev1.Cluster, error) {
-	clusterID := bmi.GetStatus().GetCluster().GetId()
-	if clusterID == "" {
-		return nil, grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"a bare metal instance in tenant system needs status.cluster")
+	eipLabels := map[string]string{
+		autoCreatedLabel:     "true",
+		autoCreatedForLabel:  bmiID,
+		autoCreatedKindLabel: "bare_metal_instance",
 	}
-	clusters, err := s.guards.clusters.List().SetFilter(fmt.Sprintf("this.id == %q", clusterID)).SetLimit(1).Do(ctx)
-	if err != nil {
-		return nil, grpcstatus.Error(grpccodes.Internal, "failed to find the Cluster of the worker")
-	}
-	if len(clusters.GetItems()) == 0 {
-		return nil, grpcstatus.Errorf(grpccodes.InvalidArgument, "Cluster '%s' does not exist", clusterID)
-	}
-	cluster, err := lockRecord(ctx, s.guards.clusters, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	if cluster.GetMetadata().HasDeletionTimestamp() {
-		return nil, grpcstatus.Errorf(grpccodes.FailedPrecondition, "Cluster '%s' is being deleted", clusterID)
-	}
-	clusterAttachment := cluster.GetSpec().GetNetworkAttachment()
-	if refKey(attachment.GetSubnet()) != refKey(clusterAttachment.GetSubnet()) {
-		return nil, grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments[0].subnet must be the Subnet '%s' of Cluster '%s'",
-			refKey(clusterAttachment.GetSubnet()), clusterID)
-	}
-	expected := map[string]bool{automaticSecurityGroupPrefix + clusterID: true}
-	for _, ref := range clusterAttachment.GetSecurityGroups() {
-		expected[refKey(ref)] = true
-	}
-	automaticGroups, err := s.guards.securityGroups.List().
-		SetFilter(fmt.Sprintf("this.metadata.name == %q && this.metadata.labels[\"%s\"] == %q",
-			automaticSecurityGroupPrefix+clusterID, autoCreatedForLabel, clusterID)).
-		Do(ctx)
-	if err != nil {
-		return nil, grpcstatus.Error(grpccodes.Internal, "failed to find the automatic Cluster SecurityGroup")
-	}
-	automaticID := ""
-	for _, group := range automaticGroups.GetItems() {
-		automaticID = group.GetId()
-	}
-	actual := map[string]bool{}
-	for _, ref := range attachment.GetSecurityGroups() {
-		key := refKey(ref)
-		if key == automaticID {
-			key = automaticSecurityGroupPrefix + clusterID
-		}
-		actual[key] = true
-	}
-	if len(actual) != len(attachment.GetSecurityGroups()) || !maps.Equal(actual, expected) {
-		return nil, grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments[0].security_groups must be the SecurityGroups of Cluster '%s' and its "+
-				"automatic SecurityGroup", clusterID)
-	}
-	instanceTypeID := refKey(bmi.GetSpec().GetInstanceType())
-	for _, nodeSet := range cluster.GetSpec().GetNodeSets() {
-		if refKey(nodeSet.GetBaremetalInstanceType()) == instanceTypeID && nodeSet.GetFabricInterface() != "" &&
-			nodeSet.GetFabricInterface() == attachment.GetInterface() {
-			return cluster, nil
-		}
-	}
-	return nil, grpcstatus.Errorf(grpccodes.InvalidArgument,
-		"spec.network_attachments[0].interface '%s' is not the fabric port of a node set of Cluster '%s' with "+
-			"instance type '%s'", attachment.GetInterface(), clusterID, instanceTypeID)
-}
+	eip := privatev1.ExternalIP_builder{
+		Metadata: privatev1.Metadata_builder{
+			Name:   fmt.Sprintf("auto-eip-%s", shortID),
+			Tenant: tenant,
+			Labels: eipLabels,
+			Annotations: map[string]string{
+				tenantAnnotation:         tenant,
+				ownerReferenceAnnotation: bmiID,
+			},
+			Creator: systemCreator,
+		}.Build(),
+		Spec: privatev1.ExternalIPSpec_builder{
+			Pool: privatev1.ExternalIPPoolReference_builder{Id: pool.GetId()}.Build(),
+		}.Build(),
+		Status: privatev1.ExternalIPStatus_builder{
+			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_PENDING,
+		}.Build(),
+	}.Build()
 
-// requireReadyNATGateway checks the Cluster gate: with provider networking enabled, the VirtualNetwork has a READY
-// NATGateway, through which the workers reach the management endpoints. It takes a share lock on the READY NATGateway
-// and rechecks it, so a concurrent NATGateway delete (which locks the row for update and then checks the Clusters)
-// runs either before this check, which then sees the gateway DELETING, or after this transaction, and then sees the
-// new Cluster.
-func requireReadyNATGateway(ctx context.Context, guards *networkingGuards,
-	virtualNetwork *privatev1.VirtualNetwork) error {
-	response, err := guards.natGateways.List().
-		SetFilter(fmt.Sprintf("this.spec.virtual_network.id == %q", virtualNetwork.GetId())).
-		Do(ctx)
+	_, err = s.externalIPDao.Create().SetObject(eip).Do(ctx)
 	if err != nil {
-		return grpcstatus.Error(grpccodes.Internal, "failed to find the NATGateway of the VirtualNetwork")
+		return fmt.Errorf("auto_external_ip_attachment: failed to create ExternalIP: %w", err)
 	}
-	for _, gateway := range response.GetItems() {
-		if !isReadyNATGateway(gateway) {
-			continue
-		}
-		locked, err := guards.natGateways.Get().SetId(gateway.GetId()).SetShareLock(true).Do(ctx)
-		if err != nil {
-			var notFound *dao.ErrNotFound
-			if errors.As(err, &notFound) {
-				continue
-			}
-			return translateLifecycleError(err)
-		}
-		if isReadyNATGateway(locked.GetObject()) {
-			return nil
-		}
-	}
-	return grpcstatus.Errorf(grpccodes.FailedPrecondition,
-		"VirtualNetwork '%s' has no READY NATGateway; Cluster workers reach the management endpoints through it",
-		virtualNetwork.GetId())
-}
 
-func isReadyNATGateway(gateway *privatev1.NATGateway) bool {
-	return !gateway.GetMetadata().HasDeletionTimestamp() &&
-		gateway.GetStatus().GetState() == privatev1.NATGatewayState_NAT_GATEWAY_STATE_READY
+	err = UpdatePoolCapacity(ctx, s.externalIPPoolDao, pool.GetId(), 1)
+	if err != nil {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition, "auto_external_ip_attachment: %s", err)
+	}
+
+	return nil
 }

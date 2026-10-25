@@ -39,7 +39,7 @@ var _ = It("observes listed workers with one BMI List and no fallback Get", func
 	Expect(res.IsZero()).To(BeTrue(), "observation: result=%+v err=%v", res, err)
 	Expect(observed.agents).NotTo(BeNil(), "Agent observation stage missed the Agent: %+v", observed.agents)
 	Expect(observed.agents.Items).To(HaveLen(1), "Agent observation stage missed the Agent: %+v", observed.agents)
-	if _, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed); err != nil {
+	if _, err := r.observeExistingWorkers(context.Background(), co, "tenant", observed); err != nil {
 		Expect(err).NotTo(HaveOccurred())
 	}
 	Expect(fc.lists).To(Equal(1), "observation budget: lists=%d gets=%d, want 1/0", fc.lists, fc.gets)
@@ -69,7 +69,7 @@ var _ = Describe("Invocation-local fallback Get caching", func() {
 			r.macResolver = nil
 			observed := indexWorkerBMIs(nil)
 			observed.agents = &unstructured.UnstructuredList{}
-			_, _ = r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed)
+			_, _ = r.observeExistingWorkers(context.Background(), co, "tenant", observed)
 			// A later stage reusing the same invocation snapshot must not pay for
 			// the same fallback Get again.
 			resolve := r.workerMACResolver(observed)

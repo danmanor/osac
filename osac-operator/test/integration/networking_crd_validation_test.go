@@ -473,67 +473,6 @@ var _ = Describe("Networking CRD validation on the installed CRDs", Label("netwo
 			}
 		})
 	})
-
-	Context("ClusterOrder fabricInterface", func() {
-		It("cannot change once set, while it can be set once and node sets can be added", func() {
-			name := crdName("co")
-			mustCreate(unmanaged(newObject("ClusterOrder", name, map[string]any{
-				"templateID": "noop",
-				"nodeRequests": []any{map[string]any{
-					"nodeSet": "workers", "numberOfNodes": int64(1),
-					"bareMetal": map[string]any{"instanceType": "small"},
-				}},
-			})))
-			DeferCleanup(func() {
-				// Manual keeps the ClusterOrder controller away from provider
-				// teardown before the forced delete in the mustCreate cleanup.
-				_, _ = kubectl("", "annotate", resourceOf("ClusterOrder"), name, "-n", operatorNamespace,
-					managementStateKey+"=manual", "--overwrite")
-			})
-			setInterface := func(value string) string {
-				return fmt.Sprintf(`{"spec":{"nodeRequests":[{"nodeSet":"workers","numberOfNodes":1,`+
-					`"bareMetal":{"instanceType":"small"},"fabricInterface":%q}]}}`, value)
-			}
-
-			By("setting fabricInterface for the first time")
-			expectPatchAccepted("ClusterOrder", name, setInterface("eth1"))
-			By("changing it")
-			expectPatchRejected("ClusterOrder", name, setInterface("eth2"), "nodeRequests fabricInterface is immutable once set")
-
-			By("adding a node set with its own fabricInterface")
-			expectPatchAccepted("ClusterOrder", name, `{"spec":{"nodeRequests":[`+
-				`{"nodeSet":"workers","numberOfNodes":1,"bareMetal":{"instanceType":"small"},"fabricInterface":"eth1"},`+
-				`{"nodeSet":"gpu","numberOfNodes":1,"bareMetal":{"instanceType":"large"},"fabricInterface":"ens3f0"}]}}`)
-			current, err := getObject("ClusterOrder", name)
-			Expect(err).NotTo(HaveOccurred())
-			requests, _, _ := unstructured.NestedSlice(current.Object, "spec", "nodeRequests")
-			Expect(requests).To(HaveLen(2), "both node sets must be stored: %v", requests)
-			Expect(requests[0].(map[string]any)["fabricInterface"]).To(Equal("eth1"))
-		})
-
-		It("cannot be removed once set (removing it would let a later write set another interface)", func() {
-			name := crdName("co-rm")
-			mustCreate(unmanaged(newObject("ClusterOrder", name, map[string]any{
-				"templateID": "noop",
-				"nodeRequests": []any{map[string]any{
-					"nodeSet": "workers", "numberOfNodes": int64(1),
-					"bareMetal": map[string]any{"instanceType": "small"}, "fabricInterface": "eth1",
-				}},
-			})))
-			DeferCleanup(func() {
-				_, _ = kubectl("", "annotate", resourceOf("ClusterOrder"), name, "-n", operatorNamespace,
-					managementStateKey+"=manual", "--overwrite")
-			})
-			By("removing fabricInterface from the node set")
-			output, err := patchAs("", "ClusterOrder", name, "json",
-				`[{"op":"remove","path":"/spec/nodeRequests/0/fabricInterface"}]`, "")
-			current, getErr := getObject("ClusterOrder", name)
-			Expect(getErr).NotTo(HaveOccurred())
-			requests, _, _ := unstructured.NestedSlice(current.Object, "spec", "nodeRequests")
-			Expect(err).To(HaveOccurred(), "fabricInterface was removed after it was set; stored node requests: %v", requests)
-			Expect(output).To(ContainSubstring("nodeRequests fabricInterface is immutable once set"))
-		})
-	})
 })
 
 // wrongInterfaceKind is the message of an attachment whose interface kind

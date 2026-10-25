@@ -45,7 +45,8 @@ superseded or extended design explicitly.
    fields. Manager registrations and allocation requests must follow the IPv4
    contract in the unified design.
 5. **External addressing:** ExternalIP replaces PublicIP; an address external to
-   a VirtualNetwork need not be internet-routable. ExternalIPAttachment provides inbound DNAT;
+   a VirtualNetwork need not be internet-routable. Check migration compatibility
+   before renaming existing APIs. ExternalIPAttachment provides inbound DNAT;
    NATGateway provides outbound SNAT.
 6. **Create/read/delete operations:** Networking specifications and metadata are
    immutable after creation. Read means List/Get. Replacement requires delete

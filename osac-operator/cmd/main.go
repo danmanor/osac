@@ -428,15 +428,13 @@ func setupClusterControllers(
 	if err != nil {
 		return err
 	}
-	bmw := baremetalworker.NewReconciler(
+	if err := baremetalworker.NewReconciler(
 		localMgr.GetClient(), localMgr.GetAPIReader(), localMgr.GetScheme(),
 		bmwFulfillment,
 		ignitionFetcher,
 		localMgr.GetEventRecorder("baremetalworker"),
 		os.Getenv(envClusterOrderNamespace),
-	)
-	bmw.SetNetworking(os.Getenv(envNetworkingNamespace), networkingProvisioningEnabled())
-	if err := bmw.SetupWithManager(mgr); err != nil {
+	).SetupWithManager(mgr); err != nil {
 		return err
 	}
 
@@ -460,14 +458,8 @@ func setupClusterControllers(
 			)
 			reconciler.StallThresholds = clusterOrderStallThresholdsFromEnv()
 			reconciler.Recorder = localMgr.GetEventRecorder(controller.ClusterOrderControllerName)
-			templatePrefix := helpers.GetEnvWithDefault(envAAPTemplatePrefix, "osac")
-			reconciler.Engine = engine
-			reconciler.EndpointsTemplate = templatePrefix + "-cluster-endpoints"
-			reconciler.PostInstallTemplate = templatePrefix + "-create-hosted-cluster-post-install"
-			reconciler.BareMetalInstanceNamespace = bareMetalInstanceNamespace()
-			reconciler.Prober = controller.NewPublicationProber()
-			reconciler.Guest = controller.NewGuestClusterAccess(localMgr.GetAPIReader())
 			if grpcConn != nil {
+				reconciler.ClustersClient = privatev1.NewClustersClient(grpcConn)
 				reconciler.ExternalIPAttachmentsClient = privatev1.NewExternalIPAttachmentsClient(grpcConn)
 			}
 			if err := reconciler.SetupWithManager(mgr); err != nil {
@@ -959,14 +951,6 @@ func setupNetworkingControllers(
 		}
 	}
 	return nil
-}
-
-// bareMetalInstanceNamespace is the namespace of the BareMetalInstance CRs.
-func bareMetalInstanceNamespace() string {
-	if namespace := os.Getenv(envBareMetalInstanceNamespace); namespace != "" {
-		return namespace
-	}
-	return controller.DefaultBareMetalInstanceNamespace
 }
 
 // setupBareMetalInstanceControllers registers BareMetalInstance controllers.

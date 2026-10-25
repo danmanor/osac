@@ -87,7 +87,6 @@ type function struct {
 	hubsClient            privatev1.HubsClient
 	clusterVersionsClient privatev1.ClusterVersionsClient
 	secretsClient         privatev1.SecretsClient
-	securityGroupsClient  privatev1.SecurityGroupsClient
 	maskCalculator        *masks.Calculator
 }
 
@@ -146,7 +145,6 @@ func (b *FunctionBuilder) Build() (result controllers.ReconcilerFunction[*privat
 		hubsClient:            privatev1.NewHubsClient(b.connection),
 		clusterVersionsClient: privatev1.NewClusterVersionsClient(b.connection),
 		secretsClient:         privatev1.NewSecretsClient(b.connection),
-		securityGroupsClient:  privatev1.NewSecurityGroupsClient(b.connection),
 		hubCache:              b.hubCache,
 		maskCalculator:        masks.NewCalculator().Build(),
 	}
@@ -521,42 +519,16 @@ func (t *task) addExplicitFields(ctx context.Context, spec *osacv1alpha1.Cluster
 		na := clusterSpec.GetNetworkAttachment()
 		cna := &osacv1alpha1.ClusterNetworkAttachment{}
 		if subnet := na.GetSubnet(); subnet != nil {
-			cna.SubnetRef = controllers.RefKeyStr(subnet)
+			cna.SubnetRef = subnet.GetName()
 		}
 		for _, sg := range na.GetSecurityGroups() {
-			cna.SecurityGroupRefs = append(cna.SecurityGroupRefs, controllers.RefKeyStr(sg))
+			cna.SecurityGroupRefs = append(cna.SecurityGroupRefs, sg.GetName())
 		}
-		// The workers also get the automatic Cluster SecurityGroup, always last.
-		automaticID, err := t.automaticSecurityGroupID(ctx)
-		if err != nil {
-			return err
-		}
-		cna.SecurityGroupRefs = append(cna.SecurityGroupRefs, automaticID)
 		if cna.SubnetRef != "" {
 			spec.NetworkAttachment = cna
 		}
 	}
 	return nil
-}
-
-// automaticSecurityGroupID returns the API ID of the automatic SecurityGroup auto-sg-<Cluster ID>, which the
-// fulfillment service creates with the Cluster.
-func (t *task) automaticSecurityGroupID(ctx context.Context) (string, error) {
-	filter := fmt.Sprintf(
-		"this.metadata.name == %q && this.metadata.labels['osac.openshift.io/auto-created-for'] == %q",
-		"auto-sg-"+t.cluster.GetId(), t.cluster.GetId())
-	response, err := t.r.securityGroupsClient.List(ctx, privatev1.SecurityGroupsListRequest_builder{
-		Filter: &filter,
-	}.Build())
-	if err != nil {
-		return "", fmt.Errorf("failed to find the automatic SecurityGroup of Cluster %s: %w", t.cluster.GetId(), err)
-	}
-	for _, group := range response.GetItems() {
-		if group.GetMetadata().GetCreator() == "system" {
-			return group.GetId(), nil
-		}
-	}
-	return "", fmt.Errorf("Cluster %s has no automatic SecurityGroup", t.cluster.GetId()) //nolint:staticcheck
 }
 
 // resolvePullSecret fetches the referenced Secret via the private API and returns the
@@ -656,9 +628,6 @@ func (t *task) delete(ctx context.Context) (err error) {
 		if err = controllers.ReconcileWorkloadNetworkingCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
 			return err
 		}
-		if err = controllers.ReconcileWorkloadSecurityGroupCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
-			return err
-		}
 		t.removeFinalizer()
 		return
 	}
@@ -668,9 +637,6 @@ func (t *task) delete(ctx context.Context) (err error) {
 		// Check if the hub has been decommissioned (deleted from database)
 		if errors.Is(err, controllers.ErrHubNotFound) {
 			if err = controllers.ReconcileWorkloadNetworkingCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
-				return err
-			}
-			if err = controllers.ReconcileWorkloadSecurityGroupCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
 				return err
 			}
 			if err = t.deleteClusterSecrets(ctx); err != nil {
@@ -695,9 +661,6 @@ func (t *task) delete(ctx context.Context) (err error) {
 			slog.String("id", t.cluster.GetId()),
 		)
 		if err = controllers.ReconcileWorkloadNetworkingCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
-			return err
-		}
-		if err = controllers.ReconcileWorkloadSecurityGroupCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
 			return err
 		}
 		if err = t.deleteClusterSecrets(ctx); err != nil {
@@ -726,9 +689,6 @@ func (t *task) delete(ctx context.Context) (err error) {
 	}
 
 	if err = controllers.ReconcileWorkloadNetworkingCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
-		return err
-	}
-	if err = controllers.ReconcileWorkloadSecurityGroupCleanup(ctx, t.r.networkingCleanup, t.cluster.GetId()); err != nil {
 		return err
 	}
 	if err = t.deleteClusterSecrets(ctx); err != nil {

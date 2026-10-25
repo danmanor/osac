@@ -74,7 +74,7 @@ func newComputeInstanceFeedbackBridge(hubClient clnt.Client, ciClient privatev1.
 		Client:    hubClient,
 		Finalizer: osacComputeInstanceFeedbackFinalizer,
 		IDLabel:   osacComputeInstanceIDLabel,
-		Kind:      kindComputeInstance,
+		Kind:      "ComputeInstance",
 		IDKey:     "ciID",
 		NewObject: func() *ckv1alpha1.ComputeInstance { return &ckv1alpha1.ComputeInstance{} },
 		Fetch: func(ctx context.Context, id string) (*privatev1.ComputeInstance, error) {

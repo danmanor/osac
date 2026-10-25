@@ -705,21 +705,15 @@ func newTaskForDelete(ciID, hubID string, hubCache controllers.HubCache) *task {
 }
 
 type fakeWorkloadNetworkingCleanup struct {
-	securityGroupCalls int
-	complete           bool
-	calls              int
-	workloadID         string
-	err                error
+	complete   bool
+	calls      int
+	workloadID string
+	err        error
 }
 
 func (f *fakeWorkloadNetworkingCleanup) Cleanup(_ context.Context, workloadID string) (bool, error) {
 	f.calls++
 	f.workloadID = workloadID
-	return f.complete, f.err
-}
-
-func (f *fakeWorkloadNetworkingCleanup) CleanupSecurityGroups(_ context.Context, workloadID string) (bool, error) {
-	f.securityGroupCalls++
 	return f.complete, f.err
 }
 

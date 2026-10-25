@@ -68,13 +68,6 @@ var _ = Describe("Private fabric domains server", func() {
 			}.Build(),
 		}.Build()).Do(ctx)
 		Expect(err).ToNot(HaveOccurred())
-		for _, host := range []string{"server-a", "server-b"} {
-			_, err = fixtureDAO[*privatev1.BareMetalInstance]().Create().SetObject(privatev1.BareMetalInstance_builder{
-				Metadata: privatev1.Metadata_builder{Name: host, Tenant: testTenant}.Build(),
-				Status:   privatev1.BareMetalInstanceStatus_builder{HostName: host}.Build(),
-			}.Build()).Do(ctx)
-			Expect(err).ToNot(HaveOccurred())
-		}
 	}
 
 	It("creates an Ethernet domain", func() {
@@ -105,14 +98,6 @@ var _ = Describe("Private fabric domains server", func() {
 		_, err = disabled.Create(ctx, privatev1.FabricDomainsCreateRequest_builder{Object: object}.Build())
 		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
 		Expect(err).To(MatchError(ContainSubstring("BMaaS")))
-	})
-
-	It("requires every server to be a bare-metal host of the tenant", func() {
-		seedNetwork(true)
-		object.GetSpec().SetServers([]string{"server-a", "server-x"})
-		_, err := server.Create(ctx, privatev1.FabricDomainsCreateRequest_builder{Object: object}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("FabricDomain server server-x is not a bare-metal host of this tenant")))
 	})
 
 	DescribeTable("rejects unsupported fabric types", func(kind privatev1.FabricDomainType) {

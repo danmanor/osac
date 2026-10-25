@@ -176,7 +176,7 @@ var _ = Describe("Early Agent observation rejects concurrent worker state change
 			agents := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*agentFixture}}
 			observed := indexWorkerBMIs([]*privatev1.BareMetalInstance{ownedBMIFixture(co, "recorded-bmi", "id")})
 			observed.agents = agents
-			workers, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed)
+			workers, err := r.observeExistingWorkers(context.Background(), co, "tenant", observed)
 			Expect(err).NotTo(HaveOccurred())
 			err = r.updateWorkerStatus(context.Background(), co, workers)
 			Expect(apierrors.IsConflict(err)).To(BeTrue(), "error=%v, want one-shot conflict", err)
@@ -246,7 +246,7 @@ var _ = It("projects worker phases once per invocation", func() {
 	observed, res, err := r.observeWorkerResources(context.Background(), co)
 	Expect(err).NotTo(HaveOccurred(), "observation: %+v %v", res, err)
 	Expect(res.IsZero()).To(BeTrue(), "observation: %+v %v", res, err)
-	workers, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed)
+	workers, err := r.observeExistingWorkers(context.Background(), co, "tenant", observed)
 	Expect(err).NotTo(HaveOccurred())
 	if !workerSlicesEqual(co.Status.Workers, workers) {
 		if err := r.updateWorkerStatus(context.Background(), co, workers); err != nil {
@@ -297,7 +297,7 @@ var _ = It("caches unknown evidence from the fallback BMI Get", func() {
 	fc.getErr = status.Error(codes.Internal, "unknown ownership")
 	o := indexWorkerBMIs(nil)
 	o.agents = &unstructured.UnstructuredList{}
-	if _, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, o); err == nil {
+	if _, err := r.observeExistingWorkers(context.Background(), co, "tenant", o); err == nil {
 		Fail("unknown ownership permitted convergence")
 	}
 	r.macResolver = nil
