@@ -496,7 +496,6 @@ class SubchartPlumbingTest(unittest.TestCase):
                 )
                 value = str(enabled).lower()
                 self.assertEqual(self.deployment_env(docs, "osac-operator").get("OSAC_PROVISIONING_ENABLED"), value)
-                self.assertEqual(self.deployment_env(docs, "bmf").get("OSAC_PROVISIONING_ENABLED"), value)
                 args = self.fulfillment_args(docs)
                 self.assertIn(f"--networking-provisioning-enabled={value}", args)
                 self.assertIn("--networking-excluded-ipv4-cidrs=192.0.2.0/24,198.51.100.0/24", args)

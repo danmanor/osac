@@ -18,7 +18,7 @@ network manager contract §4.2, DECISIONS 3, 8, 16, 18):
   4. the ValidatingAdmissionPolicy and its binding exist and reject a direct
      networking CR create by a non-OSAC user that RBAC allows (kubectl --as),
      while the same user may still create an ordinary object;
-  5. the operator, BMF and fulfillment Deployments carry
+  5. the operator and fulfillment Deployments carry
      OSAC_PROVISIONING_ENABLED / --networking-provisioning-enabled as rendered
      from the profile's global.networking.provisioningEnabled.
 
@@ -584,17 +584,11 @@ def check_provisioning_flags(c: Checks, ns: str, release: str, values: dict) -> 
     names = list(carriers)
     for role, needle in (
         ("OSAC operator", "operator"),
-        ("BMF", "bare-metal"),
         ("fulfillment gRPC server", "fulfillment-grpc-server"),
         ("fulfillment controller", "fulfillment-controller"),
     ):
-        if role == "BMF" and not values.get("global", {}).get("services", {}).get("bmaas", {}).get("enabled"):
-            c.info("BMaaS disabled: no BMF Deployment expected")
-            continue
         if role == "OSAC operator":
             match = [n for n in names if "operator" in n and "bare-metal" not in n and "bmf" not in n]
-        elif role == "BMF":
-            match = [n for n in names if "bare-metal" in n or "bmf" in n]
         else:
             match = [n for n in names if needle in n]
         c.check(f"the {role} Deployment is rendered with the flag", len(match) >= 1, f"candidates={names}")

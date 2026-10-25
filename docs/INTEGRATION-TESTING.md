@@ -364,7 +364,7 @@ its NetworkClass CR (sixteenths, `Ready`), the ValidatingAdmissionPolicy and
 binding (a direct VirtualNetwork create by an RBAC-allowed non-OSAC user and by
 the cluster admin is rejected with server-side dry run; a ConfigMap create is
 not), and `OSAC_PROVISIONING_ENABLED` / `--networking-provisioning-enabled` on
-the operator, BMF and fulfillment Deployments as rendered from
+the operator and fulfillment Deployments as rendered from
 `global.networking.provisioningEnabled`. Provider networking is disabled in this
 leg; the enabled path's AAP jobs are E2E.
 
