@@ -32,6 +32,10 @@ import (
 
 var _ = Describe("Bare metal instances server", func() {
 	BeforeEach(func() {
+		seedReadyDefaultNetworking(testTenant, 0)
+	})
+
+	BeforeEach(func() {
 		Expect(createTestBareMetalInstanceType(ctx, "default-type", bareMetalNetworkPort("data-0", "fabric"))).To(Succeed())
 	})
 	Describe("Creation", func() {

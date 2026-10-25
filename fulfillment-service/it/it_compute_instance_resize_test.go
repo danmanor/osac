@@ -140,15 +140,7 @@ var _ = Describe("ComputeInstance InstanceType resize", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 
-		networkClassName := fmt.Sprintf("test-resize-nc-%s", uuid.New())
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: networkClassName}.Build(),
-				Title:         "Resize test network class",
-				FabricManager: new("netris"),
-				K8SManager:    new(testVMK8SManagerName),
-			}.Build(),
-		}.Build())
+		ncResp, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId = ncResp.GetObject().GetId()
 		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
@@ -168,9 +160,7 @@ var _ = Describe("ComputeInstance InstanceType resize", func() {
 				Id:       virtualNetworkId,
 				Metadata: privatev1.Metadata_builder{Name: virtualNetworkId, Tenant: usersGroup}.Build(),
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new("10.110.0.0/16"),
+					Ipv4Cidr: new("10.110.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())

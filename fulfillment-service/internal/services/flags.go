@@ -49,8 +49,8 @@ func (f *Flags) EnableAllIfNoneSet() {
 }
 
 func (f *Flags) Validate() error {
-	if f.CaaS && !f.VMaaS && !f.BMaaS {
-		return fmt.Errorf("CaaS requires at least one of VMaaS or BMaaS")
+	if f.CaaS && !f.BMaaS {
+		return fmt.Errorf("CaaS requires BMaaS")
 	}
 	if f.MaaS && !f.CaaS {
 		return fmt.Errorf("MaaS requires CaaS")

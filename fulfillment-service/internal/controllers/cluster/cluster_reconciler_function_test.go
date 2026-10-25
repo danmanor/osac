@@ -156,9 +156,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:              logger,
-				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
-				maskCalculator:      nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				networkingHubReader:  readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -179,7 +180,7 @@ var _ = Describe("update tenant annotation", func() {
 		Expect(createdCR.Spec.AddOnOperators).To(Equal([]string{"operator-one", "operator-two"}))
 		Expect(createdCR.Spec.NetworkAttachment).To(Equal(&osacv1alpha1.ClusterNetworkAttachment{
 			SubnetRef:         "created-subnet",
-			SecurityGroupRefs: []string{"created-security-group"},
+			SecurityGroupRefs: []string{"created-security-group", automaticSecurityGroupTestID},
 		}))
 	})
 
@@ -247,9 +248,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             hubCache,
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -299,8 +301,9 @@ var _ = Describe("update tenant annotation", func() {
 		var logOutput bytes.Buffer
 		t := &task{
 			r: &function{
-				logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
-				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               slog.New(slog.NewTextHandler(&logOutput, nil)),
+				networkingHubReader:  readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
 			},
 			cluster: privatev1.Cluster_builder{
 				Id: clusterID,
@@ -403,9 +406,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             hubCache,
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -483,9 +487,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       nil,
-				maskCalculator: nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             nil,
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -571,6 +576,7 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
+				securityGroupsClient:  automaticSecurityGroups{},
 				logger:                logger,
 				hubCache:              hubCache,
 				clusterVersionsClient: clusterVersionsClient,
@@ -598,7 +604,7 @@ var _ = Describe("update tenant annotation", func() {
 		Expect(createdCR.Spec.Network.ServiceCIDR).To(Equal(serviceCIDR))
 	})
 
-	It("should map network_attachment to ClusterOrder networkAttachment", func() {
+	It("should map network_attachment API IDs to ClusterOrder networkAttachment with the automatic SecurityGroup last", func() {
 		scheme := runtime.NewScheme()
 		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
 
@@ -616,11 +622,11 @@ var _ = Describe("update tenant annotation", func() {
 				Template: &privatev1.ClusterTemplateReference{Name: "test-template"},
 				NetworkAttachment: privatev1.ClusterNetworkAttachment_builder{
 					Subnet: privatev1.SubnetLocalReference_builder{
-						Name: "my-subnet",
+						Id: "subnet-uuid-1234",
 					}.Build(),
 					SecurityGroups: []*privatev1.SecurityGroupLocalReference{
-						privatev1.SecurityGroupLocalReference_builder{Name: "sg-allow-ssh"}.Build(),
-						privatev1.SecurityGroupLocalReference_builder{Name: "sg-allow-http"}.Build(),
+						privatev1.SecurityGroupLocalReference_builder{Id: "sg-uuid-1111"}.Build(),
+						privatev1.SecurityGroupLocalReference_builder{Id: "sg-uuid-2222"}.Build(),
 					},
 				}.Build(),
 			}.Build(),
@@ -632,9 +638,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:              logger,
-				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
-				maskCalculator:      nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				networkingHubReader:  readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -649,71 +656,9 @@ var _ = Describe("update tenant annotation", func() {
 
 		createdCR := list.Items[0]
 		Expect(createdCR.Spec.NetworkAttachment).ToNot(BeNil())
-		Expect(createdCR.Spec.NetworkAttachment.SubnetRef).To(Equal("my-subnet"))
-		Expect(createdCR.Spec.NetworkAttachment.SecurityGroupRefs).To(Equal([]string{"sg-allow-ssh", "sg-allow-http"}))
-	})
-
-	It("should use GetName() not ID for SubnetRef and SecurityGroupRefs when both are set", func() {
-		scheme := runtime.NewScheme()
-		Expect(osacv1alpha1.AddToScheme(scheme)).To(Succeed())
-
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			Build()
-
-		cluster := privatev1.Cluster_builder{
-			Id: clusterID,
-			Metadata: privatev1.Metadata_builder{
-				Finalizers: []string{finalizers.Controller},
-				Tenant:     tenantName,
-			}.Build(),
-			Spec: privatev1.ClusterSpec_builder{
-				Template: &privatev1.ClusterTemplateReference{Name: "test-template"},
-				NetworkAttachment: privatev1.ClusterNetworkAttachment_builder{
-					Subnet: privatev1.SubnetLocalReference_builder{
-						Id:   "subnet-uuid-1234",
-						Name: "my-subnet",
-					}.Build(),
-					SecurityGroups: []*privatev1.SecurityGroupLocalReference{
-						privatev1.SecurityGroupLocalReference_builder{
-							Id:   "sg-uuid-1111",
-							Name: "sg-allow-ssh",
-						}.Build(),
-						privatev1.SecurityGroupLocalReference_builder{
-							Id:   "sg-uuid-2222",
-							Name: "sg-allow-http",
-						}.Build(),
-					},
-				}.Build(),
-			}.Build(),
-			Status: privatev1.ClusterStatus_builder{
-				State: privatev1.ClusterState_CLUSTER_STATE_PROGRESSING,
-				Hub:   hubID,
-			}.Build(),
-		}.Build()
-
-		t := &task{
-			r: &function{
-				logger:              logger,
-				networkingHubReader: readyClusterNetworkingHubReader(hubID, hubNamespace, fakeClient),
-				maskCalculator:      nil,
-			},
-			cluster: cluster,
-		}
-
-		err := t.update(ctx)
-		Expect(err).ToNot(HaveOccurred())
-
-		list := &osacv1alpha1.ClusterOrderList{}
-		err = fakeClient.List(ctx, list)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(list.Items).To(HaveLen(1))
-
-		createdCR := list.Items[0]
-		Expect(createdCR.Spec.NetworkAttachment).ToNot(BeNil())
-		// Must use CR name, not UUID — the CRD documents these fields as CR names
-		Expect(createdCR.Spec.NetworkAttachment.SubnetRef).To(Equal("my-subnet"))
-		Expect(createdCR.Spec.NetworkAttachment.SecurityGroupRefs).To(Equal([]string{"sg-allow-ssh", "sg-allow-http"}))
+		Expect(createdCR.Spec.NetworkAttachment.SubnetRef).To(Equal("subnet-uuid-1234"))
+		Expect(createdCR.Spec.NetworkAttachment.SecurityGroupRefs).To(Equal(
+			[]string{"sg-uuid-1111", "sg-uuid-2222", automaticSecurityGroupTestID}))
 	})
 
 	It("should leave ClusterOrder networkAttachment nil when network_attachment is absent", func() {
@@ -750,9 +695,10 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				maskCalculator: nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             hubCache,
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -818,10 +764,11 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
-				logger:         logger,
-				hubCache:       hubCache,
-				secretsClient:  secretsClient,
-				maskCalculator: nil,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             hubCache,
+				secretsClient:        secretsClient,
+				maskCalculator:       nil,
 			},
 			cluster: cluster,
 		}
@@ -920,6 +867,7 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
+				securityGroupsClient:  automaticSecurityGroups{},
 				logger:                logger,
 				hubCache:              hubCache,
 				clusterVersionsClient: clusterVersionsClient,
@@ -1048,6 +996,7 @@ var _ = Describe("update tenant annotation", func() {
 
 		t := &task{
 			r: &function{
+				securityGroupsClient:  automaticSecurityGroups{},
 				logger:                logger,
 				hubCache:              hubCache,
 				clusterVersionsClient: clusterVersionsClient,
@@ -1098,6 +1047,7 @@ var _ = Describe("resolveVersionImage", func() {
 
 		t := &task{
 			r: &function{
+				securityGroupsClient:  automaticSecurityGroups{},
 				clusterVersionsClient: clusterVersionsClient,
 			},
 		}
@@ -1115,6 +1065,7 @@ var _ = Describe("resolveVersionImage", func() {
 
 		t := &task{
 			r: &function{
+				securityGroupsClient:  automaticSecurityGroups{},
 				clusterVersionsClient: clusterVersionsClient,
 			},
 		}
@@ -1190,6 +1141,7 @@ var _ = Describe("update version resolution failure", func() {
 		}.Build()
 
 		f := &function{
+			securityGroupsClient:  automaticSecurityGroups{},
 			logger:                logger,
 			hubCache:              hubCache,
 			clustersClient:        clustersClient,
@@ -1284,11 +1236,12 @@ var _ = Describe("update pull secret resolution failure", func() {
 			Times(1)
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			secretsClient:  secretsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			secretsClient:        secretsClient,
+			maskCalculator:       nil,
 		}
 
 		err := f.run(ctx, setupCluster())
@@ -1351,9 +1304,10 @@ func newTaskForDelete(clusterID, hubID string, hubCache controllers.HubCache) *t
 	}.Build()
 
 	f := &function{
-		logger:            logger,
-		hubCache:          hubCache,
-		networkingCleanup: &fakeWorkloadNetworkingCleanup{complete: true},
+		securityGroupsClient: automaticSecurityGroups{},
+		logger:               logger,
+		hubCache:             hubCache,
+		networkingCleanup:    &fakeWorkloadNetworkingCleanup{complete: true},
 	}
 
 	return &task{
@@ -1363,15 +1317,21 @@ func newTaskForDelete(clusterID, hubID string, hubCache controllers.HubCache) *t
 }
 
 type fakeWorkloadNetworkingCleanup struct {
-	complete   bool
-	calls      int
-	workloadID string
-	err        error
+	securityGroupCalls int
+	complete           bool
+	calls              int
+	workloadID         string
+	err                error
 }
 
 func (f *fakeWorkloadNetworkingCleanup) Cleanup(_ context.Context, workloadID string) (bool, error) {
 	f.calls++
 	f.workloadID = workloadID
+	return f.complete, f.err
+}
+
+func (f *fakeWorkloadNetworkingCleanup) CleanupSecurityGroups(_ context.Context, workloadID string) (bool, error) {
+	f.securityGroupCalls++
 	return f.complete, f.err
 }
 
@@ -1637,8 +1597,9 @@ var _ = Describe("deleteClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -1656,8 +1617,9 @@ var _ = Describe("deleteClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -1680,8 +1642,9 @@ var _ = Describe("deleteClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -1704,8 +1667,9 @@ var _ = Describe("deleteClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -1786,11 +1750,12 @@ var _ = Describe("hub persistence", func() {
 		}.Build()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			hubsClient:     hubsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			hubsClient:           hubsClient,
+			maskCalculator:       nil,
 		}
 
 		err := f.run(ctx, cluster)
@@ -1848,11 +1813,12 @@ var _ = Describe("hub persistence", func() {
 		}.Build()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			hubsClient:     hubsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			hubsClient:           hubsClient,
+			maskCalculator:       nil,
 		}
 
 		err := f.run(ctx, cluster)
@@ -1899,11 +1865,12 @@ var _ = Describe("hub persistence", func() {
 			AnyTimes()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			hubsClient:     hubsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			hubsClient:           hubsClient,
+			maskCalculator:       nil,
 		}
 
 		// First reconcile: hub empty → select hub, return without creating CR
@@ -1998,11 +1965,12 @@ var _ = Describe("hub persistence", func() {
 		}.Build()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			hubsClient:     hubsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			hubsClient:           hubsClient,
+			maskCalculator:       nil,
 		}
 
 		err := f.run(ctx, cluster)
@@ -2061,11 +2029,12 @@ var _ = Describe("hub persistence", func() {
 		}.Build()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			hubsClient:     hubsClient,
-			maskCalculator: nil,
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			hubsClient:           hubsClient,
+			maskCalculator:       nil,
 		}
 
 		Expect(func() { f.run(ctx, cluster) }).ToNot(Panic())
@@ -2130,10 +2099,11 @@ var _ = Describe("Kubernetes validation error handling", func() {
 		}.Build()
 
 		f := &function{
-			logger:         logger,
-			hubCache:       hubCache,
-			clustersClient: clustersClient,
-			maskCalculator: masks.NewCalculator().Build(),
+			securityGroupsClient: automaticSecurityGroups{},
+			logger:               logger,
+			hubCache:             hubCache,
+			clustersClient:       clustersClient,
+			maskCalculator:       masks.NewCalculator().Build(),
 		}
 
 		err := f.run(ctx, cluster)
@@ -2308,8 +2278,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2350,9 +2321,10 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_PROGRESSING)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				hubCache:      hubCache,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				hubCache:             hubCache,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -2413,8 +2385,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2437,8 +2410,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster: cluster,
 		}
@@ -2462,8 +2436,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2492,8 +2467,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2536,8 +2512,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2581,8 +2558,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 		cluster := makeCluster(privatev1.ClusterState_CLUSTER_STATE_READY)
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2624,8 +2602,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2673,8 +2652,9 @@ var _ = Describe("ensureClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger:        logger,
-				secretsClient: secretsClient,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
+				secretsClient:        secretsClient,
 			},
 			cluster:      cluster,
 			hubId:        hubID,
@@ -2718,7 +2698,8 @@ var _ = Describe("ensureClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger: logger,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
 			},
 			cluster: cluster,
 		}
@@ -2744,7 +2725,8 @@ var _ = Describe("ensureClusterSecrets", func() {
 
 		t := &task{
 			r: &function{
-				logger: logger,
+				securityGroupsClient: automaticSecurityGroups{},
+				logger:               logger,
 			},
 			cluster: cluster,
 		}
@@ -2756,3 +2738,20 @@ var _ = Describe("ensureClusterSecrets", func() {
 		Expect(nrs[0].NumberOfNodes).To(Equal(3))
 	})
 })
+
+const automaticSecurityGroupTestID = "auto-sg-api-id"
+
+// automaticSecurityGroups returns the automatic SecurityGroup of the Cluster.
+type automaticSecurityGroups struct {
+	privatev1.SecurityGroupsClient
+}
+
+func (automaticSecurityGroups) List(context.Context, *privatev1.SecurityGroupsListRequest,
+	...grpc.CallOption) (*privatev1.SecurityGroupsListResponse, error) {
+	return privatev1.SecurityGroupsListResponse_builder{Items: []*privatev1.SecurityGroup{
+		privatev1.SecurityGroup_builder{
+			Id:       automaticSecurityGroupTestID,
+			Metadata: privatev1.Metadata_builder{Creator: "system"}.Build(),
+		}.Build(),
+	}}.Build(), nil
+}

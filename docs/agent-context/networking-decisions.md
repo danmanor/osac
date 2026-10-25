@@ -19,9 +19,7 @@ these documents locally; verify its revision before relying on it. They remain
 available through GitHub in a fresh OSAC clone.
 
 These decisions describe the accepted target contract. They do not assert that
-every constraint is enforced by the current code. The unified design explicitly
-records legacy IPv6/dual-stack fields and allocation paths still present in the
-implementation. Check [proto sources](../../proto/private/),
+every constraint is enforced by the current code. Check [proto sources](../../proto/private/),
 [operator APIs](../../osac-operator/api/), and the affected component's guidance
 when assessing current behavior. Report implementation/design gaps explicitly.
 
@@ -47,8 +45,7 @@ superseded or extended design explicitly.
    fields. Manager registrations and allocation requests must follow the IPv4
    contract in the unified design.
 5. **External addressing:** ExternalIP replaces PublicIP; an address external to
-   a VirtualNetwork need not be internet-routable. Check migration compatibility
-   before renaming existing APIs. ExternalIPAttachment provides inbound DNAT;
+   a VirtualNetwork need not be internet-routable. ExternalIPAttachment provides inbound DNAT;
    NATGateway provides outbound SNAT.
 6. **Create/read/delete operations:** Networking specifications and metadata are
    immutable after creation. Read means List/Get. Replacement requires delete
@@ -115,54 +112,51 @@ by the unified design. Manually created external resources and tenant-shared
 default networking persist when a workload is deleted. Follow the full design's
 reverse-reference guards when deleting shared resources or replacing NetworkClass.
 
-## AgentlessNet ExternalIP implementation status
+## Implementation notes
 
-The OSAC-6307 AgentlessNet v1 implementation supplies the resolved ExternalIP
-pool context to AAP. AAP reserves the UID-owned address and returns it in the
-successful `external_ip.allocate` job artifact at `osac_result.data.address`.
-The operator validates the current job result and pool, then publishes the
-address in `ExternalIP.status.address`; AAP does not query the ExternalIPPool
-or write the allocated-address annotation for this v1 flow. For both allocation
-and release, it validates the result against the resource and pool snapshots in
-the same AAP job's submitted `extra_vars`. Release continues to use the v1
-identity envelope with empty `data`.
+The code implements the network manager integration contract
+([OSAC-1433 contract](https://github.com/osac-project/enhancement-proposals/blob/main/enhancements/OSAC-1433-network-manager-integration-contract-networking/design.md))
+as follows:
 
-This implementation updates the allocation handoff in the accepted unified
-networking design, which now documents the same-job artifact and pool snapshot
-contract. Deployed AgentlessNet ExternalIP E2E validation is tracked with
-OSAC-6308. Netris ExternalIP adoption follows the same contract: the OSAC-6376
-Netris v1 implementation dispatches by the
-`osac.openshift.io/externalip-contract-version` annotation. v1 resources run the
-`osac.templates.netris_external_ip` module, which reserves a UID-owned canonical
-IPv4 /32 nat reservation by Kubernetes UID and returns the exact `osac_result`
-v1 artifact at `data.address`; release removes that reservation and reports
-success only after confirmed absence. Netris v1 jobs do not query Kubernetes or
-mutate ExternalIP annotations or status; the operator owns status, finalizers,
-and capacity. Unversioned Netris resources retain the legacy name-owned
-annotation handoff until its removal (OSAC-6384), and the operator chart
-defaults the netris manager registration to the v1 contract while the manager
-itself stays disabled until an operator enables it.
-
-## AgentlessNet ExternalIPAttachment implementation status
-
-The OSAC-6308 AgentlessNet v1 attachment flow is independently versioned by
-`externalIPAttachmentContractVersion`; it does not inherit the ExternalIP
-contract version. The ExternalIPAttachment controller resolves the ready
-ExternalIP, BareMetalInstance, primary Subnet, and VirtualNetwork, then sends
-their resource identities, tenant ownership, addresses, and readiness in the
-same AAP job input as the attachment CR. AAP does not query Kubernetes or write
-CR status. It reserves attachment state in the existing AgentlessNet SQLite
-schema-v1 database, installs inbound whole-address DNAT and scoped forwarding,
-and announces the ExternalIP `/32` through local FRR. The controller validates
-the returned artifact against the submitted input and current resource snapshot
-before marking the attachment Ready; detach uses saved provider state and keeps
-finalizers until its artifact is accepted.
-
-This first delivery supports BMaaS BareMetalInstance targets. It does not add
-SecurityGroup policy, NATGateway SNAT, IPv6, or an upstream-router/BGP-peer
-configuration API. The OSAC-1433 design's AAP input and attachment result
-contract specifies the controller-supplied dependency snapshot and
-same-job-result validation. AgentlessNet implements it under OSAC-6308. Netris
-must adopt the attachment v1 contract before advertising it; that work is
-tracked by OSAC-6638. The OSAC-6308 deployed E2E coverage uses a test-only static
-route and does not validate upstream BGP advertisement.
+- **Generic network task:** every manager task (`create_subnet`,
+  `apply_network_attachment`, `query_dhcp_lease`, `create_external_ip`, ...)
+  runs as the AAP job template `<prefix>-<task with dashes>` (for example
+  `osac-create-subnet`). All of them run
+  [`playbook_osac_network_task.yml`](../../osac-aap/playbook_osac_network_task.yml),
+  which calls the manager's `ansible_role` with `osac_job_vars` (`task`,
+  `manager`, the resource snapshot) and returns `osac_result`/`osac_error`.
+  The operator side is [`internal/networktask`](../../osac-operator/internal/networktask/doc.go).
+  There is no dispatcher and no per-manager or per-kind playbook.
+- **Manager registrations:** each manager registers through an immutable
+  ConfigMap in the operator namespace labelled
+  `osac.openshift.io/network-fabric-manager` or
+  `osac.openshift.io/network-k8s-manager` (`name`, `ansible_role`, optional
+  `network_types` and `capabilities`). The operator discovers registrations
+  and derives NetworkClass capabilities from them. Manager-specific registration
+  content and provider behavior remain with the owning teams.
+- **NetworkClass and NetworkAttachment CRDs:** the fulfillment reconciler
+  creates the single NetworkClass CR, which resolves its managers from the
+  registrations. BMaaS (BMF) and VMaaS create a NetworkAttachment per
+  workload attachment; the operator networking controller runs its tasks.
+- **Status:** networking CRs have no `status.phase`. They report the `Ready`
+  condition (reasons `Progressing`, `Succeeded`, `Failed`, `Updating`,
+  `ProvisioningDisabled`), one `status.jobs` entry per task run (manager,
+  attempt, state, AAP job ID, message) and `status.taskInput`, the input
+  captured once at the first job and reused by retries and cleanup. Feedback
+  controllers map `Ready` to the private state; there is no `DELETE_FAILED`
+  (cleanup tasks retry until they succeed).
+- **Provider networking disabled:** with
+  `global.networking.provisioningEnabled: false` no networking job runs;
+  the operator does not read manager registration ConfigMaps. It marks the
+  NetworkClass Ready with reason `ProvisioningDisabled` and leaves
+  `status.networkManagers` and `status.networkType` empty. The configured
+  manager names remain part of the NetworkClass spec but are not resolved;
+  VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool and FabricDomain
+  become Ready with reason `ProvisioningDisabled`; workloads create no
+  NetworkAttachment, and ExternalIP, ExternalIPAttachment and NATGateway are
+  not offered. The fulfillment service refuses to start when the stored value
+  changes.
+- **CaaS workers:** worker BareMetalInstances live in tenant `system` and
+  record their Cluster in status. The agent registration timeout (30 minutes)
+  starts at the latest of the attempt start, the BMI network-ready time and
+  the management publication, so network setup time does not count against it.

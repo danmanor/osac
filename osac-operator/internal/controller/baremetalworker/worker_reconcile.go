@@ -22,7 +22,7 @@ import (
 // existing-worker work: a wait or error from the create stage is merged into the
 // final scheduling decision instead.
 func (r *Reconciler) reconcileWorkers(ctx context.Context, co *v1alpha1.ClusterOrder, cluster *privatev1.Cluster) (ctrl.Result, error) {
-	tenant := cluster.GetMetadata().GetTenant()
+	tenant := workerBMITenant
 	// One local observation supplies identity, ownership and early Agent phases.
 	observed, res, err := r.observeWorkerResources(ctx, co)
 	if err != nil || !res.IsZero() {

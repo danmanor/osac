@@ -214,14 +214,7 @@ var _ = Describe("MCP server", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		networkClassResponse, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("mcp-network-class-%s", uuid.New()[24:32])}.Build(),
-				Title:         "MCP network class",
-				FabricManager: proto.String("netris"),
-				K8SManager:    new(testVMK8SManagerName),
-			}.Build(),
-		}.Build())
+		networkClassResponse, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassID = networkClassResponse.GetObject().GetId()
 		DeferCleanup(func(cleanupCtx context.Context) {
@@ -254,9 +247,7 @@ var _ = Describe("MCP server", func() {
 					Tenant: usersGroup,
 				}.Build(),
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassID}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     proto.String("10.200.0.0/16"),
+					Ipv4Cidr: proto.String("10.200.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())

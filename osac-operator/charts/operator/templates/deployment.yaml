@@ -65,6 +65,10 @@ spec:
           - name: OSAC_AAP_STATUS_POLL_INTERVAL
             value: {{ .Values.aap.statusPollInterval | quote }}
           {{- end }}
+          {{- if .Values.aap.organization }}
+          - name: OSAC_AAP_ORGANIZATION
+            value: {{ .Values.aap.organization | quote }}
+          {{- end }}
           {{- if .Values.aap.templatePrefix }}
           - name: OSAC_AAP_TEMPLATE_PREFIX
             value: {{ .Values.aap.templatePrefix | quote }}
@@ -84,10 +88,6 @@ spec:
           {{- if .Values.stall.workersJoiningByInstanceType }}
           - name: OSAC_CLUSTER_WORKERS_JOINING_STALL_THRESHOLD_OVERRIDES
             value: {{ .Values.stall.workersJoiningByInstanceType | toJson | quote }}
-          {{- end }}
-          {{- if .Values.networkManagers.capabilitiesSyncInterval }}
-          - name: OSAC_NETWORK_CLASS_SYNC_INTERVAL
-            value: {{ .Values.networkManagers.capabilitiesSyncInterval | quote }}
           {{- end }}
           {{- if .Values.fulfillment.serverAddress }}
           - name: OSAC_FULFILLMENT_SERVER_ADDRESS
@@ -171,8 +171,8 @@ spec:
             value: {{ .Values.controllers.storage | quote }}
           - name: OSAC_ENABLE_VOLUME_CONTROLLER
             value: {{ .Values.controllers.volume | quote }}
-          - name: OSAC_ENABLE_NETWORKING_PROVISIONING
-            value: {{ .Values.controllers.networkingProvisioning | default false | quote }}
+          - name: OSAC_PROVISIONING_ENABLED
+            value: {{ dig "networking" "provisioningEnabled" true (.Values.global | default dict) | quote }}
 {{- if .Values.vendorControllers }}
 {{- $pairs := list }}
 {{- range $k, $v := .Values.vendorControllers }}

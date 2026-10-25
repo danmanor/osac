@@ -16,6 +16,7 @@ package servers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,6 +49,7 @@ type PrivateNATGatewaysServer struct {
 	virtualNetworksDao *dao.GenericDAO[*privatev1.VirtualNetwork]
 	networkClassesDao  *dao.GenericDAO[*privatev1.NetworkClass]
 	lifecycle          *externalIPLifecycle
+	guards             *networkingGuards
 }
 
 func NewPrivateNATGatewaysServer() *PrivateNATGatewaysServerBuilder {
@@ -142,7 +144,12 @@ func (b *PrivateNATGatewaysServerBuilder) Build() (result *PrivateNATGatewaysSer
 		return
 	}
 
+	guards, err := newNetworkingGuards(b.logger)
+	if err != nil {
+		return
+	}
 	result = &PrivateNATGatewaysServer{
+		guards:             guards,
 		logger:             b.logger,
 		tenancyLogic:       b.tenancyLogic,
 		generic:            generic,
@@ -181,92 +188,99 @@ func (s *PrivateNATGatewaysServer) Create(ctx context.Context,
 	if err = rejectOutputStatusOnCreate(natGateway != nil && natGateway.HasStatus()); err != nil {
 		return
 	}
-
 	err = s.validateNATGateway(natGateway)
 	if err != nil {
 		return
 	}
-	natTenant, tenantErr := resolveObjectTenant(ctx, natGateway.GetMetadata(), s.tenancyLogic)
-	if tenantErr != nil {
-		err = tenantErr
-		return
+	err = s.generic.CreateWithCandidatePreparation(ctx, request, &response,
+		func(ctx context.Context, _, candidate *privatev1.NATGateway) error {
+			if err := lockTenantForCreate(ctx, candidate.GetMetadata().GetTenant()); err != nil {
+				return err
+			}
+			return s.prepareCreate(ctx, candidate)
+		})
+	return
+}
+
+// isDefaultNATGateway reports whether a create is the system's create of a tenant's default NATGateway.
+func isDefaultNATGateway(ctx context.Context, metadata *privatev1.Metadata) bool {
+	return isSystemCreate(ctx, metadata) && metadata.GetName() == "default" &&
+		metadata.GetLabels()[defaultLabel] == "true"
+}
+
+// prepareCreate checks the NATGateway gates. It locks the VirtualNetwork, then the ExternalIP.
+func (s *PrivateNATGatewaysServer) prepareCreate(ctx context.Context, natGateway *privatev1.NATGateway) error {
+	metadata := natGateway.GetMetadata()
+	if err := validateReservedCreate(ctx, metadata, ""); err != nil {
+		return err
 	}
-	externalIPKey := refKey(natGateway.GetSpec().GetExternalIp())
-	var externalIP *privatev1.ExternalIP
-	externalIP, err = s.validateExternalIPReference(ctx, externalIPKey)
+	tenant := metadata.GetTenant()
+	virtualNetwork, err := lockParentVirtualNetwork(ctx, s.guards, s.virtualNetworksDao,
+		refKey(natGateway.GetSpec().GetVirtualNetwork()), metadata)
 	if err != nil {
-		return
+		return err
 	}
-	if err = validateTenantMatch(natTenant, externalIP, "ExternalIP", externalIPKey); err != nil {
-		return
+	natGateway.GetSpec().SetVirtualNetwork(privatev1.VirtualNetworkLocalReference_builder{
+		Id: virtualNetwork.GetId(),
+	}.Build())
+
+	// The VirtualNetwork has no NATGateway, also not one being deleted. The check runs under the VirtualNetwork lock.
+	count, firstID, err := countRecords(ctx, s.guards.natGateways,
+		fmt.Sprintf("this.spec.virtual_network.id == %q", virtualNetwork.GetId()))
+	if err != nil {
+		return grpcstatus.Error(grpccodes.Internal, "failed to check the NATGateways of the VirtualNetwork")
 	}
-	if err = s.lifecycle.ensureExternalIPAvailable(ctx, externalIPKey, externalIP.GetMetadata().GetName()); err != nil {
-		return
+	if count > 0 {
+		return grpcstatus.Errorf(grpccodes.AlreadyExists,
+			"VirtualNetwork '%s' already has NATGateway '%s'", virtualNetwork.GetId(), firstID)
+	}
+	defaultGateway := isDefaultNATGateway(ctx, metadata)
+	if virtualNetwork.GetMetadata().GetLabels()[defaultLabel] == "true" && !defaultGateway {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"VirtualNetwork '%s' is a tenant default; only the system creates its NATGateway", virtualNetwork.GetId())
 	}
 
-	virtualNetworkKey := refKey(natGateway.GetSpec().GetVirtualNetwork())
-	virtualNetworkResponse, getErr := s.virtualNetworksDao.Get().SetId(virtualNetworkKey).SetLock(true).Do(ctx)
-	if getErr != nil {
-		var notFoundErr *dao.ErrNotFound
-		if errors.As(getErr, &notFoundErr) {
-			err = grpcstatus.Errorf(grpccodes.InvalidArgument, "virtual network '%s' does not exist", virtualNetworkKey)
-		} else {
-			s.logger.ErrorContext(ctx, "Failed to query VirtualNetwork",
-				slog.String("virtual_network_id", virtualNetworkKey),
-				slog.Any("error", getErr))
-			err = grpcstatus.Errorf(grpccodes.Internal, "failed to validate virtual_network")
-		}
-		return
-	}
-	virtualNetwork := virtualNetworkResponse.GetObject()
-	if err = validateTenantMatch(natTenant, virtualNetwork, "VirtualNetwork", virtualNetworkKey); err != nil {
-		return
-	}
-	if virtualNetwork.GetMetadata().HasDeletionTimestamp() {
-		err = grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"VirtualNetwork '%s' is being deleted", virtualNetworkKey)
-		return
-	}
-	if virtualNetwork.GetStatus().GetState() != privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY {
-		err = grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"VirtualNetwork '%s' must be READY (current state: %s)",
-			virtualNetworkKey, virtualNetwork.GetStatus().GetState().String())
-		return
-	}
-	err = s.validateNetworkClassHasFabricManager(ctx, refKey(natGateway.GetSpec().GetVirtualNetwork()))
+	externalIPKey := refKey(natGateway.GetSpec().GetExternalIp())
+	externalIP, err := s.validateExternalIPReference(ctx, externalIPKey)
 	if err != nil {
-		return
+		return err
+	}
+	if err = validateTenantMatch(tenant, externalIP, "ExternalIP", externalIPKey); err != nil {
+		return err
+	}
+	natGateway.GetSpec().SetExternalIp(privatev1.ExternalIPLocalReference_builder{Id: externalIP.GetId()}.Build())
+	if isAutomatic(externalIP.GetMetadata()) {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"ExternalIP '%s' is automatic and can't be used by a NATGateway", externalIP.GetId())
+	}
+	if externalIP.GetMetadata().GetLabels()[defaultLabel] == "true" && !defaultGateway {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"ExternalIP '%s' is a tenant default; only the default NATGateway uses it", externalIP.GetId())
+	}
+	if err = s.lifecycle.ensureExternalIPAvailable(ctx, externalIP.GetId(),
+		externalIP.GetMetadata().GetName()); err != nil {
+		return err
 	}
 
 	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
 	if err != nil {
-		return
+		return err
 	}
 	if err = validateNetworkingHubReferences(canonicalHubID, networkingHubReference{
 		resourceType: "VirtualNetwork",
-		id:           virtualNetworkResponse.GetObject().GetId(),
-		hubID:        virtualNetworkResponse.GetObject().GetStatus().GetHub(),
+		id:           virtualNetwork.GetId(),
+		hubID:        virtualNetwork.GetStatus().GetHub(),
 	}, networkingHubReference{
 		resourceType: "ExternalIP",
 		id:           externalIP.GetId(),
 		hubID:        externalIP.GetStatus().GetHub(),
 	}); err != nil {
-		return
+		return err
 	}
-	if natGateway.GetStatus() == nil {
-		natGateway.SetStatus(privatev1.NATGatewayStatus_builder{
-			State: privatev1.NATGatewayState_NAT_GATEWAY_STATE_PENDING,
-		}.Build())
-	} else {
-		natGateway.GetStatus().SetState(privatev1.NATGatewayState_NAT_GATEWAY_STATE_PENDING)
-	}
-
-	err = s.generic.Create(ctx, request, &response)
-	if err != nil {
-		return
-	}
-
-	return
+	natGateway.SetStatus(privatev1.NATGatewayStatus_builder{
+		State: privatev1.NATGatewayState_NAT_GATEWAY_STATE_PENDING,
+	}.Build())
+	return nil
 }
 
 func (s *PrivateNATGatewaysServer) Update(ctx context.Context,
@@ -276,34 +290,23 @@ func (s *PrivateNATGatewaysServer) Update(ctx context.Context,
 		err = grpcstatus.Errorf(grpccodes.InvalidArgument, "object identifier is mandatory")
 		return
 	}
-
 	mask := request.GetUpdateMask()
 	if err = validatePrivateLifecycleUpdateMask(mask,
 		[]string{"status.state", "status.message", "status.hub", "status.state_transition_time"},
 		nil); err != nil {
 		return
 	}
-	_, existingGateway, lockErr := s.lifecycle.lockNATGateway(ctx, id)
-	if lockErr != nil {
-		err = translateLifecycleError(lockErr)
+	if _, _, err = s.lifecycle.lockNATGateway(ctx, id); err != nil {
+		err = translateLifecycleError(err)
 		return
 	}
-	if err = validateDefaultLabelUpdate(
-		existingGateway.GetMetadata().GetLabels(),
-		request.GetObject().GetMetadata().GetLabels(),
-		mask,
-		"NAT gateway",
-	); err != nil {
-		return
-	}
-	if updateIncludesField(mask, "spec.virtual_network", "spec.external_ip") {
-		err = validateImmutableFieldsNATGateway(request.GetObject(), existingGateway)
-		if err != nil {
-			return
-		}
-	}
-
-	err = s.generic.Update(ctx, request, &response)
+	err = s.generic.UpdateWithCandidatePreparation(ctx, request, &response,
+		func(_ context.Context, current, candidate *privatev1.NATGateway) error {
+			if err := validateNetworkingStatusOnlyUpdate("NATGateway", current, candidate); err != nil {
+				return err
+			}
+			return rejectStateChangeWhileDeleting(current, candidate, current.GetMetadata())
+		})
 	return
 }
 
@@ -320,11 +323,17 @@ func (s *PrivateNATGatewaysServer) Delete(ctx context.Context,
 		err = translateLifecycleError(err)
 		return
 	}
+	if deleteAlreadyAccepted(natGateway.GetMetadata()) {
+		response = &privatev1.NATGatewaysDeleteResponse{}
+		return
+	}
 	if err = validateNotDefault(ctx, natGateway.GetMetadata().GetLabels(), "NAT gateway"); err != nil {
 		return
 	}
-	if natGateway.GetMetadata().GetDeletionTimestamp() != nil {
-		response = &privatev1.NATGatewaysDeleteResponse{}
+	if err = s.rejectDeleteIfClustersUseVirtualNetwork(ctx, natGateway); err != nil {
+		return
+	}
+	if err = markDeleting(ctx, s.generic.dao, natGateway); err != nil {
 		return
 	}
 	err = translateLifecycleError(s.lifecycle.deleteLockedNATGateway(ctx, natGateway))
@@ -332,6 +341,41 @@ func (s *PrivateNATGatewaysServer) Delete(ctx context.Context,
 		response = &privatev1.NATGatewaysDeleteResponse{}
 	}
 	return
+}
+
+// rejectDeleteIfClustersUseVirtualNetwork rejects a NATGateway delete while any Cluster, in any state, has its network
+// attachment on a Subnet of the NATGateway's VirtualNetwork: the workers reach the management endpoints through it.
+func (s *PrivateNATGatewaysServer) rejectDeleteIfClustersUseVirtualNetwork(ctx context.Context,
+	natGateway *privatev1.NATGateway) error {
+	virtualNetworkID := refKey(natGateway.GetSpec().GetVirtualNetwork())
+	subnets := map[string]bool{}
+	err := forEachRecord(ctx, s.guards.subnets, func(subnet *privatev1.Subnet) {
+		if refKey(subnet.GetSpec().GetVirtualNetwork()) == virtualNetworkID {
+			subnets[subnet.GetId()] = true
+		}
+	})
+	if err != nil {
+		return grpcstatus.Error(grpccodes.Internal, "failed to check NATGateway references")
+	}
+	count := 0
+	firstID := ""
+	err = forEachRecord(ctx, s.guards.clusters, func(cluster *privatev1.Cluster) {
+		if subnets[refKey(cluster.GetSpec().GetNetworkAttachment().GetSubnet())] {
+			count++
+			if firstID == "" {
+				firstID = cluster.GetId()
+			}
+		}
+	})
+	if err != nil {
+		return grpcstatus.Error(grpccodes.Internal, "failed to check NATGateway references")
+	}
+	if count > 0 {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"cannot delete NATGateway '%s': %d Cluster(s) have a network attachment on VirtualNetwork '%s' "+
+				"(including '%s')", natGateway.GetId(), count, virtualNetworkID, firstID)
+	}
+	return nil
 }
 
 func (s *PrivateNATGatewaysServer) Signal(ctx context.Context,
@@ -356,26 +400,6 @@ func (s *PrivateNATGatewaysServer) validateNATGateway(natGateway *privatev1.NATG
 		return grpcstatus.Errorf(grpccodes.InvalidArgument,
 			"field 'spec.external_ip' is required")
 	}
-	return nil
-}
-
-func validateImmutableFieldsNATGateway(
-	newGateway, existingGateway *privatev1.NATGateway) error {
-	newSpec := newGateway.GetSpec()
-	existingSpec := existingGateway.GetSpec()
-
-	if newVN := refKey(newSpec.GetVirtualNetwork()); newVN != refKey(existingSpec.GetVirtualNetwork()) {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"field 'spec.virtual_network' is immutable and cannot be changed from '%s' to '%s'",
-			refKey(existingSpec.GetVirtualNetwork()), newVN)
-	}
-
-	if newEIP := refKey(newSpec.GetExternalIp()); newEIP != refKey(existingSpec.GetExternalIp()) {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"field 'spec.external_ip' is immutable and cannot be changed from '%s' to '%s'",
-			refKey(existingSpec.GetExternalIp()), newEIP)
-	}
-
 	return nil
 }
 
@@ -409,49 +433,4 @@ func (s *PrivateNATGatewaysServer) validateExternalIPReference(
 			externalIPID, externalIP.GetStatus().GetState().String())
 	}
 	return externalIP, nil
-}
-
-// validateNetworkClassHasFabricManager resolves the VirtualNetwork referenced by virtualNetworkID to its
-// NetworkClass and returns a FailedPrecondition error if the NetworkClass has no fabric_manager. NATGateway
-// provisioning is a fabric-level operation with no k8sManager fallback.
-func (s *PrivateNATGatewaysServer) validateNetworkClassHasFabricManager(
-	ctx context.Context, virtualNetworkID string) error {
-	vnResponse, err := s.virtualNetworksDao.Get().
-		SetId(virtualNetworkID).
-		Do(ctx)
-	if err != nil {
-		var notFoundErr *dao.ErrNotFound
-		if errors.As(err, &notFoundErr) {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"VirtualNetwork '%s' does not exist", virtualNetworkID)
-		}
-		s.logger.ErrorContext(ctx, "Failed to query VirtualNetwork",
-			slog.String("virtual_network_id", virtualNetworkID),
-			slog.Any("error", err))
-		return grpcstatus.Errorf(grpccodes.Internal, "failed to validate spec.virtual_network")
-	}
-
-	networkClassID := refKey(vnResponse.GetObject().GetSpec().GetNetworkClass())
-	ncResponse, err := s.networkClassesDao.Get().
-		SetId(networkClassID).
-		Do(ctx)
-	if err != nil {
-		var notFoundErr *dao.ErrNotFound
-		if errors.As(err, &notFoundErr) {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"NetworkClass '%s' does not exist", networkClassID)
-		}
-		s.logger.ErrorContext(ctx, "Failed to query NetworkClass",
-			slog.String("network_class_id", networkClassID),
-			slog.Any("error", err))
-		return grpcstatus.Errorf(grpccodes.Internal, "failed to validate spec.virtual_network")
-	}
-
-	if !ncResponse.GetObject().HasFabricManager() {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"VirtualNetwork '%s' uses NetworkClass '%s' which has no 'fabric_manager'; NAT gateways require a fabric manager",
-			virtualNetworkID, networkClassID)
-	}
-
-	return nil
 }

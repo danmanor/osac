@@ -1614,6 +1614,10 @@ var _ = Describe("ClusterOrder FeedbackReconciler", func() {
 			string(osacv1alpha1.ClusterOrderConditionFulfillmentTrustReady),
 			osacv1alpha1.ConditionProgressing,
 			osacv1alpha1.ConditionDeleting,
+			string(osacv1alpha1.ClusterOrderConditionManagementPublicationReady),
+			string(osacv1alpha1.ClusterOrderConditionEndpointsReady),
+			string(osacv1alpha1.ClusterOrderConditionWorkerNetworkingReady),
+			string(osacv1alpha1.ClusterOrderConditionClusterHealthy),
 		}
 
 		It("handles every known ClusterOrder condition exactly once", func() {

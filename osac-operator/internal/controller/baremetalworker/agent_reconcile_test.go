@@ -192,7 +192,7 @@ var _ = It("protects non-BMI workers and reservations from Agent matching and ti
 			w := newWorkerStatus("standard", "standard", "worker", id, workerPhaseWaitingForAgent)
 			w.Kind = kind
 			co.Status.Workers = []v1alpha1.WorkerStatus{w}
-			got := r.checkAgentRegistrationTimeout(ctx, co, []v1alpha1.WorkerStatus{w}, time.Now())
+			got := r.checkAgentRegistrationTimeout(ctx, co, []v1alpha1.WorkerStatus{w}, nil, time.Now())
 			Expect(got[0]).To(Equal(w), "timeout changed a protected worker")
 			a := agentPhaseFixture("", false)
 			_ = unstructured.SetNestedSlice(a.Object, []interface{}{map[string]interface{}{"macAddress": "aa"}}, "status", "inventory", "interfaces")
@@ -425,7 +425,7 @@ var _ = It("applies inclusive timeout, retry and healthy-reset clock boundaries"
 		By(tt.name)
 		func() {
 			r := &Reconciler{recorder: events.NewFakeRecorder(10)}
-			got := r.checkAgentRegistrationTimeout(context.Background(), co, []v1alpha1.WorkerStatus{timeoutWorker()}, tt.now)
+			got := r.checkAgentRegistrationTimeout(context.Background(), co, []v1alpha1.WorkerStatus{timeoutWorker()}, nil, tt.now)
 			Expect(got[0].Phase).To(Equal(tt.want), "phase=%s want %s", got[0].Phase, tt.want)
 		}()
 	}

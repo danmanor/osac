@@ -291,7 +291,7 @@ var _ = It("stops capacity actions after a foreign reference is added concurrent
 	observed, res, err := r.observeWorkerResources(context.Background(), co)
 	Expect(err).NotTo(HaveOccurred(), "observe=%+v %v", res, err)
 	Expect(res.IsZero()).To(BeTrue(), "observe=%+v %v", res, err)
-	if _, err := r.observeExistingWorkers(context.Background(), co, "tenant", observed); err != nil {
+	if _, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed); err != nil {
 		Expect(err).NotTo(HaveOccurred())
 	}
 	foreign := ownedBMIFixture(co, "foreign-bmi", "foreign-id")

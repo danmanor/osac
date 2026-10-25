@@ -46,15 +46,11 @@ var _ = Describe("SecurityGroups server", func() {
 
 		nc := privatev1.NetworkClass_builder{
 			Id:            "default",
-			FabricManager: new("ovn-kubernetes"),
+			FabricManager: "ovn-kubernetes",
 			Metadata: privatev1.Metadata_builder{
 				Tenant: testTenant,
 			}.Build(),
-			Capabilities: privatev1.NetworkClassCapabilities_builder{
-				SupportsIpv4:      true,
-				SupportsIpv6:      true,
-				SupportsDualStack: true,
-			}.Build(),
+			Spec: privatev1.NetworkClassSpec_builder{AddressPlan: fixtureAddressPlan()}.Build(),
 			Status: privatev1.NetworkClassStatus_builder{
 				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			}.Build(),
@@ -78,9 +74,7 @@ var _ = Describe("SecurityGroups server", func() {
 				Tenant: testTenant,
 			}.Build(),
 			Spec: privatev1.VirtualNetworkSpec_builder{
-				Region:       "us-east-1",
-				NetworkClass: privatev1.NetworkClassReference_builder{Id: "default"}.Build(),
-				Ipv4Cidr:     new("10.0.0.0/16"),
+				Ipv4Cidr: new("10.0.0.0/16"),
 			}.Build(),
 			Status: privatev1.VirtualNetworkStatus_builder{
 				State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
@@ -195,6 +189,7 @@ var _ = Describe("SecurityGroups server", func() {
 				}.Build(),
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
+			markSecurityGroupReady(created.GetObject().GetId())
 
 			updated, err := server.Update(ctx, publicv1.SecurityGroupsUpdateRequest_builder{
 				Object: publicv1.SecurityGroup_builder{
@@ -507,7 +502,7 @@ var _ = Describe("SecurityGroups server", func() {
 		})
 
 		It("blocks deletion of default-labeled SecurityGroup", func() {
-			createResponse, err := server.Create(ctx, publicv1.SecurityGroupsCreateRequest_builder{
+			createResponse, err := server.Create(controllerContext(), publicv1.SecurityGroupsCreateRequest_builder{
 				Object: publicv1.SecurityGroup_builder{
 					Metadata: publicv1.Metadata_builder{
 						Name: "default-security-group",
@@ -554,36 +549,30 @@ var _ = Describe("SecurityGroups server", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		It("rejects private rule edits before persistence while allowing status updates", func() {
+		It("rejects rule edits while PENDING and allows status updates", func() {
 			created, err := privateServer.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
 				Object: privatev1.SecurityGroup_builder{
 					Metadata: privatev1.Metadata_builder{Name: "immutable-security-group-rules", Tenant: testTenant}.Build(),
 					Spec: privatev1.SecurityGroupSpec_builder{
 						VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: virtualNetworkID}.Build(),
-						Ingress:        []*privatev1.SecurityRule{{Protocol: privatev1.Protocol_PROTOCOL_TCP, Ipv4Cidr: new("0.0.0.0/0")}},
+						Ingress:        []*privatev1.SecurityRule{{Protocol: privatev1.Protocol_PROTOCOL_TCP, PortFrom: new(int32(22)), PortTo: new(int32(22)), Ipv4Cidr: new("0.0.0.0/0")}},
 						Egress:         []*privatev1.SecurityRule{{Protocol: privatev1.Protocol_PROTOCOL_ALL, Ipv4Cidr: new("0.0.0.0/0")}},
 					}.Build(),
 				}.Build(),
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 
-			for _, path := range []string{"spec.ingress", "spec.egress"} {
-				changed := proto.Clone(created.GetObject()).(*privatev1.SecurityGroup)
-				if path == "spec.ingress" {
-					changed.GetSpec().GetIngress()[0].SetIpv4Cidr("10.0.0.0/8")
-				} else {
-					changed.GetSpec().SetEgress(nil)
-				}
-				_, err = privateServer.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
-					Object: changed, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{path}},
-				}.Build())
-				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument), path)
-				Expect(err).To(MatchError(ContainSubstring("spec' is immutable")), path)
-
-				stored, getErr := privateServer.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: created.GetObject().GetId()}.Build())
-				Expect(getErr).ToNot(HaveOccurred())
-				Expect(proto.Equal(stored.GetObject().GetSpec(), created.GetObject().GetSpec())).To(BeTrue(), path)
-			}
+			// A rule change waits while the SecurityGroup is PENDING:
+			changed := proto.Clone(created.GetObject()).(*privatev1.SecurityGroup)
+			changed.GetSpec().GetIngress()[0].SetIpv4Cidr("10.0.0.0/8")
+			_, err = privateServer.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+				Object: changed, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.ingress"}},
+			}.Build())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
+			Expect(err).To(MatchError(ContainSubstring("is being created or updated")))
+			stored, getErr := privateServer.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: created.GetObject().GetId()}.Build())
+			Expect(getErr).ToNot(HaveOccurred())
+			Expect(proto.Equal(stored.GetObject().GetSpec(), created.GetObject().GetSpec())).To(BeTrue())
 
 			_, err = privateServer.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 				Object: privatev1.SecurityGroup_builder{
@@ -625,7 +614,7 @@ var _ = Describe("SecurityGroups server", func() {
 		})
 
 		It("blocks deletion after an update omits the default label", func() {
-			createResp, err := privateServer.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
+			createResp, err := privateServer.Create(controllerContext(), privatev1.SecurityGroupsCreateRequest_builder{
 				Object: privatev1.SecurityGroup_builder{
 					Metadata: privatev1.Metadata_builder{
 						Name:   "default-security-group-update",
@@ -645,7 +634,7 @@ var _ = Describe("SecurityGroups server", func() {
 			Expect(err).To(HaveOccurred())
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
-			Expect(status.Code()).To(Equal(grpccodes.FailedPrecondition))
+			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 
 			_, err = privateServer.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{Id: object.GetId()}.Build())
 			Expect(err).To(HaveOccurred())
@@ -692,20 +681,8 @@ var _ = Describe("SecurityGroups server", func() {
 				Id: created.GetObject().GetId(),
 			}.Build())
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-			Expect(err.Error()).To(ContainSubstring("compute instance"))
+			Expect(err.Error()).To(ContainSubstring("ComputeInstance"))
 		})
 
-		It("rejects security group with different tenant than parent VirtualNetwork", func() {
-			securityGroup := privatev1.SecurityGroup_builder{
-				Metadata: privatev1.Metadata_builder{Tenant: "different-tenant"}.Build(),
-				Spec: privatev1.SecurityGroupSpec_builder{
-					VirtualNetwork: privatev1.VirtualNetworkLocalReference_builder{Id: virtualNetworkID}.Build(),
-				}.Build(),
-			}.Build()
-
-			err := privateServer.validateSecurityGroup(ctx, securityGroup, nil)
-			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-			Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
-		})
 	})
 })

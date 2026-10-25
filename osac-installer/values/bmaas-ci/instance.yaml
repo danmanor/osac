@@ -14,21 +14,12 @@ global:
       enabled: true
     maas:
       enabled: false
+  # Provider networking disabled: networking resources become READY without
+  # provider jobs in this test profile.
   networking:
-    fabricManager: netris
+    provisioningEnabled: false
+    fabricManager: example_fabric
     k8sManager: ""
-    netris:
-      controllerUrl: "https://test-ctl.netris.io"
-      # CI uses a test endpoint with a certificate that is not trusted by the runner.
-      validateCerts: false
-      credentials:
-        username: "netris"
-        # NETRIS_PASSWORD is supplied by the externally managed Secret
-        # netris-credentials in the AAP namespace.
-        externalSecret: true
-      siteId: "1"
-      tenantId: "1"
-      tenantName: "Admin"
 
 # --- Operator ---
 operator:
@@ -52,7 +43,6 @@ operator:
   controllers:
     tenant: true
     networking: true
-    networkingProvisioning: false
     storage: true
   # Keep the unversioned ExternalIP flow in CI: networkingProvisioning is false
   # and the reference suite depends on the placeholder-allocated path, which
@@ -212,7 +202,6 @@ bmf:
   env:
     aapUrl: "http://osac-aap/api/controller"
     aapInsecureSkipVerify: "true"
-    enableNetworkingProvisioning: "false"
   metal3:
     enabled: true
     namespace: host-inventory

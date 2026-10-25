@@ -23,7 +23,7 @@ from tests.e2e.core.k8s_client import K8sClient
 from tests.e2e.core.metering import HEARTBEAT_TYPE, MeteringCollector, parse_time
 from tests.e2e.core.runner import poll_until
 
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.requires_provider_networking]
 
 
 class TestExternalIPPoolLifecycle:

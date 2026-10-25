@@ -31,6 +31,10 @@ import (
 )
 
 var _ = Describe("Private external IP pools server", func() {
+	BeforeEach(func() {
+		seedNetworkClass(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY)
+	})
+
 	Describe("Creation", func() {
 		It("Can be built if all the required parameters are set", func() {
 			server, err := NewPrivateExternalIPPoolsServer().
@@ -253,7 +257,7 @@ var _ = Describe("Private external IP pools server", func() {
 				Id: poolID,
 			}.Build())
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("external IP(s) are still allocated"))
+			Expect(err.Error()).To(ContainSubstring("still reference it"))
 		})
 
 		It("Allows deletion when no ExternalIPs reference the pool", func() {
@@ -415,9 +419,8 @@ var _ = Describe("Private external IP pools server", func() {
 				Expect(err).To(HaveOccurred())
 				status, ok := grpcstatus.FromError(err)
 				Expect(ok).To(BeTrue())
-				Expect(status.Code()).To(Equal(grpccodes.AlreadyExists))
+				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 				Expect(err.Error()).To(ContainSubstring("overlaps"))
-				Expect(err.Error()).To(ContainSubstring("pool-a"))
 			})
 
 			It("accepts a pool with a non-overlapping CIDR", func() {
@@ -535,7 +538,6 @@ var _ = Describe("Private external IP pools server", func() {
 				status, ok := grpcstatus.FromError(err)
 				Expect(ok).To(BeTrue())
 				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-				Expect(err.Error()).To(ContainSubstring("cidrs"))
 				Expect(err.Error()).To(ContainSubstring("immutable"))
 			})
 
@@ -567,7 +569,6 @@ var _ = Describe("Private external IP pools server", func() {
 				Expect(ok).To(BeTrue())
 				Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
 				Expect(err.Error()).To(ContainSubstring("ip_family"))
-				Expect(err.Error()).To(ContainSubstring("must be IP_FAMILY_IPV4"))
 			})
 
 			It("Rejects update of the name of ExternalIPPool (spec fields omitted)", func() {

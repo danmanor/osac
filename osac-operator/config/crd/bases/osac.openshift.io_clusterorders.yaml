@@ -90,15 +90,15 @@ spec:
                 properties:
                   securityGroupRefs:
                     description: |-
-                      SecurityGroupRefs lists SecurityGroup CR names to apply to the cluster's
-                      network attachment. All security groups must belong to the same virtual
-                      network as the subnet.
+                      SecurityGroupRefs lists the SecurityGroup API IDs to apply to the cluster's
+                      network attachment, the automatic SecurityGroup last. All security groups
+                      must belong to the same virtual network as the subnet.
                     items:
                       type: string
                     type: array
                   subnetRef:
                     description: |-
-                      SubnetRef is the name of the Subnet CR that the cluster connects to.
+                      SubnetRef is the API ID of the Subnet that the cluster connects to.
                       The subnet must be in Ready state at creation time.
                     maxLength: 253
                     minLength: 1
@@ -111,6 +111,9 @@ spec:
                   NodeRequests defines the types of nodes and number of each type of node that will be used
                   to build the cluster. Each request selects a BareMetalInstanceType.
                 items:
+                  description: |-
+                    The fabric interface cannot be removed or changed once set (the field-level
+                    rule does not run when the new object omits it).
                   properties:
                     bareMetal:
                       description: |-
@@ -132,7 +135,12 @@ spec:
                         When set, IP discovery filters Agent inventory interfaces by this name,
                         preventing the provisioning NIC address from being returned.
                         Resolved from the instance type's fabric network port; may also be set explicitly.
+                        It cannot change once set.
+                      maxLength: 63
                       type: string
+                      x-kubernetes-validations:
+                      - message: nodeRequests fabricInterface is immutable once set
+                        rule: size(oldSelf) == 0 || self == oldSelf
                     nodeSet:
                       description: |-
                         NodeSet is the logical group key from the Fulfillment Cluster's spec.node_sets.
@@ -155,7 +163,16 @@ spec:
                   - nodeSet
                   - numberOfNodes
                   type: object
+                  x-kubernetes-validations:
+                  - message: nodeRequests fabricInterface is immutable once set
+                    rule: '!has(oldSelf.fabricInterface) || oldSelf.fabricInterface
+                      == '''' || (has(self.fabricInterface) && self.fabricInterface
+                      == oldSelf.fabricInterface)'
+                maxItems: 64
                 type: array
+                x-kubernetes-list-map-keys:
+                - nodeSet
+                x-kubernetes-list-type: map
               pullSecret:
                 description: |-
                   PullSecret contains credentials for authenticating to container image repositories.
@@ -271,8 +288,17 @@ spec:
                 type: array
               apiEndpoint:
                 description: |-
-                  ApiEndpoint is the internal API server VIP allocated by MetalLB.
-                  Written by the CaaS template after VIP discovery.
+                  ApiEndpoint is the management API VIP: the kube-apiserver Service address of the
+                  hosted control plane. The operator records it at the first ManagementPublicationReady=True.
+                type: string
+              apiRecordsPublishedTime:
+                description: APIRecordsPublishedTime is when the first publish_public_dns_api
+                  succeeded.
+                format: date-time
+                type: string
+              apiURL:
+                description: APIURL is the cluster API URL, set once the cluster is
+                  Ready.
                 type: string
               clusterReference:
                 description: Reference to the namespace that contains the HostedCluster
@@ -413,6 +439,10 @@ spec:
                   - type
                   type: object
                 type: array
+              consoleURL:
+                description: ConsoleURL is the cluster console URL, set once the cluster
+                  is Ready.
+                type: string
               currentWorkers:
                 description: |-
                   CurrentWorkers is the number of retained requested slots that hold a
@@ -440,11 +470,71 @@ spec:
                 description: FulfillmentTrustBundleHash is the hash of the last synchronized
                   fulfillment trust bundle.
                 type: string
+              ingressAllocatedAddress:
+                description: |-
+                  IngressAllocatedAddress is the guest ingress address accepted from
+                  reserve_cluster_ingress_ip.
+                type: string
               ingressEndpoint:
                 description: |-
-                  IngressEndpoint is the internal ingress VIP allocated by MetalLB.
-                  Written by the CaaS template after VIP discovery.
+                  IngressEndpoint is the guest ingress VIP. The operator records it from the
+                  reserve_cluster_ingress_ip result (ingressAllocatedAddress) once configure_guest_ingress succeeds.
                 type: string
+              jobs:
+                description: |-
+                  Jobs tracks the cluster's networking and guest endpoint jobs
+                  (contract §4.7 Job tracking). The core install and delete jobs stay in
+                  provisioningJobs.
+                items:
+                  description: |-
+                    NetworkJobStatus tracks the latest AAP job of one task on one manager
+                    (contract §4.7 Job tracking). OSAC never removes an entry.
+                  properties:
+                    attempt:
+                      description: Attempt counts the task's launches on this manager.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    jobID:
+                      description: JobID is the AAP job ID; empty until AAP returned
+                        it.
+                      type: string
+                    manager:
+                      description: Manager is the manager type the task runs on.
+                      enum:
+                      - fabric
+                      - kubernetes
+                      - none
+                      type: string
+                    message:
+                      description: |-
+                        Message is the job's osac_error message, the AAP failure text, or why
+                        OSAC rejected the result; while retrying it also names the next retry time.
+                      type: string
+                    state:
+                      description: State is the state of the latest job.
+                      enum:
+                      - Running
+                      - Retrying
+                      - Succeeded
+                      - Failed
+                      - Cancelled
+                      type: string
+                    task:
+                      description: Task is the task name, for example create_subnet.
+                      minLength: 1
+                      type: string
+                  required:
+                  - attempt
+                  - manager
+                  - state
+                  - task
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - task
+                - manager
+                x-kubernetes-list-type: map
               nodeRequests:
                 description: NodeRequests reflects how many nodes are currently associated
                   with the ClusterOrder
@@ -589,6 +679,12 @@ spec:
                   Populated by the BareMetalWorkerReconciler.
                 format: int32
                 type: integer
+              taskInput:
+                description: |-
+                  TaskInput is the stored input of the cluster's networking tasks
+                  (reserve_cluster_ingress_ip; contract §4.5).
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               upgradeObservation:
                 description: UpgradeObservation reports the version observed on the
                   control plane for its current attempt.
