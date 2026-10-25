@@ -1,20 +1,20 @@
 # CUDN EVPN/Netris VMaaS + BMaaS E2E profile
 
 This is the explicit opt-in installer profile for the Phase 1 IPv4 CUDN EVPN
-environment used with VMaaS and BMaaS. VMs and bare-metal instances use the
-same EVPN/Netris NetworkClass and can therefore be attached to the same VPC.
-It is intentionally separate from the base chart and all normal profiles.
+environment used with VMaaS and BMaaS, with provider networking enabled. VMs
+and bare-metal instances use the same NetworkClass and can therefore be
+attached to the same VirtualNetwork. It is intentionally separate from the
+base chart and all normal profiles.
 
 The profile provides:
 
-- the normal VMaaS infrastructure and OSAC instance values;
-- BMaaS with the Metal3 backend enabled for bare-metal inventory;
-- `netris` as the fabric manager and `cudn_evpn` as the k8s manager via the
-  operator's nested `networkManagers` registration map;
-- a default `NetworkClass` with `fabricManager: netris` and
-  `k8sManager: cudn_evpn`;
-- the standard Netris AAP instance-group configuration needed by the EVPN
-  fabric and network fulfillment jobs.
+- VMaaS and BMaaS (Metal3 backend) with `global.networking.provisioningEnabled: true`;
+- `fabricManager: netris` and `k8sManager: cudn_evpn`; the installer's
+  NetworkClass step creates the NetworkClass from them;
+- `fabric-registration.yaml`, the Netris Fabric Manager registration
+  (`network_types: evpn`), which `make install-osac` applies after the chart.
+  The installer registers the OSAC `cudn_evpn` Kubernetes Manager itself;
+- the non-secret Netris settings in `aap.instanceGroups.networkFulfillment.config`.
 
 With `evpn.enabled: true` in an infra values file, the installer configures the
 OpenShift side of EVPN: FRR, route advertisements, NMState, per-node uplink and
@@ -25,11 +25,37 @@ OSAC operation.
 The Metal3 BareMetalHost inventory needed by BMaaS remains a separate
 prerequisite.
 
-Supply Netris credentials through a private instance values file and the
-site-specific EVPN addresses through a private infra values file. For example,
-save this as `cudn-evpn-netris-test-evpn.private.yaml` and replace the sample
-node, interfaces, addresses, and ASNs with values from the cluster and fabric
-admins:
+Supply Netris credentials and networking settings through a private instance
+values file, for example `cudn-evpn-netris-test-secrets.local.yaml`:
+
+```yaml
+global:
+  networking:
+    excludedIpv4Cidrs:
+    - 192.0.2.0/24        # management, provisioning and node networks
+    - 198.51.100.53/32    # DNS resolvers given to workloads
+aap:
+  instanceGroups:
+    networkFulfillment:
+      config:
+        CUDN_EVPN_DNS_RESOLVERS: "198.51.100.53"
+        NETRIS_DNS_RESOLVERS: "198.51.100.53"
+        NETRIS_DNS_SNAT_CIDR: "192.0.2.128/26"
+        NETRIS_VNI_RANGE: "100000-100999"
+        NETRIS_HUB_AS: "65000"
+        NETRIS_DHCP_OPTION_SET_ID: "1"
+        NETRIS_PROVISIONING_VNET: "provisioning"
+      secret:
+        NETRIS_PASSWORD: "<password>"
+```
+
+The NetworkClass step fails the rollout unless every `CUDN_EVPN_DNS_RESOLVERS`
+address is inside `excludedIpv4Cidrs`.
+
+Supply site-specific EVPN addresses through a private infra values file. For
+example, save this as `cudn-evpn-netris-test-evpn.private.yaml` and replace
+the sample node, interfaces, addresses, and ASNs with values from the cluster
+and fabric admins:
 
 ```yaml
 evpn:

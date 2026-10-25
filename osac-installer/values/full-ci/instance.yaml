@@ -6,11 +6,12 @@ global:
   fulfillmentTrust:
     enabled: false
   # Provider networking disabled: networking resources become READY without
-  # provider jobs in this test profile.
+  # provider work. The Netris Fabric Manager registration
+  # (fabric-registration.yaml) is applied after install; no Netris settings.
   networking:
     provisioningEnabled: false
-    fabricManager: example_fabric
-    k8sManager: example_k8s
+    fabricManager: netris
+    k8sManager: cudn_evpn
   services:
     caas:
       enabled: true

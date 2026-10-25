@@ -34,6 +34,7 @@ FAILED_PRECONDITION = 9
 DEFAULTS_PATH = "global.networking.networkClass.defaults"
 PLAN_PATH = "global.networking.networkClass.addressPlan"
 PLAN_SHARES = (("overlay", "overlay"), ("fabric", "fabric"), ("lb_vip", "lbVip"))
+DNS_RESOLVERS_MESSAGE = "CUDN_EVPN_DNS_RESOLVERS must list the DNS resolver addresses, each inside excludedIpv4Cidrs"
 
 
 class StepError(Exception):
@@ -116,7 +117,7 @@ def validate(inp: dict) -> None:
     if (plan["overlay"] > 0) != bool(k8s_manager):
         raise StepError(f"{PLAN_PATH}.overlay must be greater than 0 exactly when global.networking.k8sManager is set")
     if services.get("vmaas") and not k8s_manager:
-        raise StepError("global.networking.k8sManager is required when VMaaS is enabled; set a registered Kubernetes Manager name")
+        raise StepError("global.networking.k8sManager is required when VMaaS is enabled (set cudn_evpn)")
     if (services.get("bmaas") or services.get("caas")) and plan["fabric"] == 0:
         raise StepError(f"{PLAN_PATH}.fabric must be greater than 0 when BMaaS or CaaS is enabled")
     if services.get("caas") and plan["lb_vip"] == 0:
@@ -147,6 +148,19 @@ def validate(inp: dict) -> None:
     for cidr in excluded:
         if cidr.overlaps(vn):
             raise StepError(f"excludedIpv4Cidrs range {cidr} overlaps the default VirtualNetwork CIDR {vn}")
+
+    if k8s_manager == "cudn_evpn" and inp.get("provisioning_enabled"):
+        resolvers = inp.get("cudn_evpn_dns_resolvers") or ""
+        if not resolvers:
+            raise StepError(DNS_RESOLVERS_MESSAGE)
+        for item in resolvers.split(","):
+            try:
+                address = ipaddress.IPv4Address(item)
+            except ValueError:
+                raise StepError(DNS_RESOLVERS_MESSAGE) from None
+            if str(address) != item or not any(address in cidr for cidr in excluded):
+                raise StepError(DNS_RESOLVERS_MESSAGE)
+
 
 def _rules(rules: list | None) -> list:
     return [

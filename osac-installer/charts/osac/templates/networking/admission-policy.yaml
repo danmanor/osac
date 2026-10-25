@@ -18,7 +18,7 @@ namespace, but cluster-scoped OSAC resources are matched in every namespace.
       (printf "system:serviceaccount:%s:osac-sa" $ns)
       "system:serviceaccount:kube-system:generic-garbage-collector"
       "system:serviceaccount:kube-system:namespace-controller" }}
-{{- $networking := list "networkclasses" "externalippools" "virtualnetworks" "subnets" "securitygroups" "externalips" "externalipattachments" "natgateways" "fabricdomains" "networkattachments" }}
+{{- $networking := list "networkclasses" "externalippools" "virtualnetworks" "subnets" "securitygroups" "externalips" "externalipattachments" "natgateways" "fabricdomains" "networkattachments" "networksegmentclaims" }}
 {{- $resources := list }}
 {{- range $networking }}{{ $resources = append (append $resources .) (printf "%s/status" .) }}{{ end }}
 apiVersion: admissionregistration.k8s.io/v1

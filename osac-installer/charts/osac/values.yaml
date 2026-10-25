@@ -53,7 +53,7 @@ global:
     excludedIpv4Cidrs: []
     # [REQUIRED] Registration name of the provider's Fabric Manager.
     fabricManager: ""
-    # Registration name of the OSAC Kubernetes Manager; required with VMaaS.
+    # OSAC Kubernetes Manager; required with VMaaS. "" or cudn_evpn.
     k8sManager: ""
     networkClass:
       defaults:
@@ -314,7 +314,8 @@ aap:
         AWS_SECRET_ACCESS_KEY: ""
     # ConfigMap and Secret network-fulfillment-ig: network manager settings
     # and credentials, written verbatim. Keys start with the registration
-    # name in upper case. Required with provisioningEnabled.
+    # name in upper case (for example NETRIS_CONTROLLER_URL,
+    # CUDN_EVPN_DNS_RESOLVERS). Required with provisioningEnabled.
     networkFulfillment:
       enabled: true
       config: {}

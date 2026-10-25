@@ -13,7 +13,7 @@ global:
     provisioningEnabled: true      # fixed at installation
     excludedIpv4Cidrs: []          # provider infrastructure ranges
     fabricManager: acme_fabric     # required: the Fabric Manager registration name
-    k8sManager: example_k8s        # registration name; required with VMaaS
+    k8sManager: cudn_evpn          # "" or cudn_evpn; required with VMaaS
     networkClass:
       defaults:
         virtualNetworkIPv4CIDR: 10.200.0.0/16
@@ -41,8 +41,8 @@ aap:
   workloads). VirtualNetwork and ExternalIPPool CIDRs may not overlap them.
 - `fabricManager`: the `name` in the provider's Fabric Manager registration.
   There is no default.
-+ `k8sManager`: the name in the OSAC Kubernetes Manager registration supplied
-  by its owning team.
+- `k8sManager`: the OSAC Kubernetes Manager. The operator chart always creates
+  its registration (`osac-network-k8s-manager-cudn-evpn-<hash>`).
 - `networkClass.defaults` and `networkClass.eastWestCapabilities` become the
   NetworkClass and cannot change after installation. Rules use SecurityGroup
   rule fields: TCP and UDP rules need `portFrom` and `portTo`; ICMP and ALL
@@ -66,7 +66,8 @@ aap:
   share) down to /24 (shares in sixteenths).
 - `aap.instanceGroups.networkFulfillment.config` / `.secret`: the managers'
   settings and credentials. Each key starts with the manager's registration
-  name in upper case; values may span several lines (CA bundles).
+  name in upper case (`NETRIS_CONTROLLER_URL`, `NETRIS_PASSWORD`,
+  `CUDN_EVPN_DNS_RESOLVERS`, ...); values may span several lines (CA bundles).
   Required with `provisioningEnabled: true`.
 - `aap.configAsCode.eeImage`: the execution environment of every OSAC instance
   group; with a provider Fabric Manager, the provider's image built on
@@ -82,31 +83,33 @@ section 4.2):
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: network-manager-example-fabric
+  name: network-manager-netris
   labels:
     osac.openshift.io/network-fabric-manager: "true"
 immutable: true
 data:
-  name: example_fabric
-  ansible_role: example.fabric
-  network_types: type-a,type-b
+  name: netris
+  ansible_role: osac.templates.netris
+  network_types: evpn              # needed to pair with cudn_evpn
   # capabilities: eastWestEthernet # needed for supportsEastWestEthernet
 ```
 
-The owning team supplies and applies manager registrations to the release
-namespace. The installer consumes the registration names from these values.
+The CI and dev profiles ship theirs as `values/<profile>/fabric-registration.yaml`;
+`make install-osac` applies it after the chart. `values/agentless-net-stub.yaml`
+with `values/agentless-net-registration.yaml` selects AgentlessNet on a profile
+without VMaaS.
 
 ## Checks during a rollout
 
 Render time (`helm template`/`install`/`upgrade`) rejects values that break
 the schema or these rules, naming the field:
 
-- `fabricManager` is set; VMaaS needs `k8sManager`; CaaS needs BMaaS;
+- `fabricManager` is set; VMaaS needs `k8sManager`;
   `provisioningEnabled` needs `aap.instanceGroups.networkFulfillment.enabled`;
 - the address plan in force: shares, sum, `overlay` > 0 exactly with
   `k8sManager`, `fabric` > 0 with BMaaS or CaaS, `lbVip` > 0 with CaaS;
 - canonical default CIDRs, the Subnet inside the VirtualNetwork, the prefix
-  limit, and `portFrom <= portTo`;
+  limit, and `portFrom <= portTo`.
 
 The installer's NetworkClass step (post-install/post-upgrade hook
 `create-network-class`, `files/network-class-step.py`) re-checks the address
@@ -114,6 +117,9 @@ plan, the default CIDRs and the rules, and then:
 
 - fails when the default VirtualNetwork CIDR overlaps `excludedIpv4Cidrs`;
 
+- with `k8sManager: cudn_evpn` and provider networking enabled, fails unless
+  `CUDN_EVPN_DNS_RESOLVERS` lists IPv4 addresses, each inside
+  `excludedIpv4Cidrs`;
 - creates the NetworkClass when none exists;
 - otherwise fails with "NetworkClass <field>[, <field>] cannot change after
   installation; see Replacing the NetworkClass" when `fabric_manager`,
@@ -143,6 +149,9 @@ release's policy. `helm uninstall` removes the policy first;
 
 | Profile | Provider networking | `fabricManager` | `k8sManager` |
 |---|---|---|---|
-| Standard CI and development profiles | disabled | Supplied by manager owners | Supplied by manager owners |
+| `vmaas-ci`, `caas-ci`, `full-ci`, `dev` | disabled | `netris` | `cudn_evpn` |
+| `bmaas-ci` (and `bmaas-netbox-ci`) | disabled | `netris` | `""` |
+| `cudn-evpn-netris-test` | enabled | `netris` | `cudn_evpn` |
 
-With provider networking disabled, the profiles run without provider jobs.
+With provider networking disabled the profiles need no network manager
+settings; the Netris registration only lets the NetworkClass resolve.

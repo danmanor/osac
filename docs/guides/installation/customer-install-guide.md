@@ -269,8 +269,7 @@ Required for CaaS:
   `NetworkClass`, which the installer creates from `global.networking`. It
   names the provider's Fabric Manager (`global.networking.fabricManager`,
   required), whose registration `ConfigMap` the administrator applies, and
-  and optionally a Kubernetes Manager registration. CaaS runs its workers
-  on BMaaS servers, so CaaS also needs BMaaS. Configure manager-specific
+  and optionally a Kubernetes Manager registration. Configure manager-specific
   settings and credentials according to the owning teams' documentation. For
   more information, see
   [`network-backend.md`](https://github.com/osac-project/osac/blob/main/osac-installer/docs/network-backend.md).
@@ -733,8 +732,6 @@ backend. For the full variable reference, see
   [Section 2.1](#21-cluster-and-access)). Hosted control planes provision
   etcd persistent volume claims from it.
 - You have AWS Route 53 credentials for the target hosted zone.
-- BMaaS is installed with it (see [Section 6.3](#63-installing-osac-for-bmaas)):
-  CaaS workers are BMaaS servers.
 - Access to the selected Fabric Manager and its settings, as documented by
   its owning team.
 
@@ -744,14 +741,14 @@ backend. For the full variable reference, see
 **Procedure**
 
 1. Apply the Fabric Manager registration `ConfigMap` to the release namespace
-   (see [`network-backend.md`](https://github.com/osac-project/osac/blob/main/osac-installer/docs/network-backend.md)). In `my-values.yaml`, enable the CaaS and BMaaS
-   tiers, the OpenShift Container Platform release images offered to hosted
+   (see [`network-backend.md`](https://github.com/osac-project/osac/blob/main/osac-installer/docs/network-backend.md)). In `my-values.yaml`, enable the CaaS
+   tier, the OpenShift Container Platform release images offered to hosted
    clusters, and the `cluster-fulfillment` and `network-fulfillment` instance
    groups with the selected manager settings:
 
    ```yaml
    global:
-     services: { caas: { enabled: true }, vmaas: { enabled: false }, bmaas: { enabled: true }, maas: { enabled: false } }
+     services: { caas: { enabled: true }, vmaas: { enabled: false }, bmaas: { enabled: false }, maas: { enabled: false } }
      networking:
        fabricManager: "<registered-fabric-manager>"
        k8sManager: ""
@@ -780,8 +777,6 @@ backend. For the full variable reference, see
          enabled: true
          config: {}  # add the selected manager's nonsecret settings
    ```
-
-   `EXTERNAL_ACCESS_BASE_DOMAIN` must equal `HOSTED_CLUSTER_BASE_DOMAIN`.
 
 2. Put the AWS and network manager credentials in a separate values file that is
    excluded from version control:

@@ -261,8 +261,6 @@ def check_custom_auth_credentials() -> None:
 
 
 def check_profile_emergency_service_accounts() -> None:
-    # The CUDN/Netris profile still uses manager-owned legacy networking
-    # values; its schema migration is left to those manager owners.
     expected_profiles = {
         "caas-ci/instance.yaml": {
             "admin",
@@ -280,6 +278,11 @@ def check_profile_emergency_service_accounts() -> None:
             "osac-metering",
         },
         "bmaas-ci/instance.yaml": {
+            "admin",
+            "template-publisher",
+            "osac-metering",
+        },
+        "cudn-evpn-netris-test/instance.yaml": {
             "admin",
             "template-publisher",
             "osac-metering",
