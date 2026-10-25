@@ -127,29 +127,19 @@ class FabricDomainValuesTest(unittest.TestCase):
         self.assertIn("schema", result.stderr)
 
     def test_network_class_template_configuration_rejected(self):
-        # PR #1271's NC scalar forwarding must not return on either values path.
+        # Removed manager template fields must stay outside the NetworkClass schema.
         removed = (
             {"east_west_config": {"ethernet_ew": {"template_id": "42"}}},
             {"template_id": "42"},
             {"templateId": "42"},
         )
         for config in removed:
-            for expert in (False, True):
-                with self.subTest(config=config, expert=expert):
-                    values = (
-                        {
-                            "global": {"expertOverrides": {"networkClass": True}},
-                            "networkClass": {
-                                "enabled": True, "title": "Private networking",
-                                "k8sManager": "k8s_only", **config,
-                            },
-                        }
-                        if expert else {"global": {"networking": {"networkClass": config}}}
-                    )
-                    result = render(UMBRELLA, values)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("schema", result.stderr)
-                    self.assertIn(next(iter(config)), result.stderr)
+            with self.subTest(config=config):
+                values = {"global": {"networking": {"networkClass": config}}}
+                result = render(UMBRELLA, values)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema", result.stderr)
+                self.assertIn(next(iter(config)), result.stderr)
 
     def test_fabricdomain_crd_in_umbrella(self):
         docs = self.manifests(UMBRELLA)

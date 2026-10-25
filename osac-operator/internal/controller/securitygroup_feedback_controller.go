@@ -23,7 +23,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	clnt "sigs.k8s.io/controller-runtime/pkg/client"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
@@ -68,8 +67,13 @@ func NewSecurityGroupFeedbackReconciler(hubClient clnt.Client, grpcConn grpc.Cli
 		Save: func(ctx context.Context, remote *privatev1.SecurityGroup) error {
 			_, err := sgClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 				Object:     remote,
-				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{feedbackStatusStatePath}},
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{feedbackStatusStatePath, feedbackStatusMessagePath}},
 			}.Build())
+			if err != nil {
+				return err
+			}
+			// Signal on change, so the fulfillment service acts on the new state.
+			_, err = sgClient.Signal(ctx, privatev1.SecurityGroupsSignalRequest_builder{Id: remote.GetId()}.Build())
 			return err
 		},
 		Signal: func(ctx context.Context, id string) error {
@@ -102,32 +106,29 @@ func (r *SecurityGroupFeedbackReconciler) Reconcile(ctx context.Context, request
 	return r.bridge.Reconcile(ctx, request)
 }
 
-func syncSecurityGroupUpdate(ctx context.Context, obj *v1alpha1.SecurityGroup, remote *privatev1.SecurityGroup) error {
-	syncSecurityGroupPhase(ctx, obj, remote)
-	return nil
-}
-
-func syncSecurityGroupDelete(_ context.Context, obj *v1alpha1.SecurityGroup, remote *privatev1.SecurityGroup) error {
-	if obj.Status.Phase == v1alpha1.SecurityGroupPhaseFailed {
-		remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_DELETE_FAILED)
+func syncSecurityGroupUpdate(_ context.Context, obj *v1alpha1.SecurityGroup, remote *privatev1.SecurityGroup) error {
+	if obj.DeletionTimestamp == nil && !securityGroupRulesStored(obj) {
+		// The fulfillment controller copied a rule update that the operator
+		// has not stored yet: keep the state the Update set (Unified design,
+		// SecurityGroup rule update races).
 		return nil
 	}
-	remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_DELETING)
+	status := remote.GetStatus()
+	state, message := networkFeedback(obj, obj.Status.Conditions)
+	switch state {
+	case networkFeedbackReady:
+		status.SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
+	case networkFeedbackFailed:
+		status.SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_FAILED)
+	case networkFeedbackDeleting:
+		status.SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_DELETING)
+	default:
+		status.SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING)
+	}
+	feedbackMessage(message, status.SetMessage, status.ClearMessage)
 	return nil
 }
 
-func syncSecurityGroupPhase(ctx context.Context, obj *v1alpha1.SecurityGroup, remote *privatev1.SecurityGroup) {
-	switch obj.Status.Phase {
-	case v1alpha1.SecurityGroupPhaseProgressing:
-		remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING)
-	case v1alpha1.SecurityGroupPhaseFailed:
-		remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_FAILED)
-	case v1alpha1.SecurityGroupPhaseReady:
-		remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
-	case v1alpha1.SecurityGroupPhaseDeleting:
-		remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_DELETING)
-	default:
-		log := ctrllog.FromContext(ctx)
-		log.Info("Unknown phase, will ignore it", "phase", obj.Status.Phase)
-	}
+func syncSecurityGroupDelete(ctx context.Context, obj *v1alpha1.SecurityGroup, remote *privatev1.SecurityGroup) error {
+	return syncSecurityGroupUpdate(ctx, obj, remote)
 }

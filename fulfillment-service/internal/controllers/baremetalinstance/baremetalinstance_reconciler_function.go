@@ -622,6 +622,10 @@ func (t *task) syncStatus(object *bmfov1alpha1.BareMetalInstance) {
 		}.Build())
 	}
 	t.bareMetalInstance.GetStatus().SetNetworkAttachmentStatuses(protoStatuses)
+	t.syncNetworkReady(object)
+	if object.Spec.ExternalHostName != "" {
+		t.bareMetalInstance.GetStatus().SetHostName(object.Spec.ExternalHostName)
+	}
 
 	if hw := object.Status.Hardware; hw != nil {
 		protoNICs := make([]*privatev1.BareMetalNICStatus, 0, len(hw.NICs))
@@ -689,13 +693,73 @@ func (t *task) syncStatus(object *bmfov1alpha1.BareMetalInstance) {
 	}
 }
 
+// networkConditions are the BMF conditions that make up NETWORK_READY, in order. NetworkOffboardComplete counts only
+// once the BMF set it, during deletion.
+var networkConditions = []bmfov1alpha1.BareMetalInstanceConditionType{
+	bmfov1alpha1.HostConditionNetworkOffboardComplete,
+	bmfov1alpha1.HostConditionNetworkAttachmentsReady,
+	bmfov1alpha1.HostConditionNetworkHandoffComplete,
+	bmfov1alpha1.HostConditionIPDiscoveryComplete,
+}
+
+// syncNetworkReady sets NETWORK_READY from the network conditions of the BMF CR: the first that isn't True, in
+// order, is copied, and an unset one gives False with reason Progressing. When all are True the reason is
+// ProvisioningDisabled, with the first such message, when any condition has it, else IPDiscovered. Without any
+// network condition, NETWORK_READY isn't set.
+func (t *task) syncNetworkReady(object *bmfov1alpha1.BareMetalInstance) {
+	found := false
+	for _, conditionType := range networkConditions {
+		if object.GetStatusCondition(conditionType) != nil {
+			found = true
+		}
+	}
+	if !found {
+		return
+	}
+	conditionType := privatev1.BareMetalInstanceConditionType_BARE_METAL_INSTANCE_CONDITION_TYPE_NETWORK_READY
+	disabledMessage := ""
+	disabled := false
+	for _, networkCondition := range networkConditions {
+		condition := object.GetStatusCondition(networkCondition)
+		if condition == nil {
+			if networkCondition == bmfov1alpha1.HostConditionNetworkOffboardComplete {
+				continue
+			}
+			t.updateCondition(conditionType, privatev1.ConditionStatus_CONDITION_STATUS_FALSE, "Progressing",
+				fmt.Sprintf("Waiting for %s", networkCondition))
+			return
+		}
+		if condition.Status != metav1.ConditionTrue {
+			t.updateCondition(conditionType, mapConditionStatus(condition.Status), condition.Reason, condition.Message)
+			return
+		}
+		if condition.Reason == "ProvisioningDisabled" && !disabled {
+			disabled = true
+			disabledMessage = condition.Message
+		}
+	}
+	if disabled {
+		t.updateCondition(conditionType, privatev1.ConditionStatus_CONDITION_STATUS_TRUE, "ProvisioningDisabled",
+			disabledMessage)
+		return
+	}
+	t.updateCondition(conditionType, privatev1.ConditionStatus_CONDITION_STATUS_TRUE, "IPDiscovered", "")
+}
+
+// syncState maps the BMF CR to the API state: DELETING once the record is being deleted, whatever the phase; FAILED
+// for phase Failed; PROVISIONING before phase Ready, whatever the power state; and the power state only after Ready.
 func (t *task) syncState(object *bmfov1alpha1.BareMetalInstance, powerSynced *metav1.Condition) {
+	if t.bareMetalInstance.GetMetadata().HasDeletionTimestamp() {
+		t.setState(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING, nil)
+		return
+	}
 	switch object.Status.Phase {
 	case bmfov1alpha1.BareMetalInstancePhaseFailed:
 		t.setState(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_FAILED, nil)
 		return
-	case bmfov1alpha1.BareMetalInstancePhaseDeleting:
-		t.setState(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_DELETING, nil)
+	case bmfov1alpha1.BareMetalInstancePhaseReady:
+	default:
+		t.setState(privatev1.BareMetalInstanceState_BARE_METAL_INSTANCE_STATE_PROVISIONING, nil)
 		return
 	}
 

@@ -20,6 +20,7 @@ from tests.e2e.core.k8s_client import K8sClient
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.requires_provider_networking
 class TestIPManagementReferences:
     """OSAC-3105: IP management resource reference tests."""
 

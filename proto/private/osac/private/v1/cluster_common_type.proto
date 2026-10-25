@@ -15,7 +15,6 @@ syntax = "proto3";
 
 package osac.private.v1;
 
-import "buf/validate/validate.proto";
 import "cleanapi/cleanapi.proto";
 import "osac/private/v1/security_group_type.proto";
 import "osac/private/v1/subnet_type.proto";
@@ -43,12 +42,12 @@ message ClusterNetwork {
 message ClusterNetworkAttachment {
   // Reference to the subnet to connect the cluster to.
   //
-  // The subnet must be in `READY` state at creation time.
+  // The subnet must be in `READY` state at creation time. Omitted, the tenant's default Subnet is used.
   //
   // This can't be modified after the cluster is created.
-  SubnetLocalReference subnet = 1 [(buf.validate.field).required = true];
+  SubnetLocalReference subnet = 1;
 
-  // References to the security groups to apply to the cluster's network attachment.
+  // The Cluster's own security groups; the automatic Cluster SecurityGroup is never listed here.
   //
   // All security groups must belong to the same virtual network as the subnet.
   repeated SecurityGroupLocalReference security_groups = 2;

@@ -50,12 +50,18 @@ func (r *Reconciler) reconcileObservedAgents(
 	ctx context.Context, co *v1alpha1.ClusterOrder, workers []v1alpha1.WorkerStatus, o *workerObservation,
 ) ([]v1alpha1.WorkerStatus, ctrl.Result, error) {
 	workers = append([]v1alpha1.WorkerStatus(nil), workers...)
+	now := time.Now()
+	workers = r.checkBMINetworkFailures(ctx, co, workers, o, now)
 	if o.agents != nil {
-		if _, err := r.matchAndBindAgents(ctx, co, o.agents, workers, r.workerMACResolver(o)); err != nil {
+		macs, agents, err := r.gatedAgentMatch(ctx, co, workers, o.agents, o, r.workerMACResolver(o))
+		if err != nil {
+			return nil, ctrl.Result{}, err
+		}
+		if _, err := r.matchAndBindAgents(ctx, co, agents, workers, macs); err != nil {
 			return nil, ctrl.Result{}, err
 		}
 	}
-	workers = r.checkAgentRegistrationTimeout(ctx, co, workers, time.Now())
+	workers = r.checkAgentRegistrationTimeout(ctx, co, workers, o, now)
 
 	if countWorkersInPhase(workers, workerPhaseWaitingForAgent) > 0 {
 		return workers, ctrl.Result{RequeueAfter: agentRequeueInterval}, nil
@@ -237,21 +243,24 @@ func isCAPAgentWorkerBinding(agent *unstructured.Unstructured, co *v1alpha1.Clus
 }
 
 // checkAgentRegistrationTimeout transitions workers stuck in WaitingForAgent past the timeout
-// to Failed with reason AgentRegistrationTimeout. The clock is the durable per-attempt origin,
-// never the parent ClusterOrder age or an unrelated failure timestamp. Emitting a VM worker or
+// to Failed with reason AgentRegistrationTimeout. The clock starts at registrationStart: the
+// latest of the durable per-attempt origin, the BMI network-ready time, the last
+// ManagementPublicationReady=True transition and the API record publication; never the parent
+// ClusterOrder age or an unrelated failure timestamp. Emitting a VM worker or
 // an ID-less reservation is not eligible, so it is never timed out. now is captured at the
 // orchestration boundary and passed in for deterministic policy evaluation.
 func (r *Reconciler) checkAgentRegistrationTimeout(
-	ctx context.Context, co *v1alpha1.ClusterOrder, workers []v1alpha1.WorkerStatus, now time.Time,
+	ctx context.Context, co *v1alpha1.ClusterOrder, workers []v1alpha1.WorkerStatus, o *workerObservation, now time.Time,
 ) []v1alpha1.WorkerStatus {
 	log := ctrllog.FromContext(ctx)
 
 	for i := range workers {
 		w := &workers[i]
-		if !eligibleForAgentObservation(*w) || w.Phase != workerPhaseWaitingForAgent || w.AttemptStartedAt == nil {
+		if !eligibleForAgentObservation(*w) || w.Phase != workerPhaseWaitingForAgent {
 			continue
 		}
-		if now.Sub(w.AttemptStartedAt.Time) < agentRegistrationTimeout {
+		start, started := r.registrationStart(ctx, co, *w, o)
+		if !started || now.Sub(start) < agentRegistrationTimeout {
 			continue
 		}
 		w.Phase = workerPhaseFailed

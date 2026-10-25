@@ -19,11 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
 )
@@ -44,18 +41,8 @@ type autoExternalIPOwner struct {
 const (
 	autoCreatedLabel                        = osacPrefix + "/auto-created"
 	autoCreatedForLabel                     = osacPrefix + "/auto-created-for"
-	autoProvisionedLabel                    = osacPrefix + "/auto-provisioned"
-	autoProvisionedForLabel                 = osacPrefix + "/auto-provisioned-for"
 	autoExternalIPAttachmentOwnerIndexField = "networking.osac.openshift.io/auto-external-ip-owner"
 )
-
-var autoExternalIPMarkers = []struct {
-	markerLabel string
-	ownerLabel  string
-}{
-	{markerLabel: autoCreatedLabel, ownerLabel: autoCreatedForLabel},
-	{markerLabel: autoProvisionedLabel, ownerLabel: autoProvisionedForLabel},
-}
 
 // RegisterAutoExternalIPAttachmentOwnerIndex indexes attachments by their target owner.
 // Call before the manager cache starts; cleanup reconciliations use this index to avoid
@@ -109,53 +96,32 @@ func (owner autoExternalIPOwner) matchesAttachment(attachment *v1alpha1.External
 	}
 }
 
-func reconcileAutoExternalIPCleanup(
+// automaticExternalAccessRemains reports whether an automatic
+// ExternalIPAttachment or ExternalIP CR of the workload still exists (Unified
+// design, Automatic external access). The workload's cleanup finalizer holds
+// the workload CR until none remains; only the fulfillment service deletes
+// them, so this deletes nothing.
+func automaticExternalAccessRemains(
 	ctx context.Context,
 	c client.Client,
 	networkingNamespace string,
 	owner autoExternalIPOwner,
-	pollInterval time.Duration,
-) (done bool, result ctrl.Result, err error) {
+) (bool, error) {
 	if networkingNamespace == "" || owner.id == "" {
-		return true, ctrl.Result{}, nil
+		return false, nil
 	}
-
-	log := ctrllog.FromContext(ctx)
 	attachments, err := listAutoExternalIPAttachments(ctx, c, networkingNamespace, owner)
 	if err != nil {
-		return false, ctrl.Result{}, err
-	}
-	for i := range attachments {
-		attachment := &attachments[i]
-		if attachment.DeletionTimestamp.IsZero() {
-			log.Info("deleting automatically created ExternalIPAttachment", "name", attachment.Name)
-			if err := client.IgnoreNotFound(c.Delete(ctx, attachment)); err != nil {
-				return false, ctrl.Result{}, fmt.Errorf("delete ExternalIPAttachment %q: %w", attachment.Name, err)
-			}
-		}
+		return false, err
 	}
 	if len(attachments) > 0 {
-		return false, ctrl.Result{RequeueAfter: pollInterval}, nil
+		return true, nil
 	}
-
 	externalIPs, err := listAutoExternalIPs(ctx, c, networkingNamespace, owner)
 	if err != nil {
-		return false, ctrl.Result{}, err
+		return false, err
 	}
-	for i := range externalIPs {
-		externalIP := &externalIPs[i]
-		if externalIP.DeletionTimestamp.IsZero() {
-			log.Info("deleting automatically created ExternalIP", "name", externalIP.Name)
-			if err := client.IgnoreNotFound(c.Delete(ctx, externalIP)); err != nil {
-				return false, ctrl.Result{}, fmt.Errorf("delete ExternalIP %q: %w", externalIP.Name, err)
-			}
-		}
-	}
-	if len(externalIPs) > 0 {
-		return false, ctrl.Result{RequeueAfter: pollInterval}, nil
-	}
-
-	return true, ctrl.Result{}, nil
+	return len(externalIPs) > 0, nil
 }
 
 func listAutoExternalIPAttachments(
@@ -175,8 +141,7 @@ func listAutoExternalIPAttachments(
 	attachments := make([]v1alpha1.ExternalIPAttachment, 0, len(list.Items))
 	for i := range list.Items {
 		attachment := &list.Items[i]
-		if !owner.matchesAttachment(attachment) ||
-			(attachment.Labels[autoCreatedLabel] != labelValueTrue && attachment.Labels[autoProvisionedLabel] != labelValueTrue) {
+		if !owner.matchesAttachment(attachment) || attachment.Labels[autoCreatedLabel] != labelValueTrue {
 			continue
 		}
 		attachments = append(attachments, *attachment.DeepCopy())
@@ -190,24 +155,12 @@ func listAutoExternalIPs(
 	namespace string,
 	owner autoExternalIPOwner,
 ) ([]v1alpha1.ExternalIP, error) {
-	externalIPsByKey := make(map[client.ObjectKey]v1alpha1.ExternalIP)
-	for _, marker := range autoExternalIPMarkers {
-		list := &v1alpha1.ExternalIPList{}
-		if err := c.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{
-			marker.markerLabel: labelValueTrue,
-			marker.ownerLabel:  owner.id,
-		}); err != nil {
-			return nil, fmt.Errorf("list automatically created ExternalIPs: %w", err)
-		}
-		for i := range list.Items {
-			externalIP := &list.Items[i]
-			externalIPsByKey[client.ObjectKeyFromObject(externalIP)] = *externalIP.DeepCopy()
-		}
+	list := &v1alpha1.ExternalIPList{}
+	if err := c.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{
+		autoCreatedLabel:    labelValueTrue,
+		autoCreatedForLabel: owner.id,
+	}); err != nil {
+		return nil, fmt.Errorf("list automatically created ExternalIPs: %w", err)
 	}
-
-	externalIPs := make([]v1alpha1.ExternalIP, 0, len(externalIPsByKey))
-	for _, externalIP := range externalIPsByKey {
-		externalIPs = append(externalIPs, externalIP)
-	}
-	return externalIPs, nil
+	return list.Items, nil
 }

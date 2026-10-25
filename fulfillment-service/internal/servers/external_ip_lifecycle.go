@@ -28,21 +28,17 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/osac-project/osac/fulfillment-service/internal/controllers"
 	"github.com/osac-project/osac/fulfillment-service/internal/database/dao"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
 )
 
 const (
-	systemCreator               = "system"
-	autoCreatedLabel            = "osac.openshift.io/auto-created"
-	autoCreatedForLabel         = "osac.openshift.io/auto-created-for"
-	autoProvisionedLabel        = "osac.openshift.io/auto-provisioned"
-	autoProvisionedForLabel     = "osac.openshift.io/auto-provisioned-for"
-	autoAttachmentDeferredLabel = "osac.openshift.io/auto-attachment-deferred"
-	autoCreatedKindLabel        = "osac.openshift.io/auto-created-kind"
-	autoCreatedEndpointLabel    = "osac.openshift.io/auto-created-endpoint"
-	tenantAnnotation            = "osac.openshift.io/tenant"
+	systemCreator            = "system"
+	autoCreatedLabel         = "osac.openshift.io/auto-created"
+	autoCreatedForLabel      = "osac.openshift.io/auto-created-for"
+	autoCreatedKindLabel     = "osac.openshift.io/auto-created-kind"
+	autoCreatedEndpointLabel = "osac.openshift.io/auto-created-endpoint"
+	tenantAnnotation         = "osac.openshift.io/tenant"
 )
 
 var validExternalIPAttachmentTransitions = map[privatev1.ExternalIPAttachmentState][]privatev1.ExternalIPAttachmentState{
@@ -59,9 +55,8 @@ var validExternalIPAttachmentTransitions = map[privatev1.ExternalIPAttachmentSta
 		privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_PENDING,
 		privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING,
 	},
-	privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING: {
-		privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_FAILED,
-	},
+	// DELETING is sticky: no transition leaves it. A failed delete attempt is reported in status.message.
+	privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING: {},
 }
 
 type externalIPLifecycle struct {
@@ -452,7 +447,7 @@ func (l *externalIPLifecycle) deleteAttachment(ctx context.Context, id string) e
 			after.SetStatus(&privatev1.ExternalIPAttachmentStatus{})
 		}
 		after.GetStatus().SetState(privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING)
-		after.GetStatus().SetStateTransitionTime(controllers.NowTruncated())
+		after.GetStatus().SetStateTransitionTime(timestamppb.Now())
 		if _, err = l.externalIPAttachmentDao.Update().SetObject(after).Do(ctx); err != nil {
 			return err
 		}
@@ -462,110 +457,6 @@ func (l *externalIPLifecycle) deleteAttachment(ctx context.Context, id string) e
 	}
 	_, err = l.externalIPAttachmentDao.Delete().SetId(id).Do(ctx)
 	return err
-}
-
-func (l *externalIPLifecycle) deleteAttachmentAndExternalIP(ctx context.Context, attachmentID, externalIPID string) error {
-	parent, attachment, _, err := l.lockAttachment(ctx, attachmentID)
-	if err != nil {
-		return err
-	}
-	if refKey(attachment.GetSpec().GetExternalIp()) != externalIPID {
-		return errors.New("external IP attachment reference does not match its parent")
-	}
-	if attachment.GetStatus().GetState() != privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING {
-		before := proto.Clone(attachment).(*privatev1.ExternalIPAttachment)
-		after := proto.Clone(attachment).(*privatev1.ExternalIPAttachment)
-		if !after.HasStatus() {
-			after.SetStatus(&privatev1.ExternalIPAttachmentStatus{})
-		}
-		after.GetStatus().SetState(privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING)
-		after.GetStatus().SetStateTransitionTime(controllers.NowTruncated())
-		if _, err = l.externalIPAttachmentDao.Update().SetObject(after).Do(ctx); err != nil {
-			return err
-		}
-		if err = l.settleAttachmentParent(ctx, parent, before, after); err != nil {
-			return err
-		}
-	}
-	if _, err = l.externalIPAttachmentDao.Delete().SetId(attachmentID).Do(ctx); err != nil {
-		return err
-	}
-	// A successful Delete only means the attachment is marked for deletion when
-	// it still has finalizers. The locked attachment snapshot has the finalizer
-	// set, so use it here instead of probing with Get: DAO not-found errors are
-	// reported to the transaction even when handled, which would roll back the
-	// parent deletion.
-	if len(attachment.GetMetadata().GetFinalizers()) > 0 {
-		// Keep the ExternalIP until the attachment is fully gone so its
-		// provider-side detach can finish first.
-		return nil
-	}
-	if err = l.lockExternalIPConsumers(ctx, parent); err != nil {
-		return err
-	}
-	if err = l.ensureExternalIPAvailableExcept(
-		ctx, parent.GetId(), parent.GetMetadata().GetName(), attachmentID,
-	); err != nil {
-		return err
-	}
-	return l.deleteLockedExternalIP(ctx, parent)
-}
-
-func (l *externalIPLifecycle) deleteAutoCreatedExternalIPs(ctx context.Context, ownerID string) error {
-	filter := autoCreatedExternalIPFilter(ownerID)
-	eipList, err := l.externalIPDao.List().SetFilter(filter).Do(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list ExternalIPs: %w", err)
-	}
-	for _, externalIP := range eipList.GetItems() {
-		// Only the workload servers create automatic ExternalIPs with the system
-		// creator. Ignore tenant-created objects that copy the owner labels.
-		if externalIP.GetMetadata().GetCreator() != systemCreator {
-			continue
-		}
-		// The paired auto-created attachment path may already have started deleting this EIP.
-		// Its finalizer keeps it visible until the operator completes cleanup.
-		if externalIP.GetMetadata().HasDeletionTimestamp() {
-			continue
-		}
-		if l.externalIPAttachmentDao != nil {
-			attachments, err := l.externalIPAttachmentDao.List().
-				SetFilter(externalIPConsumerFilter(externalIP.GetId(), externalIP.GetMetadata().GetName())).
-				SetLimit(1).
-				Do(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to check ExternalIPAttachment references for ExternalIP %s: %w",
-					externalIP.GetId(), err)
-			}
-			if len(attachments.GetItems()) > 0 {
-				// The parent deletion can proceed, but the ExternalIP release must
-				// wait until every attachment finalizer has completed.
-				continue
-			}
-		}
-		if err := l.deleteExternalIP(ctx, externalIP.GetId()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func autoCreatedExternalIPFilter(ownerID string) string {
-	return fmt.Sprintf(
-		"(this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s) || "+
-			"(this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s)",
-		autoCreatedLabel, autoCreatedForLabel, strconv.Quote(ownerID),
-		autoProvisionedLabel, autoProvisionedForLabel, strconv.Quote(ownerID),
-	)
-}
-
-func autoCreatedExternalIPAttachmentFilter(ownerID string) string {
-	return fmt.Sprintf(
-		"(this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s) || "+
-			"(this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s)",
-		autoCreatedLabel, autoCreatedForLabel, strconv.Quote(ownerID),
-		autoProvisionedLabel, autoProvisionedForLabel, strconv.Quote(ownerID),
-	)
 }
 
 func (l *externalIPLifecycle) rejectManualAttachmentDelete(
@@ -589,11 +480,9 @@ func (l *externalIPLifecycle) rejectManualAttachmentDelete(
 			if !referenced {
 				return false
 			}
-			metadata := attachment.GetMetadata()
-			labels := metadata.GetLabels()
-			isCurrent := labels[autoCreatedLabel] == "true" && labels[autoCreatedForLabel] == targetID
-			isLegacy := labels[autoProvisionedLabel] == "true" && labels[autoProvisionedForLabel] == targetID
-			return metadata.GetCreator() != systemCreator || (!isCurrent && !isLegacy)
+			// Only non-automatic attachments block the delete; the automatic ones are deleted with the workload.
+			return !isAutomatic(attachment.GetMetadata()) ||
+				attachment.GetMetadata().GetLabels()[autoCreatedForLabel] != targetID
 		})
 }
 

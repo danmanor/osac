@@ -91,15 +91,33 @@ and size to `ClusterOrder.spec.nodeRequests[].bareMetal.instanceType` and `numbe
 map or a set without a valid shared type is rejected before provisioning. The user selects a
 hardware **name**, not a scope flag. Tenant-scoped BareMetalInstanceTypes remain available for
 other resources; CaaS tenant-scoped selection, collisions and workspace policy are not yet defined.
-The privileged worker controller creates fulfillment BareMetalInstances owned by the Cluster's
-tenant through the fixed shared `osac.templates.bm_host_provisioning` template with a shared
-hardware type. Its gRPC BMI retains `osac.openshift.io/cluster-order` for correlation and
-`osac.openshift.io/owner-reference=ClusterOrder/<name>`. The Kubernetes BMI CR receives the
-actual tenant annotation and its BMI UUID label; the API owner-reference annotation is not
-copied to the CR. API ownership metadata and the CR's tenant annotation are not substitutes
-for the controller's authoritative Cluster/worker ownership checks. Worker CRs use the
+The privileged worker controller creates the worker BareMetalInstances in the tenant `system`,
+through the fixed shared `osac.templates.bm_host_provisioning` template with a shared hardware
+type. Each worker carries the `osac.openshift.io/cluster-api-id` annotation with the Cluster ID.
+The private BareMetalInstance create accepts such a worker only when that Cluster exists and isn't
+being deleted, the worker's network attachment uses the Cluster's Subnet, exactly the Cluster's
+SecurityGroups plus its automatic SecurityGroup `auto-sg-<cluster ID>`, and the `fabric_interface`
+of the node set's BareMetalInstanceType, and, with provider networking enabled, the NATGateway of
+the Cluster's VirtualNetwork is READY. Tenants don't see the workers. Deleting a Subnet or
+SecurityGroup that a worker uses fails with the owning Cluster's name. Worker CRs use the
 configured Hub namespace, **not a per-tenant namespace**; enforcing same-Hub placement across
 multiple Hubs remains a separate rollout gate.
+
+### Cluster networking
+
+`--network-attachment` takes a Subnet name or ID, optionally followed by
+`security-groups=NAME,NAME...`. Without it, the Cluster uses the tenant's default Subnet and
+default SecurityGroup. A Subnet outside the tenant's default VirtualNetwork needs explicit
+SecurityGroups. The Subnet and the SecurityGroups must be READY, and so must the tenant default
+networking when the request uses a default. The pod and service CIDRs must not overlap the
+VirtualNetwork, the excluded IPv4 ranges or an ExternalIPPool.
+
+Each Cluster gets an automatic SecurityGroup `auto-sg-<cluster ID>` (ingress all from the Subnet,
+TCP 80 and 443 from anywhere, egress all), placed last in the ClusterOrder network attachment. With
+provider networking enabled, external access is mandatory: the Cluster create also creates the
+automatic ExternalIPs `auto-eip-<cluster ID>-api` and `auto-eip-<cluster ID>-ingress`; the create
+fails with FAILED_PRECONDITION when no READY IPv4 ExternalIPPool has capacity. Tenants can't change
+or delete the automatic resources; they're deleted with the Cluster.
 
 For a catalog item with an editable node-set policy, specify a different worker configuration:
 

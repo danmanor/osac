@@ -237,26 +237,14 @@ type catalogItemNetworkFixture struct {
 
 func createCatalogItemNetworkClassFixture(ctx context.Context) string {
 	GinkgoHelper()
-	classID := createCatalogItemNetworkClassFixtureWithoutCleanup(ctx)
-	classes := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
-	deferCatalogItemFixtureDeletion(func(ctx context.Context) error {
-		_, err := classes.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{Id: classID}.Build())
-		return err
-	}, nil)
-	return classID
+	// The NetworkClass is the installer's deployment singleton: the fixture never deletes it.
+	return createCatalogItemNetworkClassFixtureWithoutCleanup(ctx)
 }
 
 func createCatalogItemNetworkClassFixtureWithoutCleanup(ctx context.Context) string {
 	GinkgoHelper()
 	classes := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
-	class, err := classes.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-		Object: privatev1.NetworkClass_builder{
-			Metadata:      catalogItemFixtureMetadata("shared", ""),
-			Title:         "Catalog item integration network",
-			FabricManager: new("netris"),
-			K8SManager:    new(testVMK8SManagerName),
-		}.Build(),
-	}.Build())
+	class, err := sharedNetworkClass(ctx, classes)
 	Expect(err).NotTo(HaveOccurred())
 	classID := class.GetObject().GetId()
 	waitForNetworkClassReady(ctx, classes, classID)
@@ -276,22 +264,7 @@ func getOrCreateTenantDefaultNetworkClassFixture(ctx context.Context) (string, b
 	}
 
 	classID := createCatalogItemNetworkClassFixtureWithoutCleanup(ctx)
-	// The default-networking cleanup registered by the caller runs first, so the
-	// NetworkClass no longer has a default VirtualNetwork reference by the time
-	// this fixture is removed.
-	deferCatalogItemFixtureDeletion(func(ctx context.Context) error {
-		_, err := classes.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{Id: classID}.Build())
-		return err
-	}, func(ctx context.Context) (bool, error) {
-		_, err := classes.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: classID}.Build())
-		if status.Code(err) == codes.NotFound {
-			return true, nil
-		}
-		if err != nil {
-			return false, nil
-		}
-		return false, nil
-	})
+	// The NetworkClass is the installer's deployment singleton: the fixture never deletes it.
 	waitForNetworkClassReady(ctx, classes, classID)
 	setNetworkClassCanonicalHub(ctx, classes, classID, hubId)
 	expectNetworkClassStatus(
@@ -302,7 +275,7 @@ func getOrCreateTenantDefaultNetworkClassFixture(ctx context.Context) (string, b
 		hubId,
 		"",
 	)
-	return classID, true
+	return classID, false
 }
 
 func createCatalogItemNetworkFixture(ctx context.Context, tenant, project string) catalogItemNetworkFixture {
@@ -318,9 +291,7 @@ func createCatalogItemSubnetInClassFixture(ctx context.Context, tenant, project,
 		Object: privatev1.VirtualNetwork_builder{
 			Metadata: catalogItemUnmanagedFixtureMetadata(tenant, project),
 			Spec: privatev1.VirtualNetworkSpec_builder{
-				NetworkClass: privatev1.NetworkClassReference_builder{Id: classID}.Build(),
-				Region:       "us-east-1",
-				Ipv4Cidr:     new("10.100.0.0/16"),
+				Ipv4Cidr: new("10.100.0.0/16"),
 			}.Build(),
 		}.Build(),
 	}.Build())
@@ -1021,7 +992,7 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 				vnID = ""
 			}
 			if vnID != "" {
-				classID = vnResponse.GetObject().GetSpec().GetNetworkClass().GetId()
+				classID = singletonNetworkClassID(ctx, classes)
 				classResponse, classErr := classes.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: classID}.Build())
 				if classErr != nil || classResponse.GetObject().GetMetadata().HasDeletionTimestamp() ||
 					classResponse.GetObject().GetFabricManager() == "" {
@@ -1069,9 +1040,7 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 		Object: privatev1.VirtualNetwork_builder{
 			Metadata: meta,
 			Spec: privatev1.VirtualNetworkSpec_builder{
-				NetworkClass: privatev1.NetworkClassReference_builder{Id: classID}.Build(),
-				Region:       "us-east-1",
-				Ipv4Cidr:     new("10.201.0.0/16"),
+				Ipv4Cidr: new("10.201.0.0/16"),
 			}.Build(),
 		}.Build(),
 	}.Build())
@@ -1206,8 +1175,8 @@ func cleanupIncompleteTenantDefaultNetworkingFixture(
 	)
 	networkResponse, err := networks.List(ctx, privatev1.VirtualNetworksListRequest_builder{Filter: &networkFilter}.Build())
 	Expect(err).NotTo(HaveOccurred())
-	for _, network := range networkResponse.GetItems() {
-		classID := network.GetSpec().GetNetworkClass().GetId()
+	for range networkResponse.GetItems() {
+		classID := singletonNetworkClassID(ctx, classes)
 		classResponse, classErr := classes.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: classID}.Build())
 		if classErr == nil && !classResponse.GetObject().GetMetadata().HasDeletionTimestamp() {
 			continue
@@ -1347,7 +1316,7 @@ func getTenantDefaultNetworkFixture(ctx context.Context, tenant, project string)
 			vnResponse.GetObject().GetStatus().GetState() != privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY {
 			continue
 		}
-		classID := vnResponse.GetObject().GetSpec().GetNetworkClass().GetId()
+		classID := singletonNetworkClassID(ctx, classes)
 		classResponse, err := classes.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: classID}.Build())
 		if err != nil || classResponse.GetObject().GetMetadata().HasDeletionTimestamp() ||
 			classResponse.GetObject().GetFabricManager() == "" {

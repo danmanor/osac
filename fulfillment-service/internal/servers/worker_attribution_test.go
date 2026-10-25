@@ -72,6 +72,10 @@ func seedClusterInProject(project string) *privatev1.Cluster {
 }
 
 var _ = Describe("Worker attribution", func() {
+	BeforeEach(func() {
+		seedReadyDefaultNetworking(testTenant, 254)
+	})
+
 	var (
 		privateServer *PrivateBareMetalInstancesServer
 		publicServer  *BareMetalInstancesServer

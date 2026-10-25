@@ -271,8 +271,8 @@ def wait_for_virtual_network_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_virtual_network_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_virtual_network_phase(name=name, checked=False),
-        until=lambda v: v == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="virtualnetwork", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} VirtualNetwork Ready",
@@ -301,8 +301,8 @@ def wait_for_subnet_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_subnet_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_subnet_phase(name=name, checked=False),
-        until=lambda v: v == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="subnet", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} Subnet Ready",
@@ -381,8 +381,8 @@ def wait_for_external_ip_pool_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_external_ip_pool_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_external_ip_pool_phase(name=name, checked=False),
-        until=lambda v: v == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="externalippool", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} ExternalIPPool Ready",
@@ -436,8 +436,8 @@ def wait_for_external_ip_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_external_ip_allocated(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_external_ip_state(name=name, checked=False),
-        until=lambda v: v == "Allocated",
+        fn=lambda: k8s.get_ready_condition(resource="externalip", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} ExternalIP Allocated",
@@ -467,8 +467,8 @@ def wait_for_external_ip_attachment_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_external_ip_attachment_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_external_ip_attachment_phase(name=name, checked=False),
-        until=lambda v: v == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="externalipattachment", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} ExternalIPAttachment Ready",
@@ -490,8 +490,8 @@ def wait_for_external_ip_attachment_deletion(*, k8s: K8sClient, name: str) -> No
 
 def wait_for_nat_gateway_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_jsonpath(resource="natgateway", name=name, jsonpath="{.status.state}"),
-        until=lambda state: state == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="natgateway", name=name, checked=False),
+        until=lambda status: status == "True",
         retries=30,
         delay=5,
         description=f"NATGateway {name} to become Ready",
@@ -910,8 +910,8 @@ def wait_for_security_group_cr(*, k8s: K8sClient, uuid: str) -> str:
 
 def wait_for_security_group_ready(*, k8s: K8sClient, name: str) -> None:
     poll_until(
-        fn=lambda: k8s.get_security_group_phase(name=name, checked=False),
-        until=lambda v: v == "Ready",
+        fn=lambda: k8s.get_ready_condition(resource="securitygroup", name=name, checked=False),
+        until=lambda v: v == "True",
         retries=60,
         delay=5,
         description=f"{name} SecurityGroup Ready",

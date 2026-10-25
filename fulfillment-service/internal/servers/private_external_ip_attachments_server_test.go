@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -79,10 +80,11 @@ func createClusterInState(
 				Template: privatev1.ClusterTemplateReference_builder{Id: "ocp_small"}.Build(),
 			}.Build(),
 			Status: privatev1.ClusterStatus_builder{
-				State:           privatev1.ClusterState_CLUSTER_STATE_READY,
-				Hub:             "network-hub-a",
-				ApiEndpoint:     "10.0.0.20",
-				IngressEndpoint: "10.0.0.21",
+				State:                      privatev1.ClusterState_CLUSTER_STATE_READY,
+				Hub:                        "network-hub-a",
+				ApiEndpoint:                "10.0.0.20",
+				ManagementPublicationReady: true,
+				IngressEndpoint:            "10.0.0.21",
 			}.Build(),
 		}.Build(),
 	).Do(ctx)
@@ -140,7 +142,8 @@ var _ = Describe("Private external IP attachments server", func() {
 			SetTenancyLogic(tenancy).
 			Build()
 		Expect(err).ToNot(HaveOccurred())
-		_, err = networkClassesDao.Create().SetObject(privatev1.NetworkClass_builder{
+		_ = networkClassesDao
+		_, err = reuseNetworkClassDAO.Create().SetObject(privatev1.NetworkClass_builder{
 			Metadata: privatev1.Metadata_builder{Tenant: testTenant, Name: "test-network-class"}.Build(),
 			Status: privatev1.NetworkClassStatus_builder{
 				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
@@ -381,14 +384,14 @@ var _ = Describe("Private external IP attachments server", func() {
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
 		})
 
-		It("accepts DELETING to FAILED transition", func() {
+		It("keeps DELETING sticky and accepts a message", func() {
 			eip := createExternalIPInState(ctx, externalIPDao, sharedPool.GetId(),
 				privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED, false)
 			ci := createComputeInstanceInState(ctx, computeInstanceDao,
 				privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING)
 			createResponse, err := server.Create(ctx, privatev1.ExternalIPAttachmentsCreateRequest_builder{
 				Object: privatev1.ExternalIPAttachment_builder{
-					Metadata: privatev1.Metadata_builder{Name: "deleting-to-failed"}.Build(),
+					Metadata: privatev1.Metadata_builder{Name: "deleting-sticky"}.Build(),
 					Spec: privatev1.ExternalIPAttachmentSpec_builder{
 						ExternalIp:      privatev1.ExternalIPLocalReference_builder{Id: eip.GetId()}.Build(),
 						ComputeInstance: privatev1.ComputeInstanceLocalReference_builder{Id: ci.GetId()}.Build(),
@@ -405,13 +408,72 @@ var _ = Describe("Private external IP attachments server", func() {
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 
-			object.GetStatus().SetState(privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_FAILED)
-			_, err = server.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
+			for _, state := range []privatev1.ExternalIPAttachmentState{
+				privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_FAILED,
+				privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_PENDING,
+				privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_READY,
+			} {
+				failed := proto.Clone(object).(*privatev1.ExternalIPAttachment)
+				failed.GetStatus().SetState(state)
+				tx, txErr := database.TxFromContext(ctx)
+				Expect(txErr).ToNot(HaveOccurred())
+				err = tx.Savepoint(ctx, func(savepointCtx context.Context) error {
+					_, updateErr := server.Update(savepointCtx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
+						Object:     failed,
+						UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+					}.Build())
+					return updateErr
+				})
+				Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition), state.String())
+			}
+
+			object.GetStatus().SetMessage("delete attempt failed; retrying")
+			response, err := server.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
 				Object:     object,
-				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.message"}},
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
-			Expect(object.GetStatus().GetState()).To(Equal(privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_FAILED))
+			Expect(response.GetObject().GetStatus().GetState()).To(Equal(
+				privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_DELETING))
+			Expect(response.GetObject().GetStatus().GetMessage()).To(Equal("delete attempt failed; retrying"))
+		})
+
+		It("rejects a state change after the delete was accepted", func() {
+			eip := createExternalIPInState(ctx, externalIPDao, sharedPool.GetId(),
+				privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED, false)
+			ci := createComputeInstanceInState(ctx, computeInstanceDao,
+				privatev1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING)
+			createResponse, err := server.Create(ctx, privatev1.ExternalIPAttachmentsCreateRequest_builder{
+				Object: privatev1.ExternalIPAttachment_builder{
+					Metadata: privatev1.Metadata_builder{Name: "deleted-sticky"}.Build(),
+					Spec: privatev1.ExternalIPAttachmentSpec_builder{
+						ExternalIp:      privatev1.ExternalIPLocalReference_builder{Id: eip.GetId()}.Build(),
+						ComputeInstance: privatev1.ComputeInstanceLocalReference_builder{Id: ci.GetId()}.Build(),
+					}.Build(),
+				}.Build(),
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			id := createResponse.GetObject().GetId()
+
+			// Mark the delete accepted while the stored state is still PENDING, as a record written before sticky
+			// DELETING could be:
+			stored := createResponse.GetObject()
+			stored.GetMetadata().SetFinalizers([]string{"test"})
+			_, err = server.externalIPAttachmentDao.Update().SetObject(stored).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			_, err = server.externalIPAttachmentDao.Delete().SetId(id).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			current, err := server.externalIPAttachmentDao.Get().SetId(id).Do(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(current.GetObject().GetMetadata().HasDeletionTimestamp()).To(BeTrue())
+
+			failed := current.GetObject()
+			failed.GetStatus().SetState(privatev1.ExternalIPAttachmentState_EXTERNAL_IP_ATTACHMENT_STATE_FAILED)
+			_, err = server.Update(ctx, privatev1.ExternalIPAttachmentsUpdateRequest_builder{
+				Object:     failed,
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+			}.Build())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
 		})
 
 		It("settles and clears the ExternalIP parent from child transitions", func() {
@@ -657,7 +719,7 @@ var _ = Describe("Private external IP attachments server", func() {
 			Expect(getResponse.GetObject().GetSpec().GetComputeInstance().GetId()).To(Equal(ci.GetId()))
 		})
 
-		It("Updates metadata of an external IP attachment", func() {
+		It("rejects a metadata update of an external IP attachment", func() {
 			eip := createExternalIPInState(ctx, externalIPDao, sharedPool.GetId(),
 				privatev1.ExternalIPState_EXTERNAL_IP_STATE_ALLOCATED, false)
 			ci := createComputeInstanceInState(ctx, computeInstanceDao,
@@ -687,8 +749,9 @@ var _ = Describe("Private external IP attachments server", func() {
 					Paths: []string{"metadata.labels"},
 				},
 			}.Build())
-			Expect(err).ToNot(HaveOccurred())
-			Expect(updateResponse.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("env", "test"))
+			Expect(updateResponse).To(BeNil())
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 		})
 
 		It("allows trusted lifecycle updates to status.message and status.hub", func() {
@@ -1006,7 +1069,7 @@ var _ = Describe("Private external IP attachments server", func() {
 				}.Build(),
 			}.Build())
 			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-			Expect(err.Error()).To(ContainSubstring("must be READY"))
+			Expect(err.Error()).To(ContainSubstring("must be RUNNING and READY"))
 		})
 
 		It("Rejects Create when ComputeInstance does not exist", func() {
@@ -1148,7 +1211,7 @@ var _ = Describe("Private external IP attachments server", func() {
 			Expect(err).To(HaveOccurred())
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
-			Expect(status.Code()).To(Equal(grpccodes.AlreadyExists))
+			Expect(status.Code()).To(Equal(grpccodes.FailedPrecondition))
 			Expect(err.Error()).To(ContainSubstring("ExternalIP"))
 		})
 
@@ -1187,7 +1250,7 @@ var _ = Describe("Private external IP attachments server", func() {
 			Expect(err).To(HaveOccurred())
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
-			Expect(status.Code()).To(Equal(grpccodes.AlreadyExists))
+			Expect(status.Code()).To(Equal(grpccodes.FailedPrecondition))
 			Expect(err.Error()).To(ContainSubstring("ExternalIP"))
 		})
 	})
@@ -1224,7 +1287,7 @@ var _ = Describe("Private external IP attachments server", func() {
 				}.Build(),
 			}.Build(),
 		}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.AlreadyExists))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
 	})
 
 	Describe("Immutable fields", func() {
@@ -1264,7 +1327,7 @@ var _ = Describe("Private external IP attachments server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("spec.external_ip"))
+			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 			Expect(err.Error()).To(ContainSubstring("immutable"))
 		})
 
@@ -1305,7 +1368,7 @@ var _ = Describe("Private external IP attachments server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("spec.compute_instance"))
+			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 			Expect(err.Error()).To(ContainSubstring("immutable"))
 		})
 

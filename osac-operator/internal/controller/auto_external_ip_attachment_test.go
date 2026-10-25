@@ -44,15 +44,6 @@ type testExternalIPAttachmentsClient struct {
 	createErr   error
 }
 
-type testClustersGetter struct {
-	object *privatev1.Cluster
-	err    error
-}
-
-func (c *testClustersGetter) Get(context.Context, *privatev1.ClustersGetRequest, ...grpc.CallOption) (*privatev1.ClustersGetResponse, error) {
-	return &privatev1.ClustersGetResponse{Object: c.object}, c.err
-}
-
 type testBareMetalInstancesGetter struct {
 	object *privatev1.BareMetalInstance
 	err    error
@@ -86,7 +77,7 @@ func TestReconcileAutomaticExternalIPAttachmentsWaitsForAllocation(t *testing.T)
 	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
 	c := testExternalIPAttachmentsClient{}
 	result, err := reconcileAutomaticExternalIPAttachments(context.Background(),
-		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStatePending, "")),
+		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "")),
 		"networking", &c, time.Second, target)
 	if err != nil {
 		t.Fatalf("reconcile automatic attachment: %v", err)
@@ -103,7 +94,7 @@ func TestReconcileAutomaticExternalIPAttachmentsCreatesReadyBareMetalAttachment(
 	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
 	c := testExternalIPAttachmentsClient{}
 	result, err := reconcileAutomaticExternalIPAttachments(context.Background(),
-		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStateAllocated, "192.0.2.10")),
+		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")),
 		"networking", &c, time.Second, target)
 	if err != nil {
 		t.Fatalf("reconcile automatic attachment: %v", err)
@@ -136,8 +127,8 @@ func TestReconcileAutomaticExternalIPAttachmentsCreatesClusterEndpoints(t *testi
 	target := testAutomaticAttachmentTarget(clusterOrderOwner, "cluster-1", "tenant-1")
 	target.endpoints = []string{autoCreatedEndpointAPI, autoCreatedEndpointIngress}
 	target.availableEndpoints = map[string]bool{autoCreatedEndpointAPI: true, autoCreatedEndpointIngress: true}
-	apiIP := testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, v1alpha1.ExternalIPStateAllocated, "192.0.2.10")
-	ingressIP := testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, v1alpha1.ExternalIPStateAllocated, "192.0.2.11")
+	apiIP := testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10")
+	ingressIP := testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")
 	c := testExternalIPAttachmentsClient{}
 	_, err := reconcileAutomaticExternalIPAttachments(context.Background(), testAutomaticExternalIPClient(t, apiIP, ingressIP),
 		"networking", &c, time.Second, target)
@@ -165,8 +156,8 @@ func TestReconcileAutomaticExternalIPAttachmentsDoesNotCreateBeforeClusterEndpoi
 	target.availableEndpoints = map[string]bool{autoCreatedEndpointAPI: true}
 	c := testExternalIPAttachmentsClient{}
 	result, err := reconcileAutomaticExternalIPAttachments(context.Background(), testAutomaticExternalIPClient(t,
-		testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, v1alpha1.ExternalIPStateAllocated, "192.0.2.10"),
-		testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, v1alpha1.ExternalIPStateAllocated, "192.0.2.11")),
+		testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10"),
+		testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")),
 		"networking", &c, time.Second, target)
 	if err != nil {
 		t.Fatalf("reconcile automatic cluster attachments: %v", err)
@@ -181,7 +172,7 @@ func TestReconcileAutomaticExternalIPAttachmentsDoesNotCreateBeforeClusterEndpoi
 
 func TestReconcileAutomaticExternalIPAttachmentsIsIdempotent(t *testing.T) {
 	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
-	ip := testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStateAllocated, "192.0.2.10")
+	ip := testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")
 	existing := testExpectedAutomaticAttachment("eip-1", target, "")
 	c := testExternalIPAttachmentsClient{attachments: []*privatev1.ExternalIPAttachment{existing}}
 	_, err := reconcileAutomaticExternalIPAttachments(context.Background(), testAutomaticExternalIPClient(t, ip),
@@ -198,7 +189,7 @@ func TestReconcileAutomaticExternalIPAttachmentsRetriesFulfillmentReadinessRace(
 	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
 	c := testExternalIPAttachmentsClient{createErr: status.Error(codes.FailedPrecondition, "target is not ready yet")}
 	result, err := reconcileAutomaticExternalIPAttachments(context.Background(),
-		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStateAllocated, "192.0.2.10")),
+		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")),
 		"networking", &c, time.Second, target)
 	if err != nil {
 		t.Fatalf("reconcile readiness race: %v", err)
@@ -213,66 +204,84 @@ func TestReconcileAutomaticExternalIPAttachmentsReturnsUnexpectedCreateError(t *
 	wantErr := errors.New("fulfillment unavailable")
 	c := testExternalIPAttachmentsClient{createErr: wantErr}
 	_, err := reconcileAutomaticExternalIPAttachments(context.Background(),
-		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStateAllocated, "192.0.2.10")),
+		testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")),
 		"networking", &c, time.Second, target)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error = %v, want wrapped %v", err, wantErr)
 	}
 }
 
-func TestClusterOrderRequestsAutomaticAttachmentsAfterCaaSIsReady(t *testing.T) {
+func TestReconcileAutomaticExternalIPAttachmentsStopsForFailedExternalIP(t *testing.T) {
+	target := testAutomaticAttachmentTarget(bareMetalInstanceOwner, "bmi-1", "tenant-1")
+	ip := testAutomaticExternalIP("eip-1", target, "", "")
+	ip.Status.Conditions = []metav1.Condition{{Type: v1alpha1.NetworkConditionReady, Status: metav1.ConditionFalse,
+		Reason: v1alpha1.ReasonFailed, Message: "pool exhausted", LastTransitionTime: metav1.Now()}}
+	c := testExternalIPAttachmentsClient{}
+	result, err := reconcileAutomaticExternalIPAttachments(context.Background(),
+		testAutomaticExternalIPClient(t, ip), "networking", &c, time.Second, target)
+	if err != nil {
+		t.Fatalf("reconcile failed ExternalIP: %v", err)
+	}
+	if result.RequeueAfter != 0 || len(c.created) != 0 {
+		t.Fatalf("a FAILED ExternalIP must stop the recheck: requeue %s, created %d", result.RequeueAfter, len(c.created))
+	}
+}
+
+func testClusterOrderForRequests(apiEndpoint, ingressEndpoint string, publicationReady bool) *clusterNetworking {
+	order := &v1alpha1.ClusterOrder{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:   "clusters",
+			Labels:      map[string]string{osacClusterOrderIDLabel: "cluster-1"},
+			Annotations: map[string]string{osacTenantKey: "tenant-1"},
+		},
+		Status: v1alpha1.ClusterOrderStatus{ApiEndpoint: apiEndpoint, IngressEndpoint: ingressEndpoint},
+	}
+	status := metav1.ConditionFalse
+	if publicationReady {
+		status = metav1.ConditionTrue
+	}
+	order.SetStatusCondition(string(v1alpha1.ClusterOrderConditionManagementPublicationReady), status, "", "Test")
+	return &clusterNetworking{co: order, clusterID: "cluster-1", enabled: true}
+}
+
+func TestClusterOrderRequestsAutomaticAttachmentsForReadyEndpoints(t *testing.T) {
 	target := testAutomaticAttachmentTarget(clusterOrderOwner, "cluster-1", "tenant-1")
-	target.endpoints = []string{autoCreatedEndpointAPI, autoCreatedEndpointIngress}
-	target.availableEndpoints = map[string]bool{autoCreatedEndpointAPI: true, autoCreatedEndpointIngress: true}
-	cluster := &privatev1.Cluster{}
-	cluster.SetMetadata(privatev1.Metadata_builder{Tenant: "tenant-1"}.Build())
-	cluster.SetSpec(privatev1.ClusterSpec_builder{AutoExternalIpAttachment: proto.Bool(true)}.Build())
 	attachments := &testExternalIPAttachmentsClient{}
 	reconciler := &ClusterOrderReconciler{
 		Client: testAutomaticExternalIPClient(t,
-			testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, v1alpha1.ExternalIPStateAllocated, "192.0.2.10"),
-			testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, v1alpha1.ExternalIPStateAllocated, "192.0.2.11")),
+			testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10"),
+			testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")),
 		NetworkingNamespace:         "networking",
-		StatusPollInterval:          time.Second,
-		ClustersClient:              &testClustersGetter{object: cluster},
 		ExternalIPAttachmentsClient: attachments,
 	}
-	order := &v1alpha1.ClusterOrder{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "clusters",
-			Labels:    map[string]string{osacClusterOrderIDLabel: "cluster-1"},
-		},
-		Status: v1alpha1.ClusterOrderStatus{
-			Phase:           v1alpha1.ClusterOrderPhaseReady,
-			ApiEndpoint:     "api.internal.example",
-			IngressEndpoint: "ingress.internal.example",
-		},
-	}
-	_, err := reconciler.reconcileAutomaticExternalIPAttachments(context.Background(), order)
-	if err != nil {
-		t.Fatalf("reconcile CaaS automatic attachments: %v", err)
+	if err := reconciler.requestAutomaticExternalIPAttachments(context.Background(),
+		testClusterOrderForRequests("198.51.100.5", "10.0.0.200", true)); err != nil {
+		t.Fatalf("request CaaS automatic attachments: %v", err)
 	}
 	if len(attachments.created) != 2 {
 		t.Fatalf("created %d attachments, want API and ingress", len(attachments.created))
 	}
 }
 
-func TestClusterOrderDoesNotRequestAutomaticAttachmentsBeforeCaaSIsReady(t *testing.T) {
-	cluster := &privatev1.Cluster{}
-	cluster.SetMetadata(privatev1.Metadata_builder{Tenant: "tenant-1"}.Build())
-	cluster.SetSpec(privatev1.ClusterSpec_builder{AutoExternalIpAttachment: proto.Bool(true)}.Build())
+func TestClusterOrderRequestsNoAPIAttachmentWithoutPublication(t *testing.T) {
+	target := testAutomaticAttachmentTarget(clusterOrderOwner, "cluster-1", "tenant-1")
 	attachments := &testExternalIPAttachmentsClient{}
 	reconciler := &ClusterOrderReconciler{
+		Client: testAutomaticExternalIPClient(t,
+			testAutomaticExternalIP("eip-api", target, autoCreatedEndpointAPI, "192.0.2.10"),
+			testAutomaticExternalIP("eip-ingress", target, autoCreatedEndpointIngress, "192.0.2.11")),
 		NetworkingNamespace:         "networking",
-		ClustersClient:              &testClustersGetter{object: cluster},
 		ExternalIPAttachmentsClient: attachments,
 	}
-	order := &v1alpha1.ClusterOrder{Status: v1alpha1.ClusterOrderStatus{Phase: v1alpha1.ClusterOrderPhaseProgressing}}
-	if _, err := reconciler.reconcileAutomaticExternalIPAttachments(context.Background(), order); err != nil {
-		t.Fatalf("reconcile pre-ready CaaS: %v", err)
+	n := testClusterOrderForRequests("198.51.100.5", "", false)
+	if err := reconciler.requestAutomaticExternalIPAttachments(context.Background(), n); err != nil {
+		t.Fatalf("request CaaS automatic attachments: %v", err)
 	}
 	if len(attachments.created) != 0 {
-		t.Fatalf("created %d attachments before CaaS became Ready", len(attachments.created))
+		t.Fatalf("created %d attachments before an endpoint was ready", len(attachments.created))
+	}
+	if n.result.RequeueAfter != clusterNetworkingRecheck {
+		t.Fatalf("RequeueAfter = %s, want the 30-second recheck", n.result.RequeueAfter)
 	}
 }
 
@@ -283,13 +292,14 @@ func TestBareMetalNetworkingReconcilerRequestsAutomaticAttachmentAfterBMIIsReady
 	instance.SetSpec(privatev1.BareMetalInstanceSpec_builder{AutoExternalIpAttachment: proto.Bool(true)}.Build())
 	attachments := &testExternalIPAttachmentsClient{}
 	reconciler := &BareMetalInstanceCleanupReconciler{
-		Client:                      testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", v1alpha1.ExternalIPStateAllocated, "192.0.2.10")),
+		Client:                      testAutomaticExternalIPClient(t, testAutomaticExternalIP("eip-1", target, "", "192.0.2.10")),
 		networkingNamespace:         "networking",
 		BareMetalInstancesClient:    &testBareMetalInstancesGetter{object: instance},
 		ExternalIPAttachmentsClient: attachments,
 	}
 	bmi := &bmfov1alpha1.BareMetalInstance{Status: bmfov1alpha1.BareMetalInstanceStatus{
 		Phase:                     bmfov1alpha1.BareMetalInstancePhaseReady,
+		RunStrategy:               bmfov1alpha1.RunStrategyAlways,
 		NetworkAttachmentStatuses: []bmfov1alpha1.BareMetalNetworkAttachmentStatus{{Primary: true, IPAddress: "192.0.2.20"}},
 	}}
 	_, err := reconciler.reconcileAutomaticExternalIPAttachments(context.Background(), bmi, "bmi-1")
@@ -301,6 +311,33 @@ func TestBareMetalNetworkingReconcilerRequestsAutomaticAttachmentAfterBMIIsReady
 	}
 	if got := attachments.created[0].GetSpec().GetBaremetalInstance().GetId(); got != "bmi-1" {
 		t.Fatalf("BareMetalInstance target = %q, want bmi-1", got)
+	}
+}
+
+func TestBareMetalInstanceEndpointReady(t *testing.T) {
+	ready := bmfov1alpha1.BareMetalInstance{Status: bmfov1alpha1.BareMetalInstanceStatus{
+		Phase:                     bmfov1alpha1.BareMetalInstancePhaseReady,
+		RunStrategy:               bmfov1alpha1.RunStrategyAlways,
+		NetworkAttachmentStatuses: []bmfov1alpha1.BareMetalNetworkAttachmentStatus{{IPAddress: "10.0.0.130"}},
+	}}
+	if !bareMetalInstanceEndpointReady(&ready) {
+		t.Fatal("a Ready, running BMI with an address is a ready endpoint")
+	}
+	halted := ready.DeepCopy()
+	halted.Status.RunStrategy = bmfov1alpha1.RunStrategyHalted
+	noAddress := ready.DeepCopy()
+	noAddress.Status.NetworkAttachmentStatuses = nil
+	progressing := ready.DeepCopy()
+	progressing.Status.Phase = bmfov1alpha1.BareMetalInstancePhaseProgressing
+	deleting := ready.DeepCopy()
+	now := metav1.Now()
+	deleting.DeletionTimestamp = &now
+	for name, bmi := range map[string]*bmfov1alpha1.BareMetalInstance{
+		"halted": halted, "no address": noAddress, "progressing": progressing, "deleting": deleting,
+	} {
+		if bareMetalInstanceEndpointReady(bmi) {
+			t.Errorf("%s BMI must not be a ready endpoint", name)
+		}
 	}
 }
 
@@ -337,7 +374,7 @@ func testAutomaticAttachmentTarget(kind autoExternalIPOwnerKind, id, tenant stri
 	}
 }
 
-func testAutomaticExternalIP(name string, target automaticExternalIPAttachmentTarget, endpoint string, state v1alpha1.ExternalIPStateType, address string) *v1alpha1.ExternalIP {
+func testAutomaticExternalIP(name string, target automaticExternalIPAttachmentTarget, endpoint string, address string) *v1alpha1.ExternalIP {
 	labels := map[string]string{
 		autoCreatedLabel:     "true",
 		autoCreatedForLabel:  target.owner.id,
@@ -357,8 +394,17 @@ func testAutomaticExternalIP(name string, target automaticExternalIPAttachmentTa
 			},
 		},
 		Spec:   v1alpha1.ExternalIPSpec{Pool: "pool"},
-		Status: v1alpha1.ExternalIPStatus{State: state, Address: address},
+		Status: v1alpha1.ExternalIPStatus{Address: address, Conditions: allocatedConditions(address)},
 	}
+}
+
+// allocatedConditions is Ready=True Succeeded for an allocated address (ALLOCATED).
+func allocatedConditions(address string) []metav1.Condition {
+	if address == "" {
+		return nil
+	}
+	return []metav1.Condition{{Type: v1alpha1.NetworkConditionReady, Status: metav1.ConditionTrue,
+		Reason: v1alpha1.ReasonSucceeded, LastTransitionTime: metav1.Now()}}
 }
 
 func testExpectedAutomaticAttachment(ipID string, target automaticExternalIPAttachmentTarget, endpoint string) *privatev1.ExternalIPAttachment {

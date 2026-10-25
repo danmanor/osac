@@ -41,12 +41,13 @@ import (
 )
 
 type PrivateComputeInstancesServerBuilder struct {
-	logger            *slog.Logger
-	attributionLogic  auth.AttributionLogic
-	tenancyLogic      auth.TenancyLogic
-	metricsRegisterer prometheus.Registerer
-	filterDesc        protoreflect.MessageDescriptor
-	secretStore       vault.SecretStore
+	logger             *slog.Logger
+	attributionLogic   auth.AttributionLogic
+	tenancyLogic       auth.TenancyLogic
+	metricsRegisterer  prometheus.Registerer
+	filterDesc         protoreflect.MessageDescriptor
+	secretStore        vault.SecretStore
+	networkingSettings *NetworkingSettings
 }
 
 var _ privatev1.ComputeInstancesServer = (*PrivateComputeInstancesServer)(nil)
@@ -71,6 +72,8 @@ type PrivateComputeInstancesServer struct {
 	secretsDao         *dao.GenericDAO[*privatev1.Secret]
 	secretStore        vault.SecretStore
 	storageTiersDao    *dao.GenericDAO[*privatev1.StorageTier]
+	settings           NetworkingSettings
+	guards             *networkingGuards
 }
 
 func NewPrivateComputeInstancesServer() *PrivateComputeInstancesServerBuilder {
@@ -108,6 +111,13 @@ func (b *PrivateComputeInstancesServerBuilder) SetFilterDesc(value protoreflect.
 
 func (b *PrivateComputeInstancesServerBuilder) SetSecretStore(value vault.SecretStore) *PrivateComputeInstancesServerBuilder {
 	b.secretStore = value
+	return b
+}
+
+// SetNetworkingSettings sets the networking installation settings. This is optional; the default is
+// DefaultNetworkingSettings.
+func (b *PrivateComputeInstancesServerBuilder) SetNetworkingSettings(value NetworkingSettings) *PrivateComputeInstancesServerBuilder {
+	b.networkingSettings = &value
 	return b
 }
 
@@ -240,6 +250,10 @@ func (b *PrivateComputeInstancesServerBuilder) Build() (result *PrivateComputeIn
 	}
 
 	// Create and populate the object:
+	guards, err := newNetworkingGuards(b.logger)
+	if err != nil {
+		return
+	}
 	networkClassesDao, err := newNetworkClassesDAO(b.logger, b.tenancyLogic, b.metricsRegisterer)
 	if err != nil {
 		return
@@ -250,6 +264,8 @@ func (b *PrivateComputeInstancesServerBuilder) Build() (result *PrivateComputeIn
 	}
 	result = &PrivateComputeInstancesServer{
 		storageTiersDao:    storageTiersDao,
+		settings:           resolveNetworkingSettings(b.networkingSettings),
+		guards:             guards,
 		logger:             b.logger,
 		tenancyLogic:       b.tenancyLogic,
 		generic:            generic,
@@ -291,91 +307,12 @@ func (s *PrivateComputeInstancesServer) Get(ctx context.Context,
 	return
 }
 
-func (s *PrivateComputeInstancesServer) completeNetworkAttachmentDefaults(ctx context.Context,
-	vm *privatev1.ComputeInstance) error {
-	metadata := vm.GetMetadata()
-	tenant := metadata.GetTenant()
-	spec := vm.GetSpec()
-	attachments := spec.GetNetworkAttachments()
-	if len(attachments) == 0 {
-		attachments = []*privatev1.ComputeNetworkAttachment{{}}
-		spec.SetNetworkAttachments(attachments)
-	}
-	attachment := attachments[0]
-	if attachment == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments[0]: network attachment is required")
-	}
-
-	if attachment.GetSubnet() == nil || refKey(attachment.GetSubnet()) == "" {
-		subnet, err := findDefaultSubnet(ctx, s.logger, s.subnetsDao, tenant, metadata.GetProject())
-		if err != nil {
-			return grpcstatus.Errorf(grpccodes.Internal, "failed to look up default subnet: %v", err)
-		}
-		if subnet == nil {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"spec.network_attachments[0].subnet: a default subnet is required when no subnet is provided")
-		}
-		attachment.SetSubnet(privatev1.SubnetLocalReference_builder{Id: subnet.GetId()}.Build())
-	}
-
-	if len(attachment.GetSecurityGroups()) != 0 {
-		return nil
-	}
-
-	subnetRef := attachment.GetSubnet()
-	subnetID := refKey(subnetRef)
-	subnet, err := resolveAndCanonicalizeReference(ctx, s.subnetsDao, metadata, subnetRef, "subnet", grpccodes.NotFound)
-	if err != nil {
-		if grpcstatus.Code(err) == grpccodes.NotFound {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"network_attachments[0]: subnet '%s' does not exist", subnetID)
-		}
-		return err
-	}
-
-	virtualNetworkRef := subnet.GetSpec().GetVirtualNetwork()
-	if virtualNetworkRef == nil || refKey(virtualNetworkRef) == "" {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"network_attachments[0]: subnet '%s' has no VirtualNetwork", subnetID)
-	}
-	virtualNetworkID := refKey(virtualNetworkRef)
-	virtualNetwork, err := resolveAndCanonicalizeReference(ctx, s.virtualNetworksDao, metadata,
-		virtualNetworkRef, "virtual network", grpccodes.NotFound)
-	if err != nil {
-		if grpcstatus.Code(err) == grpccodes.NotFound {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"network_attachments[0]: VirtualNetwork '%s' does not exist", virtualNetworkID)
-		}
-		return err
-	}
-	if virtualNetwork.GetMetadata().GetLabels()[defaultLabel] != "true" {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments[0].security_groups: a security group is required for a non-default VirtualNetwork")
-	}
-
-	securityGroup, err := findDefaultSecurityGroup(ctx, s.logger, s.securityGroupsDao,
-		virtualNetworkID, tenant, metadata.GetProject())
-	if err != nil {
-		return grpcstatus.Errorf(grpccodes.Internal, "failed to look up default security group: %v", err)
-	}
-	if securityGroup == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments[0].security_groups: a default security group is required for the default VirtualNetwork")
-	}
-	attachment.SetSecurityGroups([]*privatev1.SecurityGroupLocalReference{
-		privatev1.SecurityGroupLocalReference_builder{Id: securityGroup.GetId()}.Build(),
-	})
-
-	s.logger.LogAttrs(ctx, slog.LevelInfo, "completed default compute network attachment",
-		slog.String("subnet_id", subnet.GetId()),
-		slog.String("security_group_id", securityGroup.GetId()))
-	return nil
-}
-
 func (s *PrivateComputeInstancesServer) Create(ctx context.Context, request *privatev1.ComputeInstancesCreateRequest) (response *privatev1.ComputeInstancesCreateResponse, err error) {
 	var warnings []string
 	err = s.generic.CreateWithCandidatePreparation(ctx, request, &response, func(ctx context.Context, _ *privatev1.ComputeInstance, candidate *privatev1.ComputeInstance) error {
+		if err := lockTenantForCreate(ctx, candidate.GetMetadata().GetTenant()); err != nil {
+			return err
+		}
 		warnings, err = s.prepareCreate(ctx, candidate)
 		if err == nil && candidate.GetSpec().GetAutoExternalIpAttachment() {
 			ensureComputeInstanceFinalizer(candidate, finalizers.Controller)
@@ -386,7 +323,9 @@ func (s *PrivateComputeInstancesServer) Create(ctx context.Context, request *pri
 		return
 	}
 	if !isDryRun(ctx) && response.GetObject().GetSpec().GetAutoExternalIpAttachment() {
-		err = s.autoProvisionExternalIP(ctx, response.GetObject())
+		created := response.GetObject()
+		err = createAutomaticExternalIPs(ctx, s.logger, s.settings, s.externalIPPoolDao, s.externalIPDao,
+			created.GetMetadata(), created.GetId(), "compute_instance")
 		if err != nil {
 			if tx, txErr := database.TxFromContext(ctx); txErr == nil {
 				tx.ReportError(&err)
@@ -415,20 +354,9 @@ func (s *PrivateComputeInstancesServer) prepareCreate(ctx context.Context, candi
 	if err = s.validateAndResolveUserDataSecret(ctx, spec, true); err != nil {
 		return
 	}
-	if len(spec.GetNetworkAttachments()) > 1 {
-		err = grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"spec.network_attachments: at most one network attachment is supported")
-		return
-	}
-
-	// Apply Catalog rules before completing network fields. Otherwise a locked network field
+	// Catalog rules were applied before the network attachment is resolved. Otherwise a locked network field
 	// could mistake a server-provided default for a caller override.
-	if err = s.completeNetworkAttachmentDefaults(ctx, candidate); err != nil {
-		return
-	}
-
-	// Validate and resolve the final network, including Catalog and Template defaults.
-	if err = s.validateNetworkReferencesState(ctx, candidate); err != nil {
+	if err = s.resolveNetworkAttachments(ctx, candidate); err != nil {
 		return
 	}
 
@@ -608,15 +536,7 @@ func (s *PrivateComputeInstancesServer) Update(ctx context.Context,
 				return err
 			}
 		}
-		if updateIncludesField(request.GetUpdateMask(), "spec.network_attachments") {
-			// During deletion, keep the existing visibility check without requiring dependencies
-			// to remain present or ready. Otherwise resolve and validate the final network once.
-			if current.GetMetadata().HasDeletionTimestamp() {
-				return s.validateNetworkReferencesTenancy(ctx, candidate)
-			}
-			return s.validateNetworkReferencesState(ctx, candidate)
-		}
-		return nil
+		return rejectStateChangeWhileDeleting(current, candidate, current.GetMetadata())
 	})
 	if err != nil {
 		return
@@ -668,7 +588,13 @@ func (s *PrivateComputeInstancesServer) Delete(ctx context.Context,
 	if err != nil {
 		return
 	}
+	if deleteAlreadyAccepted(instance.GetMetadata()) {
+		return &privatev1.ComputeInstancesDeleteResponse{}, nil
+	}
 	if err = s.lifecycle.rejectManualAttachmentDelete(ctx, "ComputeInstance", id, instance.GetMetadata()); err != nil {
+		return
+	}
+	if err = markDeleting(ctx, s.generic.dao, instance); err != nil {
 		return
 	}
 	err = s.generic.Delete(ctx, request, &response)
@@ -1150,224 +1076,6 @@ func storageTierRefsEqual(a, b *privatev1.StorageTierReference) bool {
 	return a.GetName() == b.GetName()
 }
 
-// validateNetworkReferencesTenancy validates that referenced Subnet and SecurityGroups
-// belong to the same tenant as the ComputeInstance.
-//
-// This validation MUST run even during deletion to prevent cross-tenant updates.
-// The DAO Get() calls enforce tenant isolation via TenancyLogic - cross-tenant resources
-// are filtered out and appear as NotFound. During deletion, NotFound is allowed (resources
-// may have been deleted during cleanup). This ensures tenant boundaries are always enforced
-// while allowing graceful deletion.
-//
-// Implements requirement VAL-04 (tenant isolation).
-func (s *PrivateComputeInstancesServer) validateNetworkReferencesTenancy(
-	ctx context.Context,
-	vm *privatev1.ComputeInstance,
-) error {
-	if vm == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance is mandatory")
-	}
-
-	spec := vm.GetSpec()
-	if spec == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance spec is mandatory")
-	}
-
-	attachments := spec.GetNetworkAttachments()
-	if err := computeinstancespec.ValidateNetworkAttachments(attachments); err != nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "invalid network attachments configuration: %s", err.Error())
-	}
-	if len(attachments) == 0 {
-		return nil
-	}
-
-	for _, att := range attachments {
-		subnetRef := att.GetSubnet()
-		securityGroupRefs := att.GetSecurityGroups()
-
-		// At this point, subnetRef is guaranteed to be non-nil because
-		// ValidateNetworkAttachments ensures all attachments have non-empty subnet.
-		subnetIDStr := refKey(subnetRef)
-
-		// Validate tenant isolation for subnet.
-		// TenancyLogic in DAO filters out cross-tenant resources, making them appear as NotFound.
-		// We allow NotFound during deletion (resource may be deleted or cross-tenant).
-		// The key is that we ALWAYS call DAO Get() so tenant filtering happens.
-		_, getErr := s.subnetsDao.Get().SetId(subnetIDStr).Do(ctx)
-		if getErr != nil {
-			var notFoundErr *dao.ErrNotFound
-			if errors.As(getErr, &notFoundErr) {
-				// Resource doesn't exist OR belongs to different tenant (filtered by TenancyLogic).
-				// During deletion this is allowed. During creation/normal update this is caught
-				// by validateNetworkReferencesState.
-				continue
-			}
-			// Other error - propagate
-			s.logger.ErrorContext(ctx, "Failed to query Subnet for tenancy check",
-				slog.String("subnet_id", subnetIDStr),
-				slog.Any("error", getErr))
-			return grpcstatus.Errorf(grpccodes.Internal, "failed to validate subnet")
-		}
-
-		// Validate tenant isolation for security groups.
-		for _, sgRef := range securityGroupRefs {
-			if sgRef == nil {
-				continue
-			}
-			sgIDStr := refKey(sgRef)
-			_, getErr := s.securityGroupsDao.Get().SetId(sgIDStr).Do(ctx)
-			if getErr != nil {
-				var notFoundErr *dao.ErrNotFound
-				if errors.As(getErr, &notFoundErr) {
-					// Resource doesn't exist OR belongs to different tenant (filtered by TenancyLogic).
-					// During deletion this is allowed. During creation/normal update this is caught
-					// by validateNetworkReferencesState.
-					continue
-				}
-				// Other error - propagate
-				s.logger.ErrorContext(ctx, "Failed to query SecurityGroup for tenancy check",
-					slog.String("security_group_id", sgIDStr),
-					slog.Any("error", getErr))
-				return grpcstatus.Errorf(grpccodes.Internal, "failed to validate security group")
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateNetworkReferencesState validates that referenced Subnet and SecurityGroups
-// exist, are in READY state, and SecurityGroups belong to the same VirtualNetwork as their attachment's Subnet.
-//
-// This validation is SKIPPED during deletion because resources may already be deleted.
-// Resolution checks tenant/project ownership and fills the final reference IDs. During deletion,
-// validateNetworkReferencesTenancy still runs separately without requiring readiness.
-//
-// Implements requirements VAL-01, VAL-02, VAL-03.
-func (s *PrivateComputeInstancesServer) validateNetworkReferencesState(
-	ctx context.Context,
-	vm *privatev1.ComputeInstance,
-) error {
-	if vm == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance is mandatory")
-	}
-
-	spec := vm.GetSpec()
-	if spec == nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance spec is mandatory")
-	}
-
-	attachments := spec.GetNetworkAttachments()
-	if err := computeinstancespec.ValidateNetworkAttachments(attachments); err != nil {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument, "invalid network attachments configuration: %s", err.Error())
-	}
-	if len(attachments) == 0 {
-		return nil
-	}
-
-	hubReferences := make([]networkingHubReference, 0, len(attachments)*2)
-	for i, att := range attachments {
-		subnetRef := att.GetSubnet()
-		securityGroupRefs := att.GetSecurityGroups()
-
-		subnetKey := refKey(subnetRef)
-		subnet, err := resolveAndCanonicalizeLockedReference(ctx, s.subnetsDao, vm.GetMetadata(), subnetRef,
-			"subnet", grpccodes.NotFound)
-		if err != nil {
-			if grpcstatus.Code(err) == grpccodes.NotFound {
-				return grpcstatus.Errorf(grpccodes.InvalidArgument,
-					"network_attachments[%d]: subnet '%s' does not exist", i, subnetKey)
-			}
-			return err
-		}
-
-		source := fmt.Sprintf(" in network_attachments[%d]", i)
-		// VAL-02: Validate READY state
-		if err := validateResolvedSubnetReady(subnet, subnetKey, source); err != nil {
-			return err
-		}
-		if err := s.validateNetworkClassSupportsVM(ctx, vm.GetMetadata(), subnet); err != nil {
-			return err
-		}
-		hubReferences = append(hubReferences, networkingHubReference{
-			resourceType: "Subnet",
-			id:           subnet.GetId(),
-			hubID:        subnet.GetStatus().GetHub(),
-		})
-
-		virtualNetworkID := refKey(subnet.GetSpec().GetVirtualNetwork())
-
-		// Use the subnet's VirtualNetwork as the expected owner for every SecurityGroup.
-		for _, sgRef := range securityGroupRefs {
-			if sgRef == nil {
-				continue
-			}
-			sgKey := refKey(sgRef)
-
-			sg, err := resolveAndCanonicalizeLockedReference(ctx, s.securityGroupsDao, vm.GetMetadata(), sgRef,
-				"security group", grpccodes.NotFound)
-			if err != nil {
-				if grpcstatus.Code(err) == grpccodes.NotFound {
-					return grpcstatus.Errorf(grpccodes.InvalidArgument,
-						"network_attachments[%d]: security group '%s' does not exist", i, sgKey)
-				}
-				return err
-			}
-
-			// VAL-02: Validate READY state
-			// VAL-03: Validate SecurityGroup belongs to same VirtualNetwork as Subnet
-			if err := validateResolvedSecurityGroup(sg, sgKey, source, virtualNetworkID); err != nil {
-				return err
-			}
-			hubReferences = append(hubReferences, networkingHubReference{
-				resourceType: "SecurityGroup",
-				id:           sg.GetId(),
-				hubID:        sg.GetStatus().GetHub(),
-			})
-		}
-	}
-
-	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
-	if err != nil {
-		return err
-	}
-	return validateNetworkingHubReferences(canonicalHubID, hubReferences...)
-}
-
-func (s *PrivateComputeInstancesServer) validateNetworkClassSupportsVM(
-	ctx context.Context,
-	metadata *privatev1.Metadata,
-	subnet *privatev1.Subnet,
-) error {
-	virtualNetworkRef := subnet.GetSpec().GetVirtualNetwork()
-	if virtualNetworkRef == nil || refKey(virtualNetworkRef) == "" {
-		return grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"network attachment Subnet '%s' has no VirtualNetwork", subnet.GetId())
-	}
-	virtualNetwork, err := resolveAndCanonicalizeReference(
-		ctx, s.virtualNetworksDao, metadata, virtualNetworkRef, "virtual network", grpccodes.NotFound,
-	)
-	if err != nil {
-		return err
-	}
-	networkClassRef := virtualNetwork.GetSpec().GetNetworkClass()
-	if networkClassRef == nil || refKey(networkClassRef) == "" {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"VirtualNetwork '%s' has no NetworkClass for VM workloads", virtualNetwork.GetId())
-	}
-	networkClass, err := resolveAndCanonicalizeReference(
-		ctx, s.networkClassesDao, virtualNetwork.GetMetadata(), networkClassRef, "network class", grpccodes.NotFound,
-	)
-	if err != nil {
-		return err
-	}
-	if networkClass.GetK8SManager() == "" {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"NetworkClass '%s' has no k8s_manager and does not support VM workloads", networkClass.GetId())
-	}
-	return nil
-}
-
 // resolveCatalogItem finds the VM's published Catalog Item in the VM's selected tenant/project
 // or shared scope, then finds the item's Template under the item's ownership. It applies locked
 // and editable field and parameter rules to the new VM and returns that Template for defaults.
@@ -1415,55 +1123,38 @@ func (s *PrivateComputeInstancesServer) resolveCatalogItem(
 	return resolvedTemplate, nil
 }
 
-func (s *PrivateComputeInstancesServer) autoProvisionExternalIP(
-	ctx context.Context, ci *privatev1.ComputeInstance,
-) error {
-	pool, err := SelectExternalIPPool(ctx, s.externalIPPoolDao, privatev1.IPFamily_IP_FAMILY_IPV4)
+// resolveNetworkAttachments resolves the network attachment field of a new VM: at most one attachment, defaulted from
+// the tenant defaults, and every referenced Subnet and SecurityGroup READY and in one VirtualNetwork.
+func (s *PrivateComputeInstancesServer) resolveNetworkAttachments(ctx context.Context,
+	vm *privatev1.ComputeInstance) error {
+	spec := vm.GetSpec()
+	attachments := spec.GetNetworkAttachments()
+	if len(attachments) > 1 {
+		return grpcstatus.Error(grpccodes.InvalidArgument, "at most one network attachment is supported")
+	}
+	attachment := &privatev1.ComputeNetworkAttachment{}
+	if len(attachments) == 1 && attachments[0] != nil {
+		attachment = attachments[0]
+	}
+	resolution, err := resolveNetworkAttachment(ctx, s.logger, s.guards, s.settings, networkAttachmentRequest{
+		tenant:            vm.GetMetadata().GetTenant(),
+		project:           vm.GetMetadata().GetProject(),
+		subnetsDao:        s.subnetsDao,
+		securityGroupsDao: s.securityGroupsDao,
+		subnet:            attachment.GetSubnet(),
+		securityGroups:    attachment.GetSecurityGroups(),
+		source:            "spec.network_attachments[0]",
+	})
 	if err != nil {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition, "auto_external_ip_attachment: %s", err)
+		return err
 	}
+	attachment.SetSubnet(resolution.subnetReference())
+	attachment.SetSecurityGroups(resolution.securityGroupReferences())
+	spec.SetNetworkAttachments([]*privatev1.ComputeNetworkAttachment{attachment})
 
-	tenant := ci.GetMetadata().GetTenant()
-	ciID := ci.GetId()
-	shortID := ciID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-
-	eipLabels := map[string]string{
-		autoCreatedLabel:            "true",
-		autoCreatedForLabel:         ciID,
-		autoAttachmentDeferredLabel: "true",
-		autoCreatedKindLabel:        "compute_instance",
-	}
-	eip := privatev1.ExternalIP_builder{
-		Metadata: privatev1.Metadata_builder{
-			Name:   fmt.Sprintf("auto-eip-%s", shortID),
-			Tenant: tenant,
-			Labels: eipLabels,
-			Annotations: map[string]string{
-				tenantAnnotation:         tenant,
-				ownerReferenceAnnotation: ciID,
-			},
-			Creator: systemCreator,
-		}.Build(),
-		Spec: privatev1.ExternalIPSpec_builder{
-			Pool: privatev1.ExternalIPPoolReference_builder{Id: pool.GetId()}.Build(),
-		}.Build(),
-		Status: privatev1.ExternalIPStatus_builder{
-			State: privatev1.ExternalIPState_EXTERNAL_IP_STATE_PENDING,
-		}.Build(),
-	}.Build()
-
-	_, err = s.externalIPDao.Create().SetObject(eip).Do(ctx)
+	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
 	if err != nil {
-		return fmt.Errorf("auto_external_ip_attachment: failed to create ExternalIP: %w", err)
+		return err
 	}
-
-	err = UpdatePoolCapacity(ctx, s.externalIPPoolDao, pool.GetId(), 1)
-	if err != nil {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition, "auto_external_ip_attachment: %s", err)
-	}
-
-	return nil
+	return validateNetworkingHubReferences(canonicalHubID, resolution.hubReferences()...)
 }

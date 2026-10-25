@@ -74,7 +74,7 @@ func newComputeInstanceFeedbackBridge(hubClient clnt.Client, ciClient privatev1.
 		Client:    hubClient,
 		Finalizer: osacComputeInstanceFeedbackFinalizer,
 		IDLabel:   osacComputeInstanceIDLabel,
-		Kind:      "ComputeInstance",
+		Kind:      kindComputeInstance,
 		IDKey:     "ciID",
 		NewObject: func() *ckv1alpha1.ComputeInstance { return &ckv1alpha1.ComputeInstance{} },
 		Fetch: func(ctx context.Context, id string) (*privatev1.ComputeInstance, error) {
@@ -162,6 +162,7 @@ func syncCIConditions(obj *ckv1alpha1.ComputeInstance, remote *privatev1.Compute
 		{ckv1alpha1.ComputeInstanceConditionRestartFailed, privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_FAILED},
 		{ckv1alpha1.ComputeInstanceConditionProvisioned, privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED},
 		{ckv1alpha1.ComputeInstanceConditionRestartRequired, privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_REQUIRED},
+		{ckv1alpha1.ComputeInstanceConditionNetworkReady, privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_NETWORK_READY},
 	}
 	for _, m := range conditionMappings {
 		crCondition := obj.GetStatusCondition(m.crType)

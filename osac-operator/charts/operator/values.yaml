@@ -1,4 +1,7 @@
 global:
+  networking:
+    # Set at installation; when false the operator runs no networking job.
+    provisioningEnabled: true
   fulfillmentTrust:
     enabled: false
     tenantNamespace: osac-csi
@@ -24,6 +27,7 @@ aap:
   insecureSkipVerify: "true"
   statusPollInterval: "30s"
   templatePrefix: "osac"
+  organization: "osac"
 
 stall:
   preparingInfrastructureThreshold: "15m"
@@ -59,7 +63,6 @@ controllers:
   # is empty the controller starts with provisioning disabled (Volumes stay in
   # Progressing) and never fails operator startup.
   volume: true
-  networkingProvisioning: true
 
 # vendorControllers maps provider identifiers to their vendor CSI controller
 # gRPC endpoints, rendered into OSAC_VENDOR_CONTROLLERS for the Volume

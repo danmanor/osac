@@ -6,12 +6,32 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	api "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 )
+
+// createWorkerOrder creates a bare-metal ClusterOrder with the worker creation
+// gate open: the HostedCluster exists and ManagementPublicationReady is True.
+func createWorkerOrder(ctx context.Context, co *api.ClusterOrder) error {
+	if err := k8sClient.Create(ctx, co); err != nil {
+		return err
+	}
+	co.SetStatusCondition(api.ConditionControlPlaneCreated, metav1.ConditionTrue, "", api.ReasonAsExpected)
+	co.SetStatusCondition(string(api.ClusterOrderConditionManagementPublicationReady), metav1.ConditionTrue, "", api.ReasonAsExpected)
+	// The gate opened long before any worker attempt, so it never moves a
+	// registration deadline in these fixtures.
+	for i := range co.Status.Conditions {
+		co.Status.Conditions[i].LastTransitionTime = metav1.NewTime(time.Now().Add(-24 * time.Hour))
+	}
+	return k8sClient.Status().Update(ctx, co)
+}
 
 // These fixtures write only the external evidence consumed by the worker.
 // They do not run Assisted Service, HyperShift or CAP-Agent controllers. The

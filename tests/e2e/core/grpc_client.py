@@ -13,12 +13,10 @@ PUBLIC_API: str = "osac.public.v1"
 PRIVATE_API: str = "osac.private.v1"
 
 
-def _metadata(*, name: str, tenant: str | None = None, project: str | None = None) -> dict[str, str]:
+def _metadata(*, name: str, tenant: str | None = None) -> dict[str, str]:
     meta: dict[str, str] = {"name": name}
     if tenant:
         meta["tenant"] = tenant
-    if project:
-        meta["project"] = project
     return meta
 
 
@@ -112,17 +110,10 @@ class GRPCClient:
 
     # VirtualNetwork operations
 
-    def create_virtual_network(
-        self, *, name: str, ipv4_cidr: str, tenant: str | None = None, project: str | None = None
-    ) -> str:
+    def create_virtual_network(self, *, name: str, ipv4_cidr: str, tenant: str | None = None) -> str:
         response: dict[str, Any] = self.call(
             service=f"{PUBLIC_API}.VirtualNetworks/Create",
-            data={
-                "object": {
-                    "metadata": _metadata(name=name, tenant=tenant, project=project),
-                    "spec": {"ipv4_cidr": ipv4_cidr},
-                }
-            },
+            data={"object": {"metadata": _metadata(name=name, tenant=tenant), "spec": {"ipv4_cidr": ipv4_cidr}}},
         )
         return response["object"]["id"]
 
@@ -138,14 +129,12 @@ class GRPCClient:
 
     # Subnet operations
 
-    def create_subnet(
-        self, *, name: str, virtual_network: str, ipv4_cidr: str, tenant: str | None = None, project: str | None = None
-    ) -> str:
+    def create_subnet(self, *, name: str, virtual_network: str, ipv4_cidr: str, tenant: str | None = None) -> str:
         response: dict[str, Any] = self.call(
             service=f"{PUBLIC_API}.Subnets/Create",
             data={
                 "object": {
-                    "metadata": _metadata(name=name, tenant=tenant, project=project),
+                    "metadata": _metadata(name=name, tenant=tenant),
                     "spec": {"virtual_network": {"id": virtual_network}, "ipv4_cidr": ipv4_cidr},
                 }
             },
@@ -209,7 +198,6 @@ class GRPCClient:
         ingress: list[dict[str, Any]] | None = None,
         egress: list[dict[str, Any]] | None = None,
         tenant: str | None = None,
-        project: str | None = None,
     ) -> str:
         spec: dict[str, Any] = {"virtual_network": {"id": virtual_network}}
         if ingress is not None:
@@ -218,7 +206,7 @@ class GRPCClient:
             spec["egress"] = egress
         response: dict[str, Any] = self.call(
             service=f"{PUBLIC_API}.SecurityGroups/Create",
-            data={"object": {"metadata": _metadata(name=name, tenant=tenant, project=project), "spec": spec}},
+            data={"object": {"metadata": _metadata(name=name, tenant=tenant), "spec": spec}},
         )
         return response["object"]["id"]
 
@@ -297,21 +285,10 @@ class GRPCClient:
 
     # ExternalIPPool operations (private API only)
 
-    def create_external_ip_pool(
-        self, *, name: str, cidrs: list[str], ip_family: str = "IP_FAMILY_IPV4", implementation_strategy: str = ""
-    ) -> str:
+    def create_external_ip_pool(self, *, name: str, cidrs: list[str], ip_family: str = "IP_FAMILY_IPV4") -> str:
         response: dict[str, Any] = self.call(
             service=f"{PRIVATE_API}.ExternalIPPools/Create",
-            data={
-                "object": {
-                    "metadata": {"name": name},
-                    "spec": {
-                        "cidrs": cidrs,
-                        "ip_family": ip_family,
-                        "implementation_strategy": implementation_strategy,
-                    },
-                }
-            },
+            data={"object": {"metadata": {"name": name}, "spec": {"cidrs": cidrs, "ip_family": ip_family}}},
         )
         return response["object"]["id"]
 
@@ -327,15 +304,10 @@ class GRPCClient:
 
     # ExternalIP operations (public API)
 
-    def create_external_ip(self, *, name: str, pool: str, tenant: str | None = None, project: str | None = None) -> str:
+    def create_external_ip(self, *, name: str, pool: str, tenant: str | None = None) -> str:
         response: dict[str, Any] = self.call(
             service=f"{PUBLIC_API}.ExternalIPs/Create",
-            data={
-                "object": {
-                    "metadata": _metadata(name=name, tenant=tenant, project=project),
-                    "spec": {"pool": {"id": pool}},
-                }
-            },
+            data={"object": {"metadata": _metadata(name=name, tenant=tenant), "spec": {"pool": {"id": pool}}}},
         )
         return response["object"]["id"]
 
@@ -987,13 +959,6 @@ class GRPCClient:
     def list_network_classes(self) -> list[dict[str, Any]]:
         response: dict[str, Any] = self.call(service=f"{PRIVATE_API}.NetworkClasses/List")
         return response.get("items", [])
-
-    def update_network_class(self, *, network_class_id: str, **fields: Any) -> dict[str, Any]:  # noqa: ANN401
-        if not fields:
-            raise ValueError("update_network_class requires at least one field to update")
-        obj: dict[str, Any] = {"id": network_class_id, **fields}
-        data: dict[str, Any] = {"object": obj, "updateMask": {"paths": list(fields.keys())}}
-        return self.call(service=f"{PRIVATE_API}.NetworkClasses/Update", data=data)
 
     # StorageTier operations (private API)
 

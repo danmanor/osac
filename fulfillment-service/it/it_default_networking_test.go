@@ -15,7 +15,6 @@ package it
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,10 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/osac-project/osac/fulfillment-service/internal/auth"
-	"github.com/osac-project/osac/fulfillment-service/internal/controllers/defaultnetworking"
 	"github.com/osac-project/osac/fulfillment-service/internal/kubernetes/labels"
-	"github.com/osac-project/osac/fulfillment-service/internal/oauth"
 	"github.com/osac-project/osac/fulfillment-service/internal/uuid"
 	osacv1alpha1 "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -214,7 +210,13 @@ var _ = Describe("Default networking provisioning", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 
-		By("Waiting for DefaultNetworkingReady=True/AllResourcesReady")
+		// With provider networking disabled (the CI deployment) there is no default ExternalIP or NATGateway,
+		// and the condition reports reason ProvisioningDisabled.
+		expectedReason := "AllResourcesReady"
+		if !ndProviderNetworkingEnabled(ctx) {
+			expectedReason = "ProvisioningDisabled"
+		}
+		By("Waiting for DefaultNetworkingReady=True/" + expectedReason)
 		Eventually(func(g Gomega) {
 			resp, err := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantId}.Build())
 			g.Expect(err).ToNot(HaveOccurred())
@@ -223,20 +225,12 @@ var _ = Describe("Default networking provisioning", func() {
 			g.Expect(cond).ToNot(BeNil())
 			g.Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
 			g.Expect(cond.HasReason()).To(BeTrue())
-			g.Expect(cond.GetReason()).To(Equal("AllResourcesReady"))
+			g.Expect(cond.GetReason()).To(Equal(expectedReason))
 		}, time.Minute, time.Second).Should(Succeed())
 	})
 
 	It("waits for every default networking dependency before creating NAT and reporting ready", func(ctx context.Context) {
-		By("Enabling NAT on the singleton NetworkClass")
-		ncResponse, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: networkClassId}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		nc := ncResponse.GetObject()
-		nc.GetSpec().GetDefaults().SetEnableNatGateway(true)
-		_, err = networkClassesClient.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
-			Object: nc, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.defaults"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		ndSkipUnlessProviderNetworkingEnabled(ctx, "the default ExternalIP and NATGateway")
 		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
 
 		poolsClient := privatev1.NewExternalIPPoolsClient(tool.InternalView().AdminConn())
@@ -244,7 +238,7 @@ var _ = Describe("Default networking provisioning", func() {
 		natGatewaysClient := privatev1.NewNATGatewaysClient(tool.InternalView().AdminConn())
 		poolID := fmt.Sprintf("test-default-nat-pool-%s", uuid.New())
 		var tenantID string
-		_, err = poolsClient.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
+		_, err := poolsClient.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
 			Object: privatev1.ExternalIPPool_builder{
 				Id: poolID,
 				Metadata: privatev1.Metadata_builder{
@@ -498,33 +492,6 @@ var _ = Describe("Default networking provisioning", func() {
 		}, 5*time.Second, time.Second).Should(Succeed())
 	})
 
-	It("sets DefaultNetworkingReady=True/NoDefaultNetworking when no default NetworkClass has defaults", func(ctx context.Context) {
-		Expect(cleanupDefaultNetworkingForAllTenants(ctx, networkClassId)).To(Succeed())
-		_, err := networkClassesClient.Delete(ctx, privatev1.NetworkClassesDeleteRequest_builder{
-			Id: networkClassId,
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		networkClassId = ""
-
-		tenantName := fmt.Sprintf("test-nodefnet-%s", uuid.New())
-
-		By("Creating tenant and waiting for SYNCED")
-		tenantId := createTenant(ctx, tenantsClient, tenantName)
-		waitForTenantSynced(ctx, tenantsClient, tenantId)
-
-		By("Waiting for DefaultNetworkingReady=True/NoDefaultNetworking")
-		Eventually(func(g Gomega) {
-			resp, err := tenantsClient.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenantId}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			cond := findTenantCondition(resp.GetObject().GetStatus().GetConditions(),
-				privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY)
-			g.Expect(cond).ToNot(BeNil())
-			g.Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
-			g.Expect(cond.HasReason()).To(BeTrue())
-			g.Expect(cond.GetReason()).To(Equal("NoDefaultNetworking"))
-		}, time.Minute, time.Second).Should(Succeed())
-	})
-
 	It("rejects Delete and default-label removal for system-managed VN/Subnet/SG", func(ctx context.Context) {
 		tenantName := fmt.Sprintf("test-defnet-protect-%s", uuid.New())
 
@@ -710,120 +677,16 @@ func createDefaultNetworkClass(
 	virtualNetworkCIDR string,
 	subnetCIDR string,
 ) string {
-	response, err := client.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-		Object: privatev1.NetworkClass_builder{
-			Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("%s-%s", namePrefix, uuid.New())}.Build(),
-			Title:         title,
-			FabricManager: new("cudn_net"),
-			K8SManager:    new(testVMK8SManagerName),
-			Spec: privatev1.NetworkClassSpec_builder{
-				Defaults: privatev1.NetworkDefaults_builder{
-					VirtualNetworkIpv4Cidr: virtualNetworkCIDR,
-					SubnetIpv4Cidr:         subnetCIDR,
-				}.Build(),
-			}.Build(),
-		}.Build(),
-	}.Build())
+	response, err := sharedNetworkClass(ctx, client)
 	Expect(err).ToNot(HaveOccurred())
 	return response.GetObject().GetId()
 }
 
-// cleanupDefaultNetworkingForAllTenants removes controller-owned default
-// resources created while the test NetworkClass was active. The integration
-// service starts with persistent test tenants, so deleting only the tenant
-// created by an individual spec leaves other VirtualNetworks referencing the
-// singleton NetworkClass.
-func cleanupDefaultNetworkingForAllTenants(ctx context.Context, networkClassID string) error {
-	// Stop the tenant controller from recreating defaults while this fixture is
-	// being torn down. It reconciles every synced tenant while the NetworkClass
-	// still contains defaults, so deleting resources first races with Ensure.
-	if networkClassID != "" {
-		networkClassesClient := privatev1.NewNetworkClassesClient(tool.InternalView().AdminConn())
-		for attempt := 0; attempt < 5; attempt++ {
-			response, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{
-				Id: networkClassID,
-			}.Build())
-			if err != nil {
-				return fmt.Errorf("get NetworkClass %q before default networking cleanup: %w", networkClassID, err)
-			}
-			networkClass := response.GetObject()
-			if !networkClass.GetSpec().HasDefaults() {
-				break
-			}
-			networkClass.GetSpec().SetDefaults(nil)
-			_, err = networkClassesClient.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
-				Object:     networkClass,
-				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.defaults"}},
-				Lock:       true,
-			}.Build())
-			if err == nil {
-				break
-			}
-			if grpcstatus.Code(err) != grpccodes.Aborted || attempt == 4 {
-				return fmt.Errorf("disable NetworkClass %q defaults before cleanup: %w", networkClassID, err)
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-
-	store, err := auth.NewMemoryTokenStore().SetLogger(logger).Build()
-	if err != nil {
-		return fmt.Errorf("create controller token store: %w", err)
-	}
-	tokenSource, err := oauth.NewTokenSource().
-		SetLogger(logger).
-		SetStore(store).
-		SetCaPool(tool.caPool).
-		SetIssuer(fmt.Sprintf("https://%s/realms/osac", keycloakAddr)).
-		SetFlow(oauth.CredentialsFlow).
-		SetClientId(controllerClientId).
-		SetClientSecret(tool.Secret()).
-		SetScopes("openid", "organization").
-		Build()
-	if err != nil {
-		return fmt.Errorf("create controller token source: %w", err)
-	}
-	controllerConn, err := tool.makeGrpcConn(internalServiceAddr, tokenSource)
-	if err != nil {
-		return fmt.Errorf("connect as fulfillment controller: %w", err)
-	}
-	defer controllerConn.Close()
-
-	manager, err := defaultnetworking.NewManager().SetLogger(logger).SetConnection(controllerConn).Build()
-	if err != nil {
-		return fmt.Errorf("build default networking manager: %w", err)
-	}
-	tenantsClient := privatev1.NewTenantsClient(tool.InternalView().AdminConn())
-	tenants, err := tenantsClient.List(ctx, privatev1.TenantsListRequest_builder{}.Build())
-	if err != nil {
-		return fmt.Errorf("list tenants for default networking cleanup: %w", err)
-	}
-
-	for _, tenant := range tenants.GetItems() {
-		tenantName := tenant.GetMetadata().GetName()
-		cleanupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		ticker := time.NewTicker(time.Second)
-		for {
-			err = manager.Delete(cleanupCtx, tenantName)
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, defaultnetworking.ErrResourcesDeleting) {
-				cancel()
-				ticker.Stop()
-				return fmt.Errorf("delete default networking for tenant %q: %w", tenantName, err)
-			}
-			select {
-			case <-cleanupCtx.Done():
-				cancel()
-				ticker.Stop()
-				return fmt.Errorf("wait for default networking deletion for tenant %q: %w", tenantName, cleanupCtx.Err())
-			case <-ticker.C:
-			}
-		}
-		cancel()
-		ticker.Stop()
-	}
+// cleanupDefaultNetworkingForAllTenants used to remove the default networking of every tenant before a spec deleted
+// its NetworkClass. The NetworkClass is now the installer's deployment singleton, which the specs never delete, its
+// defaults are immutable, and tenant default networking belongs to the tenant: deleting a tenant removes its defaults.
+// It is kept as a no-op so the fixtures that registered it stay correct.
+func cleanupDefaultNetworkingForAllTenants(context.Context, string) error {
 	return nil
 }
 

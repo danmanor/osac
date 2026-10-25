@@ -175,7 +175,7 @@ func parseSecurityRule(ruleArg string) (*publicv1.SecurityRule, error) {
 	var protocol publicv1.Protocol
 	var protocolSet bool
 	var portFrom, portTo *int32
-	var ipv4Cidr, ipv6Cidr *string
+	var ipv4Cidr *string
 
 	for _, pair := range pairs {
 		parts := strings.SplitN(pair, "=", 2)
@@ -219,15 +219,6 @@ func parseSecurityRule(ruleArg string) (*publicv1.SecurityRule, error) {
 				return nil, fmt.Errorf("invalid ipv4-cidr %q: address is not IPv4", value)
 			}
 			ipv4Cidr = &value
-		case "ipv6-cidr":
-			prefix, err := netip.ParsePrefix(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid ipv6-cidr %q: %w", value, err)
-			}
-			if !prefix.Addr().Is6() {
-				return nil, fmt.Errorf("invalid ipv6-cidr %q: address is not IPv6", value)
-			}
-			ipv6Cidr = &value
 		default:
 			return nil, fmt.Errorf("unknown key %q in rule", key)
 		}
@@ -250,7 +241,6 @@ func parseSecurityRule(ruleArg string) (*publicv1.SecurityRule, error) {
 		PortFrom: portFrom,
 		PortTo:   portTo,
 		Ipv4Cidr: ipv4Cidr,
-		Ipv6Cidr: ipv6Cidr,
 	}.Build(), nil
 }
 

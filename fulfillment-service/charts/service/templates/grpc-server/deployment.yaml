@@ -217,6 +217,7 @@ spec:
         {{- if include "fulfillment-service.serviceEnabled" (list . "maas") }}
         - --enable-maas
         {{- end }}
+        {{- include "fulfillment-service.networkingArgs" . | nindent 8 }}
         - --vault-endpoint={{ $vaultEndpoint }}
         - --vault-namespace={{ $vaultNamespace }}
         - --vault-kv-mount-path={{ $vaultKVMountPath }}

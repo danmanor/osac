@@ -609,11 +609,11 @@ var _ = Describe("ClusterOrder Integration Tests", func() {
 
 			// A status write that leaves the phase unchanged keeps the stamp.
 			computed := instance.Status.DeepCopy()
-			computed.ApiEndpoint = "192.0.2.10"
+			computed.DesiredConfigVersion = "changed"
 			_, err = reconciler.patchStatusWithRetry(ctx, nn, *computed)
 			Expect(err).NotTo(HaveOccurred())
 			instance = getClusterOrder(name)
-			Expect(instance.Status.ApiEndpoint).To(Equal("192.0.2.10"))
+			Expect(instance.Status.DesiredConfigVersion).To(Equal("changed"))
 			Expect(instance.Status.PhaseTransitionTime.Time).To(Equal(firstStamp))
 
 			// A phase change moves it. The CR stores whole seconds, so wait past the
