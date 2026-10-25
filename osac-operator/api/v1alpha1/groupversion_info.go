@@ -46,8 +46,6 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&TenantList{},
 		&Subnet{},
 		&SubnetList{},
-		&NetworkSegmentClaim{},
-		&NetworkSegmentClaimList{},
 		&VirtualNetwork{},
 		&VirtualNetworkList{},
 		&SecurityGroup{},

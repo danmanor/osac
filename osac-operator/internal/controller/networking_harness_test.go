@@ -192,7 +192,6 @@ type netHarness struct {
 	ns     string
 	aap    *netFakeAAP
 	engine *networktask.Engine
-	claims *networktask.SegmentClaimIndex
 }
 
 func newNetHarness(enabled bool) *netHarness {
@@ -201,8 +200,6 @@ func newNetHarness(enabled bool) *netHarness {
 	h.engine = networktask.New(k8sClient, k8sClient, h.aap, networktask.Config{
 		TemplatePrefix: "osac", Organization: "osac", ProvisioningEnabled: enabled,
 	})
-	h.claims = networktask.NewSegmentClaimIndex(k8sClient, subnetNamespaceReader{k8sClient, h.ns}, h.ns)
-	Expect(h.claims.Bootstrap(ctx)).To(Succeed())
 	return h
 }
 
@@ -350,17 +347,4 @@ func path(m map[string]any, keys ...string) any {
 // deleteNet deletes a networking CR (it keeps finalizers, so it stays while deleting).
 func deleteNet(obj client.Object) {
 	Expect(k8sClient.Delete(ctx, obj)).To(Succeed())
-}
-
-// Scope upgrade inventory to the harness, whose namespace owns its fixtures.
-type subnetNamespaceReader struct {
-	client.Reader
-	namespace string
-}
-
-func (r subnetNamespaceReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	if _, ok := list.(*v1alpha1.SubnetList); ok {
-		opts = append(opts, client.InNamespace(r.namespace))
-	}
-	return r.Reader.List(ctx, list, opts...)
 }

@@ -87,8 +87,6 @@ var _ = Describe("Deployed operator networking RBAC (SubjectAccessReview)", Labe
 			// The NetworkAttachment controller watches BareMetalInstances (BMaaS targets).
 			osac("baremetalinstances", "", "get", "list", "watch"),
 			osac("computeinstances", "", "get", "list", "watch"),
-			// Segment claims are private coordination state in the operator namespace.
-			osac("networksegmentclaims", "", "get", "list", "create", "update", "delete"),
 			osac("fabricdomains", "", "get", "list", "watch", "update", "patch"),
 			osac("fabricdomains", "status", "get", "update", "patch"),
 			osac("fabricdomains", "finalizers", "update"),
@@ -107,24 +105,6 @@ var _ = Describe("Deployed operator networking RBAC (SubjectAccessReview)", Labe
 				Expect(allowed).To(BeTrue(), "%s must be allowed to %s %s/%s in %s: %s",
 					identity, verb, p.resource, p.subresource, operatorNamespace, reason)
 			}
-		}
-
-		By("keeping segment claims limited to the operator namespace and required verbs")
-		otherNamespace := "default"
-		if operatorNamespace == otherNamespace {
-			otherNamespace = "kube-system"
-		}
-		for _, check := range []struct{ user, namespace, verb string }{
-			{identity, otherNamespace, "get"},
-			{identity, otherNamespace, "create"},
-			{identity, operatorNamespace, "patch"},
-			{identity, operatorNamespace, "watch"},
-			{"system:serviceaccount:default:default", operatorNamespace, "get"},
-		} {
-			allowed, reason := subjectAccessReview(check.user, check.namespace, "osac.openshift.io",
-				"networksegmentclaims", "", check.verb)
-			Expect(allowed).To(BeFalse(), "%s must not be allowed to %s segment claims in %s: %s",
-				check.user, check.verb, check.namespace, reason)
 		}
 
 		By("checking that the operator cannot create or delete NetworkClasses (the fulfillment reconciler owns them)")

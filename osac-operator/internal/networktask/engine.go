@@ -36,6 +36,9 @@ import (
 	"github.com/osac-project/osac/osac-operator/pkg/aap"
 )
 
+// VirtualNetworkIDLabel indexes Subnets that share a VirtualNetwork task slot.
+const VirtualNetworkIDLabel = "osac.openshift.io/virtual-network-id"
+
 // AAP job statuses.
 const (
 	aapNew        = "new"
@@ -574,12 +577,6 @@ func (e *Engine) succeed(ctx context.Context, obj v1alpha1.NetworkTaskObject, re
 		entry.State = v1alpha1.NetworkJobStateSucceeded
 		entry.Message = ""
 		return e.write(ctx, obj, entry, 0)
-	case errors.Is(err, ErrWaitForDelete):
-		if entry.Message == ErrWaitForDelete.Error() {
-			return Outcome{Entry: entry, RequeueAfter: e.cfg.PollInterval}, nil
-		}
-		entry.Message = ErrWaitForDelete.Error()
-		return e.write(ctx, obj, entry, e.cfg.PollInterval)
 	case errors.As(err, &reject):
 		message := fmt.Sprintf("OSAC rejected the %s result: %s", req.Task, reject.Reason)
 		return e.fail(ctx, obj, req, entry, false, message)
