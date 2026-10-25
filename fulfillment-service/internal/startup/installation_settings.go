@@ -30,7 +30,7 @@ import (
 const (
 	ProvisioningChangedMessage = "global.networking.provisioningEnabled cannot change after installation; " +
 		"reinstall to change it"
-	ServicesEnabledMessage = "enabling BMaaS or CaaS after networking resources exist is not supported in this " +
+	ServicesEnabledMessage = "Enabling BMaaS or CaaS after networking resources exist is not supported in this " +
 		"release; delete every VirtualNetwork or reinstall"
 	ReleaseChangedMessage = "in-place upgrade or downgrade between minor releases is not supported; delete all " +
 		"workloads and networking resources or reinstall"
@@ -120,7 +120,7 @@ func CheckInstallationSettings(ctx context.Context, logger *slog.Logger, db Quer
 			return err
 		}
 		if exists {
-			return errors.New(ServicesEnabledMessage)
+			return errors.New(ServicesEnabledMessage) //nolint:staticcheck // ST1005: exact design text
 		}
 	}
 

@@ -348,7 +348,7 @@ func (e *Engine) launchJob(ctx context.Context, obj v1alpha1.NetworkTaskObject, 
 	if template == "" {
 		template = TemplateName(e.cfg.TemplatePrefix, req.Task)
 	}
-	vars := make(map[string]any, len(req.Vars)+2)
+	vars := make(map[string]any)
 	for k, v := range req.Vars {
 		vars[k] = v
 	}
@@ -525,8 +525,8 @@ func (e *Engine) cancelJob(ctx context.Context, jobID string) {
 }
 
 func isTimeout(job *aap.Job) bool {
-	return strings.Contains(strings.ToLower(job.JobExplanation), "timeout") ||
-		strings.Contains(strings.ToLower(job.JobExplanation), "timed out")
+	// AAP sets this explanation when a job exceeds its template timeout.
+	return strings.Contains(job.JobExplanation, "Job terminated due to timeout")
 }
 
 // resolveByLabel finds the job of an attempt by its label: it returns the

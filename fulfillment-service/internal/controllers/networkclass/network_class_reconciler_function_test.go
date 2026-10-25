@@ -131,6 +131,38 @@ var _ = Describe("NetworkClass reconciler", func() {
 		Expect(client.updates).To(BeEmpty())
 	})
 
+	It("keeps a READY NetworkClass READY when the hub resolution fails", func() {
+		resolver := &fakeNetworkClassHubResolver{
+			result: controllers.NetworkingHubResolution{
+				State:   privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+				Message: "no networking hub is available",
+			},
+		}
+		client := &fakeNetworkClassStatusClient{}
+		reconcile, err := NewFunction().
+			SetLogger(logger).
+			SetResolver(resolver).
+			SetNetworkClassesClient(client).
+			Build()
+		Expect(err).ToNot(HaveOccurred())
+
+		networkClass := privatev1.NetworkClass_builder{
+			Id:       "nc-a",
+			Metadata: withFinalizer(),
+			Status: privatev1.NetworkClassStatus_builder{
+				Hub:   "hub-a",
+				State: privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			}.Build(),
+		}.Build()
+
+		Expect(reconcile(context.Background(), networkClass)).To(Succeed())
+		Expect(client.updates).To(HaveLen(1))
+		status := client.updates[0].GetObject().GetStatus()
+		Expect(status.GetState()).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY),
+			"the operator resolves a READY NetworkClass only once")
+		Expect(status.GetMessage()).To(Equal("no networking hub is available"))
+	})
+
 	It("adds the controller finalizer before anything else", func() {
 		resolver := &fakeNetworkClassHubResolver{}
 		client := &fakeNetworkClassStatusClient{}
@@ -283,7 +315,7 @@ var _ = Describe("NetworkClass reconciler", func() {
 		Expect(reconcile(context.Background(), networkClass)).To(MatchError(controllers.ErrNoNetworkingHubs))
 		Expect(client.updates).To(HaveLen(1))
 		Expect(client.updates[0].GetObject().GetStatus().GetState()).To(
-			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING))
+			Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY), "READY is never downgraded")
 		Expect(client.updates[0].GetObject().GetStatus().GetHub()).To(BeEmpty())
 		Expect(client.updates[0].GetObject().GetStatus().GetMessage()).To(
 			Equal("expected exactly one active networking hub, found none"))

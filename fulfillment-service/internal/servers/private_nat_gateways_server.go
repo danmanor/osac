@@ -224,6 +224,13 @@ func (s *PrivateNATGatewaysServer) prepareCreate(ctx context.Context, natGateway
 		Id: virtualNetwork.GetId(),
 	}.Build())
 
+	// Only the system creates the NATGateway of a tenant default VirtualNetwork. This check runs first, so the
+	// code doesn't depend on whether onboarding already created it.
+	defaultGateway := isDefaultNATGateway(ctx, metadata)
+	if virtualNetwork.GetMetadata().GetLabels()[defaultLabel] == "true" && !defaultGateway {
+		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
+			"VirtualNetwork '%s' is a tenant default; only the system creates its NATGateway", virtualNetwork.GetId())
+	}
 	// The VirtualNetwork has no NATGateway, also not one being deleted. The check runs under the VirtualNetwork lock.
 	count, firstID, err := countRecords(ctx, s.guards.natGateways,
 		fmt.Sprintf("this.spec.virtual_network.id == %q", virtualNetwork.GetId()))
@@ -233,11 +240,6 @@ func (s *PrivateNATGatewaysServer) prepareCreate(ctx context.Context, natGateway
 	if count > 0 {
 		return grpcstatus.Errorf(grpccodes.AlreadyExists,
 			"VirtualNetwork '%s' already has NATGateway '%s'", virtualNetwork.GetId(), firstID)
-	}
-	defaultGateway := isDefaultNATGateway(ctx, metadata)
-	if virtualNetwork.GetMetadata().GetLabels()[defaultLabel] == "true" && !defaultGateway {
-		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
-			"VirtualNetwork '%s' is a tenant default; only the system creates its NATGateway", virtualNetwork.GetId())
 	}
 
 	externalIPKey := refKey(natGateway.GetSpec().GetExternalIp())

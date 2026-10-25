@@ -243,6 +243,8 @@ func TestParseVMAttachment(t *testing.T) {
 	}
 	_, err := ParseVMAttachment(ctx, reader, result(t, `{"vm_attachment":{"namespace":"osac-net-1"}}`), "tenant-b")
 	expectReject(t, err, "vm_attachment namespace osac-net-1 is not labelled osac.openshift.io/tenant with the tenant")
+	_, err = ParseVMAttachment(ctx, reader, result(t, `{"vm_attachment":{"namespace":"unlabelled"}}`), "")
+	expectReject(t, err, "the NetworkAttachment has no tenant")
 }
 
 func TestSnapshotAndInput(t *testing.T) {
