@@ -1,10 +1,11 @@
 # CUDN EVPN/Netris VMaaS + BMaaS E2E profile -- complete OSAC instance values.
 #
 # This profile is intentionally opt-in. It assumes that the cluster has the
-# Phase 1 IPv4 EVPN/BGP/VTEP prerequisites, an EVPN FRRConfiguration, and the
-# cudn_evpn implementation installed or otherwise available. The installer
-# registers the managers and selects them for the default NetworkClass; it does
-# not create the FRRConfiguration or external EVPN fabric.
+# Phase 1 IPv4 EVPN/BGP/VTEP prerequisites, an EVPN FRRConfiguration, and a
+# reachable Netris controller. Provider networking is enabled: the NetworkClass
+# uses the Netris Fabric Manager (fabric-registration.yaml, applied after
+# install) and the OSAC cudn_evpn Kubernetes Manager. Site-specific settings
+# and the Netris password come from a private values file (see README.md).
 
 # --- Service Enablement ---
 global:
@@ -12,21 +13,11 @@ global:
   fulfillmentTrust:
     enabled: false
   networking:
-    # Netris remains the AAP/fabric backend. The profile's expert NetworkClass
-    # below additionally selects cudn_evpn as the Kubernetes manager.
-    fabricManager: "netris"
-    k8sManager: ""
-    netris:
-      controllerUrl: "https://redhat-ctl.netris.io"
-      validateCerts: false
-      credentials:
-        username: "netris"
-        externalSecret: true
-      siteId: "5"
-      tenantId: "1"
-      tenantName: "Admin"
-  expertOverrides:
-    networkClass: true
+    provisioningEnabled: true
+    fabricManager: netris
+    k8sManager: cudn_evpn
+    # excludedIpv4Cidrs (management, provisioning and node networks, and the
+    # DNS resolvers) is site-specific: set it in the private values file.
   services:
     caas:
       enabled: false
@@ -57,26 +48,7 @@ operator:
   controllers:
     tenant: true
     networking: true
-    networkingProvisioning: true
     storage: true
-  networkManagers:
-    enabled: true
-    fabricManagers:
-      cudn_net:
-        enabled: false
-      netris:
-        enabled: true
-        description: "Netris SDN fabric manager"
-        capabilities:
-        - ipv4
-    k8sManagers:
-      k8s_only:
-        enabled: false
-      cudn_evpn:
-        enabled: true
-        description: "OVN EVPN k8s manager for VM-to-fabric bridging (Phase 1: IPv4-only)"
-        capabilities:
-        - ipv4
   hubAccess:
     enabled: true
   tenants:
@@ -181,33 +153,29 @@ aap:
     clusterFulfillment:
       enabled: true
       config:
-        NETWORK_CLASS: "netris"
-        NETWORK_STEPS_COLLECTION: "netris.steps"
         HOSTED_CLUSTER_CONTROLLER_AVAILABILITY_POLICY: "SingleReplica"
         HOSTED_CLUSTER_INFRASTRUCTURE_AVAILABILITY_POLICY: "SingleReplica"
+    # Settings of the Netris Fabric Manager and the cudn_evpn Kubernetes
+    # Manager (ConfigMap network-fulfillment-ig). The remaining site-specific
+    # settings (NETRIS_VNI_RANGE, NETRIS_HUB_AS, NETRIS_DNS_RESOLVERS,
+    # NETRIS_DNS_SNAT_CIDR, NETRIS_DHCP_OPTION_SET_ID, NETRIS_PROVISIONING_VNET,
+    # CUDN_EVPN_DNS_RESOLVERS, ...) and secret.NETRIS_PASSWORD come from the
+    # private values file.
     networkFulfillment:
       enabled: true
-      config: {}
-
-# --- EVPN NetworkClass selection ---
-# The two manager names must match the operator registrations above. This is
-# the only profile that selects cudn_evpn; normal profiles retain their values.
-networkClass:
-  enabled: true
-  title: "CUDN EVPN with Netris"
-  description: >-
-    Provisions IPv4 networking through the CUDN EVPN k8s manager and the Netris
-    physical fabric manager.
-  k8sManager: "cudn_evpn"
-  fabricManager: "netris"
-  isDefault: true
+      config:
+        NETRIS_CONTROLLER_URL: "https://redhat-ctl.netris.io"
+        NETRIS_VALIDATE_CERTS: "false"
+        NETRIS_USERNAME: "netris"
+        NETRIS_SITE_ID: "5"
+        NETRIS_TENANT_ID: "1"
 
 # --- Validation ---
 validation:
   enabled: true
 
 # --- Bare Metal Fulfillment Operator ---
-# VMaaS and BMaaS share the EVPN/Netris NetworkClass. The target cluster must
+# VMaaS and BMaaS share the NetworkClass. The target cluster must
 # provide Metal3/BareMetalHost inventory for the BMaaS side of the E2E test.
 bmf:
   image:
@@ -217,7 +185,6 @@ bmf:
   env:
     aapUrl: "http://osac-aap/api/controller"
     aapInsecureSkipVerify: "true"
-    enableNetworkingProvisioning: "true"
   metal3:
     enabled: true
     namespace: host-inventory

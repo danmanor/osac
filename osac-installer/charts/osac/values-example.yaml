@@ -26,8 +26,8 @@ global:
     # [REQUIRED] Name in the provider's Fabric Manager registration ConfigMap,
     # which the admin applies to the release namespace.
     fabricManager: ""
-    # Kubernetes Manager registration name, required with VMaaS.
-    k8sManager: example_k8s
+    # cudn_evpn, required with VMaaS.
+    k8sManager: cudn_evpn
     networkClass:
       defaults:
         virtualNetworkIPv4CIDR: 10.200.0.0/16
@@ -352,7 +352,12 @@ aap:
     networkFulfillment:
       enabled: true
       config: {}
+      # config:
+      #   NETRIS_CONTROLLER_URL: "https://netris.example.com"
+      #   CUDN_EVPN_DNS_RESOLVERS: "192.0.2.53"
       secret: {}
+      # secret:
+      #   NETRIS_PASSWORD: ""
     publishTemplates:
       enabled: true
       config:

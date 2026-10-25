@@ -81,10 +81,7 @@ address as an integer, the prefix length, and whether the host bits are zero.
   {{- fail "global.networking.fabricManager is required: set it to the name in the Fabric Manager registration" -}}
 {{- end -}}
 {{- if and $services.vmaas (not $networking.k8sManager) -}}
-  {{- fail "global.networking.k8sManager is required when VMaaS is enabled; set a registered Kubernetes Manager name" -}}
-{{- end -}}
-{{- if and $services.caas (not $services.bmaas) -}}
-  {{- fail "CaaS requires BMaaS: set global.services.bmaas.enabled=true" -}}
+  {{- fail "global.networking.k8sManager is required when VMaaS is enabled (set cudn_evpn)" -}}
 {{- end -}}
 {{- if and $networking.provisioningEnabled (not .Values.aap.instanceGroups.networkFulfillment.enabled) -}}
   {{- fail "global.networking.provisioningEnabled requires aap.instanceGroups.networkFulfillment.enabled=true" -}}
@@ -169,6 +166,7 @@ address as an integer, the prefix length, and whether the host bits are zero.
 {{- $nc := $networking.networkClass -}}
 {{- $plan := include "osac.networking.addressPlan" . | fromJson -}}
 {{- $ew := $nc.eastWestCapabilities | default dict -}}
+{{- $nfConfig := .Values.aap.instanceGroups.networkFulfillment.config | default dict -}}
 {{- $input := dict
   "fabric_manager" $networking.fabricManager
   "k8s_manager" ($networking.k8sManager | default "")
@@ -183,6 +181,7 @@ address as an integer, the prefix length, and whether the host bits are zero.
   "services" (include "osac.networking.enabledServices" . | fromJson)
   "excluded_ipv4_cidrs" ($networking.excludedIpv4Cidrs | default list)
   "provisioning_enabled" $networking.provisioningEnabled
+  "cudn_evpn_dns_resolvers" (index $nfConfig "CUDN_EVPN_DNS_RESOLVERS" | default "")
 -}}
 {{- toJson $input -}}
 {{- end -}}

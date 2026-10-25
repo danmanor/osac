@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Render tests for the osac chart's networking values (global.networking).
 
-Covers the values schema, render-time validation, NetworkClass step input,
-admission policy, and networking values passed to the subcharts.
+Covers the values schema, the render-time validation messages, the NetworkClass
+step input, the cudn_evpn registration, the ValidatingAdmissionPolicy, and the
+networking values the subcharts receive.
 """
 
 from __future__ import annotations
@@ -110,15 +111,12 @@ class RenderFailureCase(unittest.TestCase):
         result = helm(*overrides, args=args)
         self.assertNotEqual(result.returncode, 0, f"rendered, expected failure containing {message!r}")
         if message == "missing properties":
-            individual_missing_properties = (
-                "fabric is required" in result.stderr and "lbVip is required" in result.stderr
-            )
-            grouped_missing_properties = (
-                "missing properties" in result.stderr
-                and "fabric" in result.stderr
-                and "lbVip" in result.stderr
-            )
-            self.assertTrue(individual_missing_properties or grouped_missing_properties, result.stderr)
+            # Helm 3: "missing properties 'fabric', 'lbVip'"; Helm 4: "<name> is required".
+            for name in ("fabric", "lbVip"):
+                self.assertTrue(
+                    f"'{name}'" in result.stderr or f"{name} is required" in result.stderr,
+                    f"expected {name} to be reported missing in {result.stderr!r}",
+                )
         elif message.startswith("/"):
             # Helm 3 reports dotted paths; Helm 4 reports JSON pointers.
             dotted_path = message.lstrip("/").replace("/", ".")
@@ -133,17 +131,15 @@ class RenderFailureCase(unittest.TestCase):
 class RemovedKeysTest(RenderFailureCase):
     def test_removed_keys_are_rejected(self):
         cases = {
-            "global.networking.legacyBackend": networking(legacyBackend={"name": "example"}),
+            "global.networking.netris": networking(netris={"controllerUrl": "https://netris.example.com"}),
             "top-level networkClass": {"networkClass": {"enabled": True}},
             "global.expertOverrides": {"global": {"expertOverrides": {"aap": True}}},
             "operator.controllers.networkingProvisioning": {
                 "operator": {"controllers": {"networkingProvisioning": False}}
             },
+            "operator.networkManagers": {"operator": {"networkManagers": {"enabled": True}}},
             "defaults.enableNatGateway": networking(networkClass={"defaults": {"enableNatGateway": True}}),
-            "NETWORK_STEPS_COLLECTION": {
-                "aap": {"instanceGroups": {"clusterFulfillment": {"config": {"NETWORK_STEPS_COLLECTION": "ci.steps"}}}}
-            },
-            "SERVER_SSH_KEY": {"aap": {"instanceGroups": {"clusterFulfillment": {"secret": {"SERVER_SSH_KEY": "x"}}}}},
+            "k8sManager k8s_only": networking(k8sManager="k8s_only"),
         }
         for name, override in cases.items():
             with self.subTest(name):
@@ -156,19 +152,12 @@ class ManagerRulesTest(RenderFailureCase):
         self.assert_fails("/global/networking/fabricManager", networking(fabricManager="Netris"))
 
     def test_k8s_manager_values(self):
-        self.assert_fails("/global/networking/k8sManager", networking(k8sManager="INVALID-MANAGER"))
+        self.assert_fails("/global/networking/k8sManager", networking(k8sManager="cudn_net"))
 
     def test_vmaas_needs_k8s_manager(self):
         self.assert_fails(
-            "global.networking.k8sManager is required when VMaaS is enabled; set a registered Kubernetes Manager name",
-            networking(k8sManager=""),
+            "global.networking.k8sManager is required when VMaaS is enabled (set cudn_evpn)", networking(k8sManager="")
         )
-
-    def test_caas_needs_bmaas(self):
-        result = helm(services(vmaas=True, bmaas=False, caas=True))
-        self.assertNotEqual(result.returncode, 0)
-        result = helm(services(vmaas=True, bmaas=False, caas=True), args=("--skip-schema-validation",))
-        self.assertIn("CaaS requires BMaaS: set global.services.bmaas.enabled=true", result.stderr)
 
     def test_provisioning_needs_network_fulfillment(self):
         self.assert_fails(
@@ -218,12 +207,12 @@ class AddressPlanTest(RenderFailureCase):
 
     def test_derived_plans(self):
         cases = [
-            ((True, True, True), "example_k8s", (0.5, 0.25, 0.25)),
-            ((True, True, False), "example_k8s", (0.5, 0.5, 0)),
-            ((True, False, False), "example_k8s", (0.75, 0.25, 0)),
-            ((False, True, True), "example_k8s", (0.5, 0.25, 0.25)),
-            ((False, True, False), "example_k8s", (0.5, 0.5, 0)),
-            ((False, False, False), "example_k8s", (0.75, 0.25, 0)),
+            ((True, True, True), "cudn_evpn", (0.5, 0.25, 0.25)),
+            ((True, True, False), "cudn_evpn", (0.5, 0.5, 0)),
+            ((True, False, False), "cudn_evpn", (0.75, 0.25, 0)),
+            ((False, True, True), "cudn_evpn", (0.5, 0.25, 0.25)),
+            ((False, True, False), "cudn_evpn", (0.5, 0.5, 0)),
+            ((False, False, False), "cudn_evpn", (0.75, 0.25, 0)),
             ((False, True, True), "", (0, 0.75, 0.25)),
             ((False, True, False), "", (0, 1, 0)),
             ((False, False, False), "", (0, 1, 0)),
@@ -323,12 +312,13 @@ class DefaultsTest(RenderFailureCase):
                     "eastWestCapabilities": {"supportsEastWestEthernet": True},
                 },
             ),
+            {"aap": {"instanceGroups": {"networkFulfillment": {"config": {"CUDN_EVPN_DNS_RESOLVERS": "192.0.2.53"}}}}},
         )
         self.assertEqual(
             step_input(docs),
             {
-                "fabric_manager": "example_fabric",
-                "k8s_manager": "example_k8s",
+                "fabric_manager": "netris",
+                "k8s_manager": "cudn_evpn",
                 "defaults": {
                     "virtual_network_ipv4_cidr": "10.200.0.0/16",
                     "subnet_ipv4_cidr": "10.200.0.0/20",
@@ -343,6 +333,7 @@ class DefaultsTest(RenderFailureCase):
                 "services": {"vmaas": True, "bmaas": True, "caas": True},
                 "excluded_ipv4_cidrs": ["192.0.2.0/24"],
                 "provisioning_enabled": True,
+                "cudn_evpn_dns_resolvers": "192.0.2.53",
             },
         )
         step_cm = find(docs, "ConfigMap", "network-class-step")
@@ -356,14 +347,26 @@ class DefaultsTest(RenderFailureCase):
 
 
 class ManifestsTest(unittest.TestCase):
-    def test_network_manager_registration_is_deferred_to_its_owner(self):
-        names = {
-            doc["data"].get("name")
-            for doc in render()
-            if doc["kind"] == "ConfigMap"
-            and (doc["metadata"].get("labels") or {}).get("osac.openshift.io/network-k8s-manager") == "true"
-        }
-        self.assertEqual(names, set())
+    def test_cudn_evpn_registration(self):
+        # The operator subchart renders the one cudn_evpn registration.
+        cms = [
+            d for d in render()
+            if d["kind"] == "ConfigMap"
+            and (d["metadata"].get("labels") or {}).get("osac.openshift.io/network-k8s-manager") == "true"
+        ]
+        self.assertEqual(len(cms), 1, [c["metadata"]["name"] for c in cms])
+        cm = cms[0]
+        self.assertTrue(cm["metadata"]["name"].startswith("osac-network-k8s-manager-cudn-evpn-"))
+        self.assertNotIn("osac.openshift.io/network-fabric-manager", cm["metadata"]["labels"])
+        self.assertIs(cm["immutable"], True)
+        self.assertEqual(cm["data"]["name"], "cudn_evpn")
+        self.assertEqual(cm["data"]["ansible_role"], "osac.templates.cudn_evpn")
+        self.assertEqual(cm["data"]["network_type"], "evpn")
+
+    def test_no_fabric_registration_from_helm(self):
+        for doc in render():
+            labels = doc.get("metadata", {}).get("labels") or {}
+            self.assertNotIn("osac.openshift.io/network-fabric-manager", labels, doc["metadata"]["name"])
 
     def test_admission_policy(self):
         docs = render()
@@ -388,6 +391,7 @@ class ManifestsTest(unittest.TestCase):
         for name in (
             "networkclasses",
             "networkattachments/status",
+            "networksegmentclaims",
             "subnets",
             "fabricdomains/status",
         ):
@@ -423,7 +427,6 @@ class AapSettingsTest(unittest.TestCase):
     def test_network_fulfillment_settings_written_verbatim(self):
         ca = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
         docs = render(
-            networking(fabricManager="acme"),
             {
                 "aap": {
                     "instanceGroups": {
@@ -441,8 +444,10 @@ class AapSettingsTest(unittest.TestCase):
         self.assertEqual(set(secret["data"]), {"ACME_FABRIC_TOKEN"})
         for doc in docs:
             if doc["kind"] in ("ConfigMap", "Secret"):
-                self.assertNotIn("NETWORK_CLASS", (doc.get("data") or {}))
-                self.assertNotIn("NETWORK_STEPS_COLLECTION", (doc.get("data") or {}))
+                self.assertFalse(
+                    any(key.startswith("NETRIS_") for key in (doc.get("data") or {})),
+                    f"{doc['kind']}/{doc['metadata']['name']} has derived NETRIS_ settings",
+                )
 
     def test_setting_names(self):
         result = helm({"aap": {"instanceGroups": {"networkFulfillment": {"config": {"lower_case": "x"}}}}})
@@ -490,9 +495,8 @@ class SubchartPlumbingTest(unittest.TestCase):
                     networking(provisioningEnabled=enabled, excludedIpv4Cidrs=["192.0.2.0/24", "198.51.100.0/24"])
                 )
                 value = str(enabled).lower()
-                # The BMF subchart still owns a separate legacy toggle; the
-                # shared setting reaches the core Operator and Fulfillment only.
                 self.assertEqual(self.deployment_env(docs, "osac-operator").get("OSAC_PROVISIONING_ENABLED"), value)
+                self.assertEqual(self.deployment_env(docs, "bmf").get("OSAC_PROVISIONING_ENABLED"), value)
                 args = self.fulfillment_args(docs)
                 self.assertIn(f"--networking-provisioning-enabled={value}", args)
                 self.assertIn("--networking-excluded-ipv4-cidrs=192.0.2.0/24,198.51.100.0/24", args)

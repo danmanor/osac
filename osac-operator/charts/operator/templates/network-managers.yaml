@@ -1,113 +1,21 @@
-{{/*
-Return a network manager ConfigMap name, failing the render if it collides with
-a name already generated for another configurable key (tracked via the "seen"
-dict passed in). Two distinct keys can normalize to the same name (e.g.
-"my-manager" and "my_manager"), which would otherwise silently overwrite one
-manager's ConfigMap with another's on apply. Kubernetes itself already rejects
-otherwise-invalid names at apply time, so that is not re-validated here.
-*/}}
-{{/*
-Format network manager capabilities for the ConfigMap data field.
-Accepts either a string (legacy) or an array of capability tokens.
-*/}}
-{{- define "osac-operator.networkManagerCapabilities" -}}
-{{- if kindIs "slice" . -}}
-{{- join "," . -}}
-{{- else -}}
-{{- . -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "osac-operator.networkManagerConfigMapName" -}}
-{{- $name := printf "%s-%s" .prefix (.key | replace "_" "-") -}}
-{{- if hasKey .seen $name -}}
-{{- fail (printf "networkManagers: keys %q and %q both normalize to ConfigMap name %q; rename one of them" (get .seen $name) .key $name) -}}
-{{- end -}}
-{{- $_ := set .seen $name .key -}}
-{{- $name -}}
-{{- end -}}
-
-{{- if .Values.networkManagers.enabled }}
-{{- $seenConfigMapNames := dict }}
-{{- $globalNetworking := dict -}}
-{{- if .Values.global }}
-{{- $globalNetworking = .Values.global.networking | default dict -}}
-{{- end }}
-{{- $fabricManager := $globalNetworking.fabricManager | default "" -}}
-{{- $k8sManager := "" -}}
-{{- if hasKey $globalNetworking "k8sManager" -}}
-{{- $k8sManager = $globalNetworking.k8sManager | default "" -}}
-{{- else if eq $fabricManager "" -}}
-{{- $k8sManager = "k8s_only" -}}
-{{- end -}}
-{{- $netrisEnabled := eq $fabricManager "netris" -}}
-{{- $agentlessStubEnabled := eq $fabricManager "agentless_net" -}}
-{{- $agentlessEnabled := eq $k8sManager "k8s_only" -}}
-{{- $netExpert := false -}}
-{{- if and .Values.global .Values.global.expertOverrides }}
-{{- $netExpert = .Values.global.expertOverrides.networkManagers | default false -}}
-{{- end }}
-{{- range $name, $mgr := .Values.networkManagers.fabricManagers }}
-{{- $mgrEnabled := $mgr.enabled -}}
-{{- if and (not $netExpert) $netrisEnabled (eq $name "netris") }}
-{{- $mgrEnabled = true -}}
-{{- end }}
-{{- if and (not $netExpert) $agentlessStubEnabled (eq $name "agentless_net") }}
-{{- $mgrEnabled = true -}}
-{{- end }}
-{{- if $mgrEnabled }}
-{{- $cmName := include "osac-operator.networkManagerConfigMapName" (dict "prefix" "osac-network-fabric-manager" "key" $name "seen" $seenConfigMapNames) }}
----
+{{- /*
+Registration of OSAC's Kubernetes Manager cudn_evpn (network manager contract
+§4.2). Registrations are immutable, so the ConfigMap name carries a hash of
+its data: a release that changes the data replaces the ConfigMap instead of
+patching it. Fabric Manager registrations are not rendered here; the Cloud
+Infrastructure Admin (or the installer, for the Fabric Managers OSAC ships)
+creates them. It is always rendered: the operator chart is the only source
+of this registration.
+*/ -}}
+{{- $data := dict "name" "cudn_evpn" "ansible_role" "osac.templates.cudn_evpn" "network_type" "evpn" "description" "OSAC Kubernetes Manager: one ClusterUserDefinedNetwork with an EVPN transport per VirtualNetwork" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ $cmName }}
-  namespace: {{ $.Release.Namespace }}
+  name: osac-network-k8s-manager-cudn-evpn-{{ $data | toJson | sha256sum | trunc 8 }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "osac-operator.labels" $ | nindent 4 }}
-    osac.openshift.io/network-fabric-manager: "true"
-data:
-  name: {{ $name | quote }}
-  {{- if $mgr.description }}
-  description: {{ $mgr.description | quote }}
-  {{- end }}
-  capabilities: {{ include "osac-operator.networkManagerCapabilities" $mgr.capabilities | quote }}
-  {{- if $mgr.externalIPContractVersion }}
-  externalIPContractVersion: {{ $mgr.externalIPContractVersion | quote }}
-  {{- end }}
-  {{- if $mgr.externalIPAttachmentContractVersion }}
-  externalIPAttachmentContractVersion: {{ $mgr.externalIPAttachmentContractVersion | quote }}
-  {{- end }}
-{{- end }}
-{{- end }}
-{{- range $name, $mgr := .Values.networkManagers.k8sManagers }}
-{{- $mgrEnabled := $mgr.enabled -}}
-{{- if and (not $netExpert) $agentlessEnabled (eq $name "k8s_only") }}
-{{- $mgrEnabled = true -}}
-{{- end }}
-{{- if $mgrEnabled }}
-{{- $cmName := include "osac-operator.networkManagerConfigMapName" (dict "prefix" "osac-network-k8s-manager" "key" $name "seen" $seenConfigMapNames) }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $cmName }}
-  namespace: {{ $.Release.Namespace }}
-  labels:
-    {{- include "osac-operator.labels" $ | nindent 4 }}
+    {{- include "osac-operator.labels" . | nindent 4 }}
     osac.openshift.io/network-k8s-manager: "true"
+immutable: true
 data:
-  name: {{ $name | quote }}
-  {{- if $mgr.description }}
-  description: {{ $mgr.description | quote }}
-  {{- end }}
-  capabilities: {{ include "osac-operator.networkManagerCapabilities" $mgr.capabilities | quote }}
-  {{- if $mgr.externalIPContractVersion }}
-  externalIPContractVersion: {{ $mgr.externalIPContractVersion | quote }}
-  {{- end }}
-  {{- if $mgr.externalIPAttachmentContractVersion }}
-  externalIPAttachmentContractVersion: {{ $mgr.externalIPAttachmentContractVersion | quote }}
-  {{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
+  {{- toYaml $data | nindent 2 }}

@@ -15,10 +15,11 @@ global:
     maas:
       enabled: false
   # Provider networking disabled: networking resources become READY without
-  # provider jobs in this test profile.
+  # provider work. The Netris Fabric Manager registration
+  # (fabric-registration.yaml) is applied after install; no Netris settings.
   networking:
     provisioningEnabled: false
-    fabricManager: example_fabric
+    fabricManager: netris
     k8sManager: ""
 
 # --- Operator ---
@@ -44,15 +45,6 @@ operator:
     tenant: true
     networking: true
     storage: true
-  # Keep the unversioned ExternalIP flow in CI: networkingProvisioning is false
-  # and the reference suite depends on the placeholder-allocated path, which
-  # the v1 contract intentionally does not provide (allocation stays pending).
-  # Flip to v1 together with enabling networkingProvisioning; the semantic
-  # decision is tracked under OSAC-6744.
-  networkManagers:
-    fabricManagers:
-      netris:
-        externalIPContractVersion: ""
   hubAccess:
     enabled: true
   tenants:
@@ -202,6 +194,7 @@ bmf:
   env:
     aapUrl: "http://osac-aap/api/controller"
     aapInsecureSkipVerify: "true"
+    enableNetworkingProvisioning: "false"
   metal3:
     enabled: true
     namespace: host-inventory

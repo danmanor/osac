@@ -127,7 +127,7 @@ class FabricDomainValuesTest(unittest.TestCase):
         self.assertIn("schema", result.stderr)
 
     def test_network_class_template_configuration_rejected(self):
-        # Removed manager template fields must stay outside the NetworkClass schema.
+        # PR #1271's NC scalar forwarding must not return on either values path.
         removed = (
             {"east_west_config": {"ethernet_ew": {"template_id": "42"}}},
             {"template_id": "42"},
@@ -135,8 +135,7 @@ class FabricDomainValuesTest(unittest.TestCase):
         )
         for config in removed:
             with self.subTest(config=config):
-                values = {"global": {"networking": {"networkClass": config}}}
-                result = render(UMBRELLA, values)
+                result = render(UMBRELLA, {"global": {"networking": {"networkClass": config}}})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("schema", result.stderr)
                 self.assertIn(next(iter(config)), result.stderr)

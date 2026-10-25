@@ -319,24 +319,19 @@ cluster availability without requiring KVM or the virtualization install tools.
 
 #### CUDN EVPN/Netris E2E environment
 
-`PROFILE=cudn-evpn-netris-test` is an explicit OpenShift-only profile. It
-contains the normal VMaaS + BMaaS instance and infrastructure values, registers
-both `netris` (fabric) and `cudn_evpn` (k8s) through the operator's nested
-`networkManagers` map, and selects them on the default NetworkClass. It does
-not install the FRR operator, create the Phase 1 EVPN
-`FRRConfiguration`, create the external EVPN/BGP/VTEP fabric, or provide the
-`cudn_evpn` implementation; those prerequisites must be prepared before
-installation.
+`PROFILE=cudn-evpn-netris-test` is an explicit OpenShift-only profile with
+provider networking enabled: VMaaS + BMaaS, `fabricManager: netris` and
+`k8sManager: cudn_evpn`. `make install-osac` applies the profile's Netris
+Fabric Manager registration (`values/cudn-evpn-netris-test/fabric-registration.yaml`)
+after the chart; the installer registers `cudn_evpn` itself. It does not
+install the FRR operator, create the Phase 1 EVPN `FRRConfiguration`, or
+create the external EVPN/BGP/VTEP fabric; those prerequisites must be prepared
+before installation.
 
-Install it with:
-
-```bash
-make install PLATFORM=openshift PROFILE=cudn-evpn-netris-test NS=osac
-```
-
-The profile includes the non-secret Netris controller/site/tenant settings.
-Supply the controller password and any site-specific Netris or SSH values in
-a private values file and pass it through `INSTANCE_VALUES_EXTRA`, for example:
+The profile includes the non-secret Netris controller, site and tenant
+settings. Supply `excludedIpv4Cidrs`, `CUDN_EVPN_DNS_RESOLVERS`, the remaining
+site-specific Netris settings and `NETRIS_PASSWORD` in a private values file
+(see the profile's `README.md`) and pass it through `INSTANCE_VALUES_EXTRA`:
 
 ```bash
 make install PLATFORM=openshift PROFILE=cudn-evpn-netris-test NS=osac \
@@ -557,7 +552,7 @@ See [docs/aap-configuration.md](docs/aap-configuration.md) for details.
 Networking is configured under `global.networking`: `provisioningEnabled`
 (fixed at installation), `excludedIpv4Cidrs`, the required `fabricManager`
 (the name in the provider's Fabric Manager registration), `k8sManager`
-(required with VMaaS), and `networkClass` (tenant defaults,
+(`cudn_evpn`, required with VMaaS), and `networkClass` (tenant defaults,
 east-west capabilities and the optional address plan). Network manager
 settings and credentials go in `aap.instanceGroups.networkFulfillment.config`
 and `.secret`. The admin applies the Fabric Manager registration ConfigMap;
@@ -565,48 +560,6 @@ it is not a Helm value.
 
 See [docs/network-backend.md](docs/network-backend.md) for the values, the
 checks a rollout runs, and the CI profiles.
-
-#### FabricDomain admin onboarding (Phase 1)
-
-For Netris Ethernet east-west networking, first register each
-BareMetalInstanceType through the fulfillment **private API** and author its
-backend binding there. This fragment belongs to the instance type, not Helm:
-
-```yaml
-spec:
-  fabric_bindings:
-    ethernet_ew:
-      netris: "42" # opaque Ethernet profile reference; Netris uses a Server Cluster Template ID
-```
-
-Then map every participating server's **exact Netris hostname** to its
-BareMetalInstanceType ID in the umbrella values:
-
-```yaml
-operator:
-  fabricDomainInventory:
-    gpu-01.example.com: "gpu-bmit-id"
-    gpu-02.example.com: "gpu-bmit-id"
-```
-
-The umbrella's `operator` dependency alias forwards this to the standalone
-`osac-operator` chart's `fabricDomainInventory` value. A nonempty map creates
-the fixed ConfigMap `osac-fabric-domain-inventory` in the Helm release namespace,
-which is also the operator's networking namespace. Its `data` is exactly the
-hostname-to-ID map; hostname spelling and case are preserved. The default `{}`
-does not create the ConfigMap. Keep this inventory current during onboarding
-and update it through your Helm values.
-
-The NetworkClass of the domain's VirtualNetwork selects the fabric manager; the
-manager name must have a corresponding entry in the instance type's
-`fabric_bindings.ethernet_ew` map. For Netris, that entry is the Server Cluster
-Template ID. The profile belongs to the hardware type and is not scoped to a
-NetworkClass. NetworkClass no longer accepts `template_id`, and FabricDomain
-has no `instance_type` field: the operator resolves the manager-specific profile
-through the server inventory and instance types. Keep Netris credentials in
-the existing AAP Secret configuration; the inventory contains only hostnames
-and catalog IDs.
-The FabricDomain CRD is included when `operatorCrds.install` is enabled.
 
 #### DNS Backend Configuration (CaaS)
 

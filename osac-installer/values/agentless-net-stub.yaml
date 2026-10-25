@@ -1,15 +1,13 @@
+# AgentlessNet overlay: layer on a profile without VMaaS (for example
+# bmaas-ci) to select the AgentlessNet Fabric Manager. AgentlessNet declares
+# no network_types, so no Kubernetes Manager can pair with it. Apply its
+# registration (agentless-net-registration.yaml) to the release namespace.
 global:
-  expertOverrides:
-    # Profiles such as caas-ci preserve their AAP settings unless this facade
-    # is explicitly allowed to derive the AgentlessNet backend.
-    aap: false
   networking:
+    provisioningEnabled: true
     fabricManager: agentless_net
     k8sManager: ""
-    networkClass:
-      title: AgentlessNet VirtualNetwork and Subnet baseline
-      description: >-
-        Implements UID-keyed VirtualNetwork namespaces, /31 transit links,
-        Cumulus Subnet VLANs and gateways, and per-VirtualNetwork DHCP.
-        SecurityGroups, NAT, workload attachment, BGP, and external access
-        remain unsupported.
+aap:
+  instanceGroups:
+    networkFulfillment:
+      enabled: true
