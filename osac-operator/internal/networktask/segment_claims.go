@@ -113,6 +113,7 @@ func (filter claimRequestFilter) needsOwnerValidation(owner v1alpha1.SegmentClai
 
 type subnetOwnerSnapshot struct {
 	byVirtualNetwork map[string]map[client.ObjectKey]*v1alpha1.Subnet
+	byObjectKey      map[client.ObjectKey]*v1alpha1.Subnet
 	complete         bool
 }
 
@@ -527,27 +528,15 @@ func (index *SegmentClaimIndex) liveOwners(ctx context.Context, claim *v1alpha1.
 		}
 	}
 	for _, owner := range candidates {
-		key := client.ObjectKey{Namespace: owner.Namespace, Name: owner.Name}
-		if l3OwnerUIDs[owner.UID] {
-			if subnet := l3Owners[key]; subnet != nil {
-				if subnet.UID != owner.UID || segmentFreed(subnet) {
-					stale[owner.UID] = true
-					continue
-				}
-				live[owner.UID] = subnet
-				continue
-			}
-		}
-		other := &v1alpha1.Subnet{}
-		err := index.reader.Get(ctx, key, other)
-		if apierrors.IsNotFound(err) || (err == nil && (other.UID != owner.UID || segmentFreed(other))) {
-			stale[owner.UID] = true
-			continue
-		}
+		subnet, isStale, err := index.resolveClaimOwner(ctx, owner, l3OwnerUIDs[owner.UID], l3Owners, snapshot)
 		if err != nil {
 			return nil, false, err
 		}
-		live[owner.UID] = other
+		if isStale {
+			stale[owner.UID] = true
+			continue
+		}
+		live[owner.UID] = subnet
 	}
 	for uid := range stale {
 		removeClaimOwner(claim, uid, true, true)
@@ -555,17 +544,57 @@ func (index *SegmentClaimIndex) liveOwners(ctx context.Context, claim *v1alpha1.
 	return live, len(stale) > 0, nil
 }
 
-func removeClaimOwner(claim *v1alpha1.NetworkSegmentClaim, uid types.UID, l2, l3 bool) {
+func (index *SegmentClaimIndex) resolveClaimOwner(ctx context.Context, owner v1alpha1.SegmentClaimOwner,
+	isL3Owner bool, l3Owners map[client.ObjectKey]*v1alpha1.Subnet,
+	snapshot *subnetOwnerSnapshot) (*v1alpha1.Subnet, bool, error) {
+	key := client.ObjectKey{Namespace: owner.Namespace, Name: owner.Name}
+	if isL3Owner {
+		if subnet := l3Owners[key]; subnet != nil {
+			resolved, stale := verifiedSnapshotSubnet(owner, subnet)
+			return resolved, stale, nil
+		}
+	}
+	if snapshot != nil && snapshot.complete {
+		resolved, stale := verifiedSnapshotSubnet(owner, snapshot.byObjectKey[key])
+		return resolved, stale, nil
+	}
+
+	subnet := &v1alpha1.Subnet{}
+	err := index.reader.Get(ctx, key, subnet)
+	if apierrors.IsNotFound(err) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	resolved, stale := verifiedSnapshotSubnet(owner, subnet)
+	return resolved, stale, nil
+}
+
+func verifiedSnapshotSubnet(owner v1alpha1.SegmentClaimOwner, subnet *v1alpha1.Subnet) (*v1alpha1.Subnet, bool) {
+	if subnet == nil || subnet.UID != owner.UID || segmentFreed(subnet) {
+		return nil, true
+	}
+	return subnet, false
+}
+
+func removeClaimOwner(claim *v1alpha1.NetworkSegmentClaim, uid types.UID, l2, l3 bool) bool {
+	changed := false
 	if l2 && claim.Spec.L2Owner != nil && claim.Spec.L2Owner.UID == uid {
 		claim.Spec.L2Owner = nil
+		changed = true
 	}
 	if l3 {
+		before := len(claim.Spec.L3Owners)
 		claim.Spec.L3Owners = slices.DeleteFunc(claim.Spec.L3Owners, func(o v1alpha1.SegmentClaimOwner) bool { return o.UID == uid })
+		changed = len(claim.Spec.L3Owners) != before || changed
 	}
 	if len(claim.Spec.L3Owners) == 0 {
+		changed = claim.Spec.L3VirtualNetwork != "" || changed
 		claim.Spec.L3VirtualNetwork = ""
 	}
-	syncL3ClaimLabel(claim)
+	changed = syncL3ClaimLabel(claim) || changed
+	return changed
 }
 
 func (index *SegmentClaimIndex) releaseOne(ctx context.Context, uid types.UID, roles claimRoles) error {
@@ -628,10 +657,12 @@ func (index *SegmentClaimIndex) Bootstrap(ctx context.Context) error {
 	}
 	ownerSnapshot := &subnetOwnerSnapshot{
 		byVirtualNetwork: make(map[string]map[client.ObjectKey]*v1alpha1.Subnet),
+		byObjectKey:      make(map[client.ObjectKey]*v1alpha1.Subnet, len(subnets.Items)),
 		complete:         true,
 	}
 	for i := range subnets.Items {
 		subnet := &subnets.Items[i]
+		ownerSnapshot.byObjectKey[client.ObjectKeyFromObject(subnet)] = subnet
 		owners := ownerSnapshot.byVirtualNetwork[subnet.Spec.VirtualNetwork]
 		if owners == nil {
 			owners = make(map[client.ObjectKey]*v1alpha1.Subnet)
@@ -639,7 +670,7 @@ func (index *SegmentClaimIndex) Bootstrap(ctx context.Context) error {
 		}
 		owners[client.ObjectKeyFromObject(subnet)] = subnet
 	}
-	if err := index.cleanClaims(ctx); err != nil {
+	if err := index.cleanClaims(ctx, ownerSnapshot); err != nil {
 		return err
 	}
 	claimOrder, requestsByVNI := bootstrapClaimRequests(subnets.Items)
@@ -653,7 +684,7 @@ func (index *SegmentClaimIndex) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-func (index *SegmentClaimIndex) cleanClaims(ctx context.Context) error {
+func (index *SegmentClaimIndex) cleanClaims(ctx context.Context, snapshot *subnetOwnerSnapshot) error {
 	claims := &v1alpha1.NetworkSegmentClaimList{}
 	if err := index.reader.List(ctx, claims, client.InNamespace(index.namespace)); err != nil {
 		return err
@@ -665,21 +696,25 @@ func (index *SegmentClaimIndex) cleanClaims(ctx context.Context) error {
 			if err := index.reader.Get(ctx, index.key(claim.Spec.VNI), current); err != nil {
 				return client.IgnoreNotFound(err)
 			}
-			owners, _, err := index.liveOwners(ctx, current, nil, nil)
+			owners, cleaned, err := index.liveOwners(ctx, current, nil, snapshot)
 			if err != nil {
 				return err
 			}
+			changed := cleaned
 			for uid, owner := range owners {
 				job := FindJob(owner.Status.Jobs, CreateSubnet, v1alpha1.NetworkJobManagerFabric)
 				inFlight := job != nil && (job.State == v1alpha1.NetworkJobStateRunning || job.State == v1alpha1.NetworkJobStateRetrying)
 				if owner.Status.NetworkSegment == nil && !inFlight {
-					removeClaimOwner(current, uid, true, true)
+					changed = removeClaimOwner(current, uid, true, true) || changed
 				}
 			}
 			if current.Spec.L2Owner == nil && len(current.Spec.L3Owners) == 0 {
 				return client.IgnoreNotFound(index.client.Delete(ctx, current, client.Preconditions{UID: &current.UID, ResourceVersion: &current.ResourceVersion}))
 			}
-			syncL3ClaimLabel(current)
+			changed = syncL3ClaimLabel(current) || changed
+			if !changed {
+				return nil
+			}
 			return index.client.Update(ctx, current)
 		}); err != nil {
 			return err
