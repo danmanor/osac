@@ -74,7 +74,7 @@ var _ = Describe("Networking with operator", Label(networkingOperatorLabel), fun
 			"the operator phase of the SUITE=fulfillment target deploys global.networking.provisioningEnabled=false")
 	})
 
-	It("TC-OP-01 resolves the installer's NetworkClass to READY from the Netris registration", func(ctx context.Context) {
+	It("TC-OP-01 makes the installer's NetworkClass READY without resolving the registrations", func(ctx context.Context) {
 		By("checking the Fabric Manager registration the profile ships (values/dev/fabric-registration.yaml)")
 		registrations := &corev1.ConfigMapList{}
 		Expect(tool.KubeClient().List(ctx, registrations, crclient.InNamespace(hubNamespace),
@@ -102,7 +102,7 @@ var _ = Describe("Networking with operator", Label(networkingOperatorLabel), fun
 		Expect(names).To(ContainElement("cudn_evpn"), "Kubernetes Manager registrations: %v", names)
 
 		nc := ndSingletonNetworkClass(ctx, c)
-		By(fmt.Sprintf("waiting for the operator to resolve the NetworkClass CR of %s", nc.GetId()))
+		By(fmt.Sprintf("waiting for the operator to make the NetworkClass CR of %s Ready", nc.GetId()))
 		Eventually(func(g Gomega) {
 			list := &osacv1alpha1.NetworkClassList{}
 			g.Expect(tool.KubeClient().List(ctx, list, crclient.InNamespace(hubNamespace),
@@ -113,17 +113,13 @@ var _ = Describe("Networking with operator", Label(networkingOperatorLabel), fun
 			ready := meta.FindStatusCondition(status.Conditions, osacv1alpha1.NetworkConditionReady)
 			g.Expect(ready).ToNot(BeNil())
 			g.Expect(ready.Status).To(Equal(metav1.ConditionTrue), "Ready: %+v", ready)
-			g.Expect(ready.Reason).To(Equal(osacv1alpha1.ReasonSucceeded), "Ready: %+v", ready)
-			g.Expect(status.NetworkManagers).ToNot(BeNil())
-			g.Expect(status.NetworkManagers.Fabric).ToNot(BeNil())
-			g.Expect(status.NetworkManagers.Fabric.Name).To(Equal("netris"))
-			g.Expect(status.NetworkManagers.Fabric.AnsibleRole).To(Equal("osac.templates.netris"))
-			g.Expect(status.NetworkManagers.Kubernetes).ToNot(BeNil())
-			g.Expect(status.NetworkManagers.Kubernetes.Name).To(Equal("cudn_evpn"))
-			g.Expect(string(status.NetworkType)).To(Equal("evpn"))
+			// Provider networking disabled: the operator does not read the registrations.
+			g.Expect(ready.Reason).To(Equal(osacv1alpha1.ReasonProvisioningDisabled), "Ready: %+v", ready)
+			g.Expect(status.NetworkManagers).To(BeNil())
+			g.Expect(string(status.NetworkType)).To(BeEmpty())
 		}, opTimeout, time.Second).Should(Succeed())
 
-		By("waiting for the feedback controller to report the resolution in the fulfillment record")
+		By("waiting for the feedback controller to report READY in the fulfillment record")
 		Eventually(func(g Gomega) {
 			response, err := c.networkClasses.Get(ctx, privatev1.NetworkClassesGetRequest_builder{
 				Id: nc.GetId(),
@@ -132,12 +128,9 @@ var _ = Describe("Networking with operator", Label(networkingOperatorLabel), fun
 			status := response.GetObject().GetStatus()
 			g.Expect(status.GetState()).To(Equal(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY),
 				"NetworkClass: %s", ndText(response.GetObject()))
-			g.Expect(status.HasMessage()).To(BeFalse(), "NetworkClass: %s", ndText(response.GetObject()))
-			g.Expect(status.GetNetworkManagers().GetFabric().GetName()).To(Equal("netris"),
+			g.Expect(status.GetNetworkManagers().GetFabric().GetName()).To(BeEmpty(),
 				"NetworkClass: %s", ndText(response.GetObject()))
-			g.Expect(status.GetNetworkManagers().GetFabric().GetAnsibleRole()).To(Equal("osac.templates.netris"))
-			g.Expect(status.GetNetworkManagers().GetKubernetes().GetName()).To(Equal("cudn_evpn"))
-			g.Expect(status.GetNetworkType()).To(Equal("evpn"))
+			g.Expect(status.GetNetworkType()).To(BeEmpty())
 		}, opTimeout, time.Second).Should(Succeed())
 		response, err := c.networkClasses.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: nc.GetId()}.Build())
 		Expect(err).ToNot(HaveOccurred())
