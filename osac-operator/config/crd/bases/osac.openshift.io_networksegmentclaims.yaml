@@ -1,0 +1,108 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: networksegmentclaims.osac.openshift.io
+spec:
+  group: osac.openshift.io
+  names:
+    kind: NetworkSegmentClaim
+    listKind: NetworkSegmentClaimList
+    plural: networksegmentclaims
+    singular: networksegmentclaim
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: NetworkSegmentClaim is internal operator state; it is not a tenant
+          resource.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: NetworkSegmentClaimSpec is operator-owned deployment coordination
+              state.
+            properties:
+              l2Owner:
+                description: L2Owner exclusively reserves the L2 role.
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - name
+                - namespace
+                - uid
+                type: object
+              l3Owners:
+                description: L3Owners records each sharing Subnet incarnation.
+                items:
+                  description: SegmentClaimOwner identifies a Subnet incarnation,
+                    including its namespace.
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    uid:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  - uid
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - uid
+                x-kubernetes-list-type: map
+              l3VirtualNetwork:
+                description: L3VirtualNetwork identifies the network whose Subnets
+                  share the L3 role.
+                type: string
+              vni:
+                description: VNI is the numeric segment identifier, shared across
+                  both roles.
+                format: int32
+                maximum: 16777215
+                minimum: 1
+                type: integer
+                x-kubernetes-validations:
+                - message: vni is immutable
+                  rule: self == oldSelf
+            required:
+            - vni
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

@@ -7,17 +7,12 @@ global:
   osacDeploymentId: "ci/osac"
   fulfillmentTrust:
     enabled: false
-  # Keep clusterFulfillment NETWORK_STEPS_COLLECTION=ci.steps authoritative.
-  # The CUDN CaaS profile requires the explicit ci.steps pairing.
-  # Do not derive Netris/agentless AAP steps (see docs/aap-configuration.md).
-  expertOverrides:
-    aap: true
+  # Provider networking disabled: networking resources become READY without
+  # provider jobs in this test profile.
   networking:
-    fabricManager: cudn_net
-    k8sManager: ""
-    netris:
-      # Keep CI safe for any shared Netris configuration.
-      validateCerts: false
+    provisioningEnabled: false
+    fabricManager: example_fabric
+    k8sManager: example_k8s
   services:
     caas:
       enabled: true
@@ -61,11 +56,6 @@ operator:
     trustIngressCA: true
   hubAccess:
     enabled: true
-  networkManagers:
-    enabled: true
-    fabricManagers:
-      cudn_net:
-        enabled: true
   tenants:
   - name: shared
   - name: osac-e2e-ci
@@ -184,8 +174,6 @@ aap:
     clusterFulfillment:
       enabled: true
       config:
-        NETWORK_CLASS: "ci"
-        NETWORK_STEPS_COLLECTION: "ci.steps"
         HOSTED_CLUSTER_CONTROLLER_AVAILABILITY_POLICY: "SingleReplica"
         HOSTED_CLUSTER_INFRASTRUCTURE_AVAILABILITY_POLICY: "SingleReplica"
     networkFulfillment:
@@ -204,7 +192,6 @@ bmf:
   env:
     aapUrl: "http://osac-aap/api/controller"
     aapInsecureSkipVerify: "true"
-    enableNetworkingProvisioning: "false"
   metal3:
     enabled: true
     namespace: host-inventory

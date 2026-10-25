@@ -273,6 +273,7 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 	})
 
 	It("waits for automatic ExternalIP cleanup before deleting the BMFO CR", func(ctx context.Context) {
+		ndSkipUnlessProviderNetworkingEnabled(ctx, "Automatic ExternalIPs of a BareMetalInstance")
 		// Keep an automatically created ExternalIP terminating so this test can
 		// observe whether the workload CR is deleted before its child is gone.
 		Expect(defaultNetworkingFixture.networkClassID).NotTo(BeEmpty(),
@@ -539,12 +540,7 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 		Expect(listedClasses.GetItems()).To(BeEmpty(), "default fixture cleanup must remove its NetworkClass before replacement")
 
 		// Create a k8s-only NetworkClass (no fabric_manager):
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Title:      "Test k8s-only Network Class for BMI",
-				K8SManager: new("cudn_localnet"),
-			}.Build(),
-		}.Build())
+		ncResp, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId := ncResp.GetObject().GetId()
 		DeferCleanup(func(ctx context.Context) {
@@ -561,9 +557,7 @@ var _ = Describe("BareMetalInstance lifecycle", func() {
 					Tenant: usersGroup,
 				}.Build(),
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new("10.101.0.0/16"),
+					Ipv4Cidr: new("10.101.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())

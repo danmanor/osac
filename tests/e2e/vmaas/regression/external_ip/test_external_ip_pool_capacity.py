@@ -33,6 +33,7 @@ class TestPoolCapacity:
         assert status["available"] == 2
         assert status["allocated"] == 0
 
+    @pytest.mark.requires_provider_networking
     def test_allocation_decrements_available(
         self,
         small_pool: tuple[str, str],
@@ -48,6 +49,7 @@ class TestPoolCapacity:
         assert status["allocated"] == 1
         assert status["available"] == 1
 
+    @pytest.mark.requires_provider_networking
     def test_exhaustion_rejects_creation(
         self,
         small_pool: tuple[str, str],
@@ -66,6 +68,7 @@ class TestPoolCapacity:
             grpc.create_external_ip(name=f"test-ip-{uuid4().hex[:8]}", pool=pool_id)
         assert_grpc_rejected(exc_info, "FailedPrecondition")
 
+    @pytest.mark.requires_provider_networking
     def test_release_restores_capacity(
         self,
         small_pool: tuple[str, str],
@@ -94,6 +97,7 @@ class TestPoolCapacity:
         assert status["allocated"] == 2
         assert status["available"] == 0
 
+    @pytest.mark.requires_provider_networking
     def test_pool_deletion_blocked_while_ips_allocated(
         self, small_pool: tuple[str, str], private_grpc: GRPCClient
     ) -> None:
@@ -102,6 +106,7 @@ class TestPoolCapacity:
             private_grpc.delete_external_ip_pool(pool_id=pool_id)
         assert_grpc_rejected(exc_info, "FailedPrecondition")
 
+    @pytest.mark.requires_provider_networking
     def test_pool_deletion_succeeds_after_all_ips_released(
         self,
         small_pool: tuple[str, str],

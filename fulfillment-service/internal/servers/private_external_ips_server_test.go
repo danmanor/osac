@@ -749,7 +749,7 @@ var _ = Describe("Private external IPs server", func() {
 			status, ok := grpcstatus.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(status.Code()).To(Equal(grpccodes.InvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("spec.pool' is immutable"))
+			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 		})
 
 		It("rejects moving a stored ExternalIP into a reserved tenant and preserves the stored object", func() {

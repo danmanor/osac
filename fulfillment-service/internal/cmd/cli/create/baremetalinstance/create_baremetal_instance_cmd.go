@@ -14,9 +14,10 @@ language governing permissions and limitations under the License.
 package baremetalinstance
 
 import (
+	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"log/slog"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
@@ -124,7 +125,8 @@ func Cmd() *cobra.Command {
 }
 
 type runnerContext struct {
-	args struct {
+	networkAttachment *publicv1.BareMetalNetworkAttachment
+	args              struct {
 		name                 string
 		catalogItem          string
 		setFields            []string
@@ -155,6 +157,11 @@ func (c *runnerContext) run(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create gRPC connection: %w", err)
 	}
 	defer conn.Close()
+
+	// Resolve the names of the network attachment before anything is created:
+	if err := c.resolveNetworkAttachment(ctx, conn); err != nil {
+		return err
+	}
 
 	catalogItemsClient := publicv1.NewBareMetalInstanceCatalogItemsClient(conn)
 	catalogItem, err := lookup.Find(c.args.catalogItem, "bare metal instance catalog item",
@@ -290,13 +297,14 @@ atomically during creation. Immutable after creation.
 `
 
 const networkAttachmentFlagHelp = `
-_SPEC_ - Per-NIC network attachment. The value can be a plain subnet ID, or a
-comma-separated specification in the format
-{{ bt }}subnet=ID[,interface=NAME][,primary][,security-groups=ID,ID...]{{ bt }}.
-The {{ bt }}interface{{ bt }} field maps a physical NIC from the bare metal
-instance type. The {{ bt }}primary{{ bt }} keyword (bare, no value) designates
-the default gateway for multi-NIC instances. Can be specified multiple times
-to attach multiple NICs.
+_SPEC_ - Network attachment of the instance, at most one. The value can be a
+plain subnet name or ID, or a comma-separated specification in the format
+{{ bt }}[subnet=NAME][,interface=NAME][,security-groups=NAME,NAME...]{{ bt }};
+names and IDs are accepted. The {{ bt }}interface{{ bt }} field selects a
+fabric port of the bare metal instance type; without it the first fabric port
+is used. Without a subnet the tenant's default subnet is used, and without
+security groups the tenant's default security group is used when the subnet
+is in the tenant's default virtual network.
 `
 
 const setFlagHelp = `
@@ -306,22 +314,37 @@ Use dot notation for nested fields (e.g.
 multiple times.
 `
 
-func (c *runnerContext) applyNetworkingFlags(spec *publicv1.BareMetalInstanceSpec_builder) error {
+// resolveNetworkAttachment parses the --network-attachment flag, at most once, and resolves its names to IDs.
+func (c *runnerContext) resolveNetworkAttachment(ctx context.Context, conn grpc.ClientConnInterface) error {
 	if len(c.args.networkAttachments) == 0 {
 		return nil
 	}
 	if len(c.args.networkAttachments) > 1 {
 		return fmt.Errorf("at most one --network-attachment is supported")
 	}
-	attachments := make([]*publicv1.BareMetalNetworkAttachment, 0, len(c.args.networkAttachments))
-	for _, raw := range c.args.networkAttachments {
-		na, err := parseBareMetalNetworkAttachmentFlag(raw)
-		if err != nil {
-			return err
-		}
-		attachments = append(attachments, na)
+	flag, err := netutil.ParseNetworkAttachmentFlag(c.args.networkAttachments[0], true)
+	if err != nil {
+		return err
 	}
-	spec.NetworkAttachments = attachments
+	subnet, groups, err := netutil.ResolveNetworkAttachment(ctx, conn, flag)
+	if err != nil {
+		return err
+	}
+	builder := publicv1.BareMetalNetworkAttachment_builder{
+		Subnet:         subnet,
+		SecurityGroups: groups,
+	}
+	if flag.Interface != "" {
+		builder.Interface = &flag.Interface
+	}
+	c.networkAttachment = builder.Build()
+	return nil
+}
+
+func (c *runnerContext) applyNetworkingFlags(spec *publicv1.BareMetalInstanceSpec_builder) error {
+	if c.networkAttachment != nil {
+		spec.NetworkAttachments = []*publicv1.BareMetalNetworkAttachment{c.networkAttachment}
+	}
 	return nil
 }
 
@@ -332,88 +355,4 @@ func (c *runnerContext) applyUserDataFlags(spec *publicv1.BareMetalInstanceSpec_
 	if c.args.userDataSecret != "" {
 		spec.UserDataSource = publicv1.UserDataSource_builder{Secret: publicv1.SecretLocalReference_builder{Name: c.args.userDataSecret}.Build()}.Build()
 	}
-}
-
-func parseBareMetalNetworkAttachmentFlag(s string) (*publicv1.BareMetalNetworkAttachment, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, fmt.Errorf("empty --network-attachment value")
-	}
-
-	prefix, securityGroups, _ := netutil.ExtractSecurityGroupListSuffix(s)
-
-	if !strings.Contains(prefix, "=") && !strings.EqualFold(prefix, "primary") {
-		builder := publicv1.BareMetalNetworkAttachment_builder{
-			Subnet: &publicv1.SubnetLocalReference{Id: prefix},
-		}
-		if len(securityGroups) > 0 {
-			sgRefs := make([]*publicv1.SecurityGroupLocalReference, len(securityGroups))
-			for i, sg := range securityGroups {
-				sgRefs[i] = &publicv1.SecurityGroupLocalReference{Id: sg}
-			}
-			builder.SecurityGroups = sgRefs
-		}
-		return builder.Build(), nil
-	}
-
-	var subnet, iface string
-	var primary bool
-	var subnetSeen, ifaceSeen bool
-
-	for _, fragment := range strings.Split(prefix, ",") {
-		fragment = strings.TrimSpace(fragment)
-		if fragment == "" {
-			continue
-		}
-		if strings.EqualFold(fragment, "primary") {
-			primary = true
-			continue
-		}
-		key, val, ok := strings.Cut(fragment, "=")
-		if !ok {
-			return nil, fmt.Errorf("invalid --network-attachment fragment %q (expected key=value or bare keyword 'primary')", fragment)
-		}
-		key = strings.TrimSpace(strings.ToLower(key))
-		val = strings.TrimSpace(val)
-		if val == "" {
-			return nil, fmt.Errorf("invalid --network-attachment fragment %q (value is empty)", fragment)
-		}
-		switch key {
-		case "subnet":
-			if subnetSeen {
-				return nil, fmt.Errorf("subnet appears more than once in --network-attachment %q", prefix)
-			}
-			subnet = val
-			subnetSeen = true
-		case "interface":
-			if ifaceSeen {
-				return nil, fmt.Errorf("interface appears more than once in --network-attachment %q", prefix)
-			}
-			iface = val
-			ifaceSeen = true
-		default:
-			return nil, fmt.Errorf("unknown key %q in --network-attachment (use subnet, interface, primary, or security-groups)", key)
-		}
-	}
-
-	if subnet == "" {
-		return nil, fmt.Errorf("--network-attachment must include a subnet or subnet=<id>")
-	}
-
-	sgRefs := make([]*publicv1.SecurityGroupLocalReference, len(securityGroups))
-	for i, sg := range securityGroups {
-		sgRefs[i] = &publicv1.SecurityGroupLocalReference{Id: sg}
-	}
-
-	builder := publicv1.BareMetalNetworkAttachment_builder{
-		Subnet:         &publicv1.SubnetLocalReference{Id: subnet},
-		SecurityGroups: sgRefs,
-	}
-	if iface != "" {
-		builder.Interface = &iface
-	}
-	if primary {
-		builder.Primary = &primary
-	}
-	return builder.Build(), nil
 }

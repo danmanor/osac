@@ -18,11 +18,6 @@ const (
 	hubAccessClusterRoleBaseName string = "hub-access-hosted-clusters"
 )
 
-const (
-	osacAPIEndpointAnnotation     = osacPrefix + "/api-endpoint"
-	osacIngressEndpointAnnotation = osacPrefix + "/ingress-endpoint"
-)
-
 var (
 	agentInstanceTypeLabel            string = "osac.openshift.io/instance_type"
 	agentNodeSetLabel                 string = "osac.openshift.io/node-set"

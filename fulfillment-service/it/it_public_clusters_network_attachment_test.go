@@ -120,13 +120,7 @@ var _ = Describe("Cluster with ClusterNetworkAttachment", func() {
 		})
 
 		// Create a NetworkClass:
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("test-nc-%s", uuid.New())}.Build(),
-				Title:         "Test Network Class for cluster attachment",
-				FabricManager: new("netris"),
-			}.Build(),
-		}.Build())
+		ncResp, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId = ncResp.GetObject().GetId()
 		DeferCleanup(func(cleanupCtx context.Context) {
@@ -143,9 +137,7 @@ var _ = Describe("Cluster with ClusterNetworkAttachment", func() {
 				}.Build(),
 				Id: virtualNetworkId,
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new("10.100.0.0/16"),
+					Ipv4Cidr: new("10.100.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -371,9 +363,7 @@ var _ = Describe("Cluster with ClusterNetworkAttachment", func() {
 				}.Build(),
 				Id: crossVnId,
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new("10.200.0.0/16"),
+					Ipv4Cidr: new("10.200.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -582,5 +572,131 @@ var _ = Describe("Cluster with ClusterNetworkAttachment", func() {
 		Expect(attachment.GetSubnet().GetId()).To(Equal(subnetId))
 		Expect(attachment.GetSecurityGroups()).To(HaveLen(1))
 		Expect(attachment.GetSecurityGroups()[0].GetId()).To(Equal(securityGroupId))
+	})
+
+	createCluster := func(attachment *publicv1.ClusterNetworkAttachment, auto *bool) (*publicv1.Cluster, error) {
+		response, err := clustersClient.Create(ctx, publicv1.ClustersCreateRequest_builder{
+			Object: publicv1.Cluster_builder{
+				Metadata: publicv1.Metadata_builder{
+					Name: fmt.Sprintf("test-cluster-%s", uuid.New()[24:32]),
+				}.Build(),
+				Spec: publicv1.ClusterSpec_builder{
+					Template:                 publicv1.ClusterTemplateReference_builder{Id: templateId}.Build(),
+					NodeSets:                 testClusterNodeSets(bmitName, 3),
+					NetworkAttachment:        attachment,
+					AutoExternalIpAttachment: auto,
+				}.Build(),
+			}.Build(),
+		}.Build())
+		if err != nil {
+			return nil, err
+		}
+		return response.GetObject(), nil
+	}
+
+	explicitAttachment := func(groups ...string) *publicv1.ClusterNetworkAttachment {
+		refs := []*publicv1.SecurityGroupLocalReference{}
+		for _, group := range groups {
+			refs = append(refs, publicv1.SecurityGroupLocalReference_builder{Id: group}.Build())
+		}
+		return publicv1.ClusterNetworkAttachment_builder{
+			Subnet:         publicv1.SubnetLocalReference_builder{Id: subnetId}.Build(),
+			SecurityGroups: refs,
+		}.Build()
+	}
+
+	It("TC-CAAS-01 rejects auto_external_ip_attachment=false: automatic external access is mandatory", func() {
+		_, err := createCluster(explicitAttachment(securityGroupId), new(false))
+		ndExpectCode(err, grpccodes.InvalidArgument)
+	})
+
+	It("TC-CAAS-02 creates the automatic Cluster SecurityGroup in the create transaction and removes it with the "+
+		"Cluster", func() {
+		c := newNDClients()
+		disabled := !ndProviderNetworkingEnabled(ctx)
+
+		By("creating a Cluster with an explicit attachment")
+		cluster, err := createCluster(explicitAttachment(securityGroupId), nil)
+		Expect(err).ToNot(HaveOccurred())
+		clusterID := cluster.GetId()
+		ndLog("Created Cluster", cluster)
+		DeferCleanup(func(cleanupCtx context.Context) {
+			Expect(cleanupClusterFixture(cleanupCtx, clustersClient, privateClustersClient, clusterID)).To(Succeed())
+		})
+		Expect(cluster.GetSpec().GetAutoExternalIpAttachment()).To(BeTrue(), "omitted means true")
+		Expect(cluster.GetSpec().GetNetworkAttachment().GetSecurityGroups()).To(HaveLen(1),
+			"the automatic SecurityGroup is never listed in the attachment")
+
+		By("finding the automatic SecurityGroup auto-sg-<Cluster ID>")
+		filter := fmt.Sprintf("this.metadata.name == %q", "auto-sg-"+clusterID)
+		list, err := securityGroupsClient.List(ctx, privatev1.SecurityGroupsListRequest_builder{Filter: &filter}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(list.GetItems()).To(HaveLen(1), "the Cluster create stores its automatic SecurityGroup")
+		group := list.GetItems()[0]
+		ndLog("Automatic Cluster SecurityGroup", group)
+		Expect(group.GetMetadata().GetCreator()).To(Equal("system"))
+		Expect(group.GetMetadata().GetTenant()).To(Equal(usersGroup))
+		Expect(group.GetMetadata().GetLabels()).To(HaveKeyWithValue("osac.openshift.io/auto-created", "true"))
+		Expect(group.GetMetadata().GetLabels()).To(HaveKeyWithValue("osac.openshift.io/auto-created-for", clusterID))
+		Expect(group.GetMetadata().GetLabels()).To(HaveKeyWithValue("osac.openshift.io/auto-created-kind", "cluster"))
+		Expect(group.GetMetadata().GetAnnotations()).To(HaveKeyWithValue("osac.openshift.io/owner-reference",
+			clusterID))
+		Expect(group.GetSpec().GetVirtualNetwork().GetId()).To(Equal(virtualNetworkId))
+		Expect(group.GetSpec().GetIngress()).To(HaveLen(3), "all from the Subnet, TCP 80 and 443 from anywhere")
+		Expect(group.GetSpec().GetIngress()[0].GetProtocol()).To(Equal(privatev1.Protocol_PROTOCOL_ALL))
+		Expect(group.GetSpec().GetIngress()[0].GetIpv4Cidr()).To(Equal("10.100.1.0/24"))
+		Expect(group.GetSpec().GetIngress()[1].GetPortFrom()).To(Equal(int32(80)))
+		Expect(group.GetSpec().GetIngress()[2].GetPortFrom()).To(Equal(int32(443)))
+		Expect(group.GetSpec().GetEgress()).To(HaveLen(1))
+		Expect(group.GetSpec().GetEgress()[0].GetProtocol()).To(Equal(privatev1.Protocol_PROTOCOL_ALL))
+
+		if disabled {
+			By("checking that no automatic ExternalIP exists with provider networking disabled")
+			ipFilter := fmt.Sprintf("this.metadata.name == %q || this.metadata.name == %q",
+				"auto-eip-"+clusterID+"-api", "auto-eip-"+clusterID+"-ingress")
+			ips, err := c.externalIPs.List(ctx, privatev1.ExternalIPsListRequest_builder{Filter: &ipFilter}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(ips.GetItems()).To(BeEmpty(), "automatic ExternalIPs with provider networking disabled")
+		}
+
+		By("deleting the automatic SecurityGroup as the tenant")
+		publicGroups := publicv1.NewSecurityGroupsClient(tool.ExternalView().UserConn())
+		_, err = publicGroups.Delete(ctx, publicv1.SecurityGroupsDeleteRequest_builder{Id: group.GetId()}.Build())
+		ndExpectCode(err, grpccodes.FailedPrecondition, "automatic")
+
+		By("updating the rules of the automatic SecurityGroup as the tenant")
+		_, err = publicGroups.Update(ctx, publicv1.SecurityGroupsUpdateRequest_builder{
+			Object: publicv1.SecurityGroup_builder{
+				Id: group.GetId(),
+				Spec: publicv1.SecurityGroupSpec_builder{
+					Ingress: []*publicv1.SecurityRule{
+						ndPublicRule(publicv1.Protocol_PROTOCOL_TCP, "0.0.0.0/0", 22, 22),
+					},
+				}.Build(),
+			}.Build(),
+		}.Build())
+		ndExpectCode(err, grpccodes.FailedPrecondition, "is automatic")
+
+		By("selecting the automatic SecurityGroup in another Cluster's attachment")
+		ndSetSecurityGroupStatus(ctx, c, group.GetId(), privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY, "")
+		_, err = createCluster(explicitAttachment(securityGroupId, group.GetId()), nil)
+		ndExpectCode(err, grpccodes.FailedPrecondition, "is automatic")
+
+		By("deleting the Cluster's Subnet: the guard names the Cluster")
+		publicSubnets := publicv1.NewSubnetsClient(tool.ExternalView().UserConn())
+		_, err = publicSubnets.Delete(ctx, publicv1.SubnetsDeleteRequest_builder{Id: subnetId}.Build())
+		ndExpectCode(err, grpccodes.FailedPrecondition, "Cluster '"+clusterID+"'")
+
+		By("deleting the Cluster: the automatic SecurityGroup goes before the Cluster record")
+		_, err = clustersClient.Delete(ctx, publicv1.ClustersDeleteRequest_builder{Id: clusterID}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		Eventually(func(g Gomega) {
+			_, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{
+				Id: group.GetId(),
+			}.Build())
+			g.Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound), "automatic SecurityGroup remains (%v)", err)
+			_, err = privateClustersClient.Get(ctx, privatev1.ClustersGetRequest_builder{Id: clusterID}.Build())
+			g.Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound), "Cluster remains (%v)", err)
+		}, 3*time.Minute, time.Second).Should(Succeed())
 	})
 })

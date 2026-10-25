@@ -27,7 +27,8 @@ respective areas.
 - `StorageReconciler` is an intentional exception to the dual-controller pattern: it reconciles Tenant storage and does not own a separate CRD.
 - Preserve tenant namespace isolation and established predicates when creating or watching resources.
 - When changing shared controller behavior, inspect every controller using the same lifecycle.
-- `pkg/provisioning`, `pkg/aap`, and `pkg/dispatcher` have external consumers, including the bare-metal fulfillment operator; interface changes are cross-component changes.
+- `pkg/provisioning` and `pkg/aap` have external consumers, including the bare-metal fulfillment operator; interface changes are cross-component changes.
+- Networking manager tasks run only through `internal/networktask` (see its `doc.go`): one generic job template per task, `status.jobs` entries, typed result validation.
 - When debugging operators, check for stale `vendor/` dependencies and cached images before rebuilding.
 - The fulfillment proto types are the shared top-level `proto/` module, imported as `github.com/osac-project/osac/proto/gen/...`. This component no longer generates its own copy.
 - Never put credentials in logs, samples, or manifests.
@@ -51,7 +52,7 @@ See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-ope
 | Controller reconciliation, finalizers, status, or CRD interactions | Envtest | `make test` |
 | Controller deployment, watches (including optional TopoLVM watch), RBAC, console proxy, networking, or Helm wiring | Component integration | Deploy current image/manifests, then `make integration-tests`; [installer alternative](../docs/INTEGRATION-TESTING.md#osac-operator) |
 | Automatic ExternalIP cleanup for ClusterOrder, ComputeInstance, and BareMetalInstance (NET-CLEAN-07) | Kind component integration — DEV | Isolated installer run and coverage boundary: [NET-CLEAN-07](../docs/INTEGRATION-TESTING.md#net-clean-07-deployed-osac-cleanup) |
-| AAP, dispatcher, provisioning-provider, KubeVirt, or fulfillment boundary | Qualifying Contract or E2E | Use a boundary-specific suite; follow [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) when coverage is missing |
+| AAP, network task engine, provisioning-provider, KubeVirt, or fulfillment boundary | Qualifying Contract or E2E | Use a boundary-specific suite; follow [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843) when coverage is missing |
 | Generated CRDs or manifests | Envtest plus applicable Kind suite | `make manifests generate helm-crds check-helm-crds`, then the required test command |
 
 Envtest runs via `make test`; Kind tests require the current operator deployment.

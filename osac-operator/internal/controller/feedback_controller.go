@@ -82,7 +82,7 @@ func newClusterOrderFeedbackBridge(hubClient clnt.Client, clustersClient private
 		Client:    hubClient,
 		Finalizer: osacClusterOrderFeedbackFinalizer,
 		IDLabel:   osacClusterOrderIDLabel,
-		Kind:      "ClusterOrder",
+		Kind:      kindClusterOrder,
 		IDKey:     "clusterID",
 		NewObject: func() *ckv1alpha1.ClusterOrder { return &ckv1alpha1.ClusterOrder{} },
 		Fetch: func(ctx context.Context, id string) (*privatev1.Cluster, error) {
@@ -109,6 +109,7 @@ func newClusterOrderFeedbackBridge(hubClient clnt.Client, clustersClient private
 					feedbackStatusConditionsPath, feedbackStatusStatePath, "status.api_url", "status.console_url", "status.api_endpoint",
 					"status.ingress_endpoint", feedbackStatusStateTransitionTimePath, "status.kubeconfig_secret", "status.password_secret", "status.hub",
 					"status.node_sets", "status.observed_cp_version", "status.add_on_operators", "status.upgrade_history",
+					"status.management_publication_ready",
 				}},
 			}.Build())
 			return err
@@ -245,9 +246,29 @@ func matchesNodeSetUpgradeHistory(history []*privatev1.ClusterUpgradeHistoryEntr
 	return false
 }
 
-// syncClusterOrderVIPEndpoints copies MetalLB VIP addresses from ClusterOrder status
-// to the Cluster proto. The VIPs are written by the CaaS template and consumed by the
-// ExternalIPAttachment controller and the fulfillment-service API surface.
+// syncClusterOrderUpdate copies ClusterOrder status for networking feedback tests.
+// Production uses newClusterOrderSyncUpdate to resolve HostedCluster URLs and
+// synchronize upgrade observations as well.
+func syncClusterOrderUpdate(ctx context.Context, clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) error {
+	syncClusterOrderConditions(ctx, clusterOrder, remote)
+	syncClusterOrderWorkerConditions(clusterOrder, remote)
+	syncClusterOrderPhase(ctx, clusterOrder, remote)
+	if clusterOrder.Status.APIURL != "" {
+		remote.GetStatus().SetApiUrl(clusterOrder.Status.APIURL)
+	}
+	if clusterOrder.Status.ConsoleURL != "" {
+		remote.GetStatus().SetConsoleUrl(clusterOrder.Status.ConsoleURL)
+	}
+	syncClusterOrderNodeRequests(ctx, clusterOrder, remote)
+	syncClusterOrderAddOnOperators(clusterOrder, remote)
+	syncClusterOrderVIPEndpoints(clusterOrder, remote)
+	return nil
+}
+
+// syncClusterOrderVIPEndpoints copies the endpoints from the ClusterOrder status to
+// the Cluster (CaaS design, Endpoint feedback): the management API VIP, recorded with
+// the first ManagementPublicationReady=True, and the guest ingress address, recorded
+// once the guest ingress Service uses the reserved address.
 func syncClusterOrderVIPEndpoints(clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) {
 	if clusterOrder.Status.ApiEndpoint != "" {
 		remote.GetStatus().SetApiEndpoint(clusterOrder.Status.ApiEndpoint)
@@ -312,7 +333,28 @@ func syncClusterOrderDelete(ctx context.Context, clusterOrder *ckv1alpha1.Cluste
 	clearClusterReadyCondition(remote)
 	syncClusterOrderNodeRequests(ctx, clusterOrder, remote)
 	setClusterDeletingStateWithTransitionTime(ctx, clusterOrder, remote)
+	syncClusterOrderDeletingProgress(clusterOrder, remote)
 	return nil
+}
+
+// syncClusterOrderDeletingProgress sets PROGRESSING True while the Cluster is
+// DELETING, with the blocking cleanup step as its message (CaaS design, Endpoint
+// status). The ClusterOrder controller writes that step into the message of its
+// Deleting condition.
+func syncClusterOrderDeletingProgress(clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) {
+	message := "Cluster is being deleted"
+	if deleting := apimeta.FindStatusCondition(clusterOrder.Status.Conditions, ckv1alpha1.ConditionDeleting); deleting != nil &&
+		deleting.Status == metav1.ConditionTrue && deleting.Message != "" {
+		message = deleting.Message
+	}
+	progressing := findClusterCondition(remote, privatev1.ClusterConditionType_CLUSTER_CONDITION_TYPE_PROGRESSING)
+	oldStatus := progressing.GetStatus()
+	progressing.SetStatus(privatev1.ConditionStatus_CONDITION_STATUS_TRUE)
+	progressing.SetReason(ckv1alpha1.ReasonDeleting)
+	progressing.SetMessage(sanitizeFeedbackText(message))
+	if oldStatus != privatev1.ConditionStatus_CONDITION_STATUS_TRUE {
+		progressing.SetLastTransitionTime(timestamppb.Now())
+	}
 }
 
 // setClusterStateWithTransitionTime records the state and stamps its transition time when
@@ -427,9 +469,15 @@ var clusterOrderDegradedConditionSources = map[string]struct{}{
 //   - Deleting is reported through the DELETING state (see syncClusterOrderPhase and
 //     syncClusterOrderDelete), not as a condition.
 var clusterOrderUnsurfacedConditions = map[string]struct{}{
-	ckv1alpha1.ConditionNamespaceCreated:                          {},
-	ckv1alpha1.ConditionDeleting:                                  {},
-	string(ckv1alpha1.ClusterOrderConditionFulfillmentTrustReady): {},
+	ckv1alpha1.ConditionNamespaceCreated: {},
+	// The networking conditions are mapped after the loop
+	// (syncClusterOrderNetworkingConditions and syncClusterOrderWorkerConditions).
+	string(ckv1alpha1.ClusterOrderConditionManagementPublicationReady): {},
+	string(ckv1alpha1.ClusterOrderConditionEndpointsReady):             {},
+	string(ckv1alpha1.ClusterOrderConditionWorkerNetworkingReady):      {},
+	string(ckv1alpha1.ClusterOrderConditionClusterHealthy):             {},
+	ckv1alpha1.ConditionDeleting:                                       {},
+	string(ckv1alpha1.ClusterOrderConditionFulfillmentTrustReady):      {},
 }
 
 func syncClusterOrderConditions(ctx context.Context, clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) {
@@ -471,6 +519,62 @@ func syncClusterOrderConditions(ctx context.Context, clusterOrder *ckv1alpha1.Cl
 	}
 
 	applyProgressingStageDetail(clusterOrder, remote)
+	syncClusterOrderNetworkingConditions(clusterOrder, remote)
+}
+
+// clusterUnhealthyReason is the DEGRADED reason set from ClusterHealthy=False.
+const clusterUnhealthyReason = "ClusterUnhealthy"
+
+// syncClusterOrderNetworkingConditions maps the CaaS networking conditions to the
+// Cluster (CaaS design, Endpoint feedback and DNS):
+//   - ManagementPublicationReady is copied to the private
+//     status.management_publication_ready (its False shows as
+//     WORKER_PROVISIONING_BLOCKED, see syncClusterOrderWorkerConditions);
+//   - EndpointsReady=False puts its reason and message into the PROGRESSING message
+//     while PROGRESSING is True;
+//   - ClusterHealthy=False sets DEGRADED True with its message.
+func syncClusterOrderNetworkingConditions(clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) {
+	conditions := clusterOrder.Status.Conditions
+	remote.GetStatus().SetManagementPublicationReady(apimeta.IsStatusConditionTrue(conditions,
+		string(ckv1alpha1.ClusterOrderConditionManagementPublicationReady)))
+
+	if endpoints := apimeta.FindStatusCondition(conditions, string(ckv1alpha1.ClusterOrderConditionEndpointsReady)); endpoints != nil &&
+		endpoints.Status == metav1.ConditionFalse {
+		if progressing := findExistingClusterCondition(remote, privatev1.ClusterConditionType_CLUSTER_CONDITION_TYPE_PROGRESSING); progressing != nil &&
+			progressing.GetStatus() == privatev1.ConditionStatus_CONDITION_STATUS_TRUE {
+			message := endpoints.Reason
+			if endpoints.Message != "" {
+				message += ": " + endpoints.Message
+			}
+			progressing.SetMessage(sanitizeFeedbackText(message))
+		}
+	}
+
+	healthy := apimeta.FindStatusCondition(conditions, string(ckv1alpha1.ClusterOrderConditionClusterHealthy))
+	switch {
+	case healthy != nil && healthy.Status == metav1.ConditionFalse:
+		degraded := findClusterCondition(remote, privatev1.ClusterConditionType_CLUSTER_CONDITION_TYPE_DEGRADED)
+		if degraded.GetStatus() == privatev1.ConditionStatus_CONDITION_STATUS_TRUE && degraded.GetReason() != clusterUnhealthyReason {
+			// Another DEGRADED source (add-on operators) is already reported.
+			return
+		}
+		oldStatus := degraded.GetStatus()
+		degraded.SetStatus(privatev1.ConditionStatus_CONDITION_STATUS_TRUE)
+		degraded.SetReason(clusterUnhealthyReason)
+		degraded.SetMessage(sanitizeFeedbackText(healthy.Message))
+		if oldStatus != degraded.GetStatus() {
+			degraded.SetLastTransitionTime(timestamppb.Now())
+		}
+	default:
+		degraded := findExistingClusterCondition(remote, privatev1.ClusterConditionType_CLUSTER_CONDITION_TYPE_DEGRADED)
+		if degraded != nil && degraded.GetStatus() == privatev1.ConditionStatus_CONDITION_STATUS_TRUE &&
+			degraded.GetReason() == clusterUnhealthyReason {
+			degraded.SetStatus(privatev1.ConditionStatus_CONDITION_STATUS_FALSE)
+			degraded.SetReason("ClusterHealthy")
+			degraded.SetMessage("")
+			degraded.SetLastTransitionTime(timestamppb.Now())
+		}
+	}
 }
 
 func syncClusterOrderAddOnDegraded(remote *privatev1.Cluster, condition metav1.Condition) {
@@ -601,7 +705,13 @@ func syncClusterOrderWorkerConditions(obj *ckv1alpha1.ClusterOrder, remote *priv
 
 	failedStatus := privatev1.ConditionStatus_CONDITION_STATUS_FALSE
 	failedMessage := ""
-	if workersFailed != nil && workersFailed.Status == metav1.ConditionTrue {
+	workerNetworking := apimeta.FindStatusCondition(obj.Status.Conditions, string(ckv1alpha1.ClusterOrderConditionWorkerNetworkingReady))
+	if workerNetworking != nil && workerNetworking.Status == metav1.ConditionFalse &&
+		workerNetworking.Reason == ckv1alpha1.ClusterOrderReasonWorkerNetworkingFailed {
+		// CaaS design, Worker networking state.
+		failedStatus = privatev1.ConditionStatus_CONDITION_STATUS_TRUE
+		failedMessage = "worker network attachment failed"
+	} else if workersFailed != nil && workersFailed.Status == metav1.ConditionTrue {
 		desired := int32(0)
 		if obj.Status.DesiredWorkers != nil {
 			desired = *obj.Status.DesiredWorkers
@@ -614,8 +724,10 @@ func syncClusterOrderWorkerConditions(obj *ckv1alpha1.ClusterOrder, remote *priv
 	infraEnvReady := apimeta.FindStatusCondition(obj.Status.Conditions, ckv1alpha1.ConditionInfraEnvReady)
 	rhcosNotFound := apimeta.FindStatusCondition(obj.Status.Conditions, ckv1alpha1.ConditionRHCOSImageNotFound)
 
+	publication := apimeta.FindStatusCondition(obj.Status.Conditions, string(ckv1alpha1.ClusterOrderConditionManagementPublicationReady))
 	blocked := (infraEnvReady != nil && infraEnvReady.Status == metav1.ConditionFalse) ||
-		(rhcosNotFound != nil && rhcosNotFound.Status == metav1.ConditionTrue)
+		(rhcosNotFound != nil && rhcosNotFound.Status == metav1.ConditionTrue) ||
+		(publication != nil && publication.Status == metav1.ConditionFalse)
 
 	blockedStatus := privatev1.ConditionStatus_CONDITION_STATUS_FALSE
 	blockedMessage := ""
@@ -763,6 +875,40 @@ func syncClusterOrderURLs(ctx context.Context, hubClient clnt.Client, clusterOrd
 	return nil
 }
 
+func fetchHostedCluster(ctx context.Context, hubClient clnt.Client, clusterOrder *ckv1alpha1.ClusterOrder) (*hypershiftv1beta1.HostedCluster, error) {
+	hostedClusterRef := clusterOrder.Status.ClusterReference
+	if hostedClusterRef == nil || hostedClusterRef.Namespace == "" || hostedClusterRef.HostedClusterName == "" {
+		return nil, nil
+	}
+	hostedCluster := &hypershiftv1beta1.HostedCluster{}
+	err := hubClient.Get(ctx, clnt.ObjectKey{
+		Namespace: hostedClusterRef.Namespace,
+		Name:      hostedClusterRef.HostedClusterName,
+	}, hostedCluster)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return hostedCluster, nil
+}
+
+func calculateAPIURL(hc *hypershiftv1beta1.HostedCluster) string {
+	apiEndpoint := hc.Status.ControlPlaneEndpoint
+	if apiEndpoint.Host == "" || apiEndpoint.Port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://%s:%d", apiEndpoint.Host, apiEndpoint.Port)
+}
+
+func calculateConsoleURL(hc *hypershiftv1beta1.HostedCluster) string {
+	return fmt.Sprintf(
+		"https://console-openshift-console.apps.%s.%s",
+		hc.Name, hc.Spec.DNS.BaseDomain,
+	)
+}
+
 func syncClusterOrderNodeRequests(ctx context.Context, clusterOrder *ckv1alpha1.ClusterOrder, remote *privatev1.Cluster) {
 	log := ctrllog.FromContext(ctx)
 	for i := range len(clusterOrder.Status.NodeRequests) {
@@ -808,40 +954,6 @@ func syncClusterOrderNodeRequests(ctx context.Context, clusterOrder *ckv1alpha1.
 			nodeSet.SetSize(newValue)
 		}
 	}
-}
-
-func fetchHostedCluster(ctx context.Context, hubClient clnt.Client, clusterOrder *ckv1alpha1.ClusterOrder) (*hypershiftv1beta1.HostedCluster, error) {
-	hostedClusterRef := clusterOrder.Status.ClusterReference
-	if hostedClusterRef == nil || hostedClusterRef.Namespace == "" || hostedClusterRef.HostedClusterName == "" {
-		return nil, nil
-	}
-	hostedCluster := &hypershiftv1beta1.HostedCluster{}
-	err := hubClient.Get(ctx, clnt.ObjectKey{
-		Namespace: hostedClusterRef.Namespace,
-		Name:      hostedClusterRef.HostedClusterName,
-	}, hostedCluster)
-	if apierrors.IsNotFound(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return hostedCluster, nil
-}
-
-func calculateAPIURL(hc *hypershiftv1beta1.HostedCluster) string {
-	apiEndpoint := hc.Status.ControlPlaneEndpoint
-	if apiEndpoint.Host == "" || apiEndpoint.Port == 0 {
-		return ""
-	}
-	return fmt.Sprintf("https://%s:%d", apiEndpoint.Host, apiEndpoint.Port)
-}
-
-func calculateConsoleURL(hc *hypershiftv1beta1.HostedCluster) string {
-	return fmt.Sprintf(
-		"https://console-openshift-console.apps.%s.%s",
-		hc.Name, hc.Spec.DNS.BaseDomain,
-	)
 }
 
 // findExistingClusterCondition returns the condition of the given type if it is already

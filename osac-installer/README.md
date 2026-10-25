@@ -65,8 +65,8 @@ The OSAC platform relies on five core components to deliver governed self-servic
 > - Red Hat OpenShift Advanced Cluster Management (RHACM)
 > - Red Hat OpenShift Virtualization (OCP-Virt) - **Optional**: Only required for VM as a Service (VMaaS) support
 > - Red Hat Ansible Automation Platform (AAP)
-> - A network backend for bare metal provisioning: **Netris** or agentless
->   (`global.networking` — see [Network Backend Configuration](#network-backend-configuration-caas))
+> - A Fabric Manager for bare metal networking, registered by the admin
+>   (`global.networking` — see [Networking Configuration](#networking-configuration))
 
 **Configuration Manifests**
 
@@ -394,15 +394,8 @@ the `osac` and `osac-devstack` releases plus `scripts/dev-full/`:
   its default VirtualNetwork + Subnet + SecurityGroup via tenant onboarding, so those are
   ready without manual seeding.
 
-The `dev-full` overlay enables `operator.controllers.networkingProvisioning` so
-Subnet AAP jobs create a target namespace and `ClusterUserDefinedNetwork` object
-for every tenant. The Kind-only `ClusterUserDefinedNetwork` CRD is installed by
-the earlier `osac-infra` phase and accepts the object without running an OVN
-controller. This supports VM target-namespace provisioning but creates no CUDN
-dataplane and does not validate tenant subnet isolation. Kind VMs continue
-to use the default pod network and the cluster-wide `l2bridge` binding. The
-dev-full tenant hook waits for the starter tenant's namespace and CUDN object so
-missing AAP provisioning or CRD installation fails the install visibly.
+The Kind profiles set `global.networking.provisioningEnabled: false`, so
+networking resources reconcile to READY without a real fabric (Kind has none).
 
 **Prerequisites** (beyond the base tools) — enforced by `scripts/dev-full/kind-runtime.sh check`:
 
@@ -594,39 +587,19 @@ Configure via Helm values under `aap.instanceGroups.*` in your values file.
 
 See [docs/aap-configuration.md](docs/aap-configuration.md) for details.
 
-#### Network Backend Configuration (CaaS)
+#### Networking Configuration
 
-Default networking is agentless (`global.networking.fabricManager: ""`,
-`k8sManager: k8s_only`). For **Netris**, set the facade and enable both AAP
-instance groups:
+Networking is configured under `global.networking`: `provisioningEnabled`
+(fixed at installation), `excludedIpv4Cidrs`, the required `fabricManager`
+(the name in the provider's Fabric Manager registration), `k8sManager`
+(required with VMaaS), and `networkClass` (tenant defaults,
+east-west capabilities and the optional address plan). Network manager
+settings and credentials go in `aap.instanceGroups.networkFulfillment.config`
+and `.secret`. The admin applies the Fabric Manager registration ConfigMap;
+it is not a Helm value.
 
-```yaml
-global:
-  networking:
-    fabricManager: netris
-    k8sManager: ""
-    netris:
-      controllerUrl: "https://redhat-ctl.netris.io"
-      credentials:
-        username: "netris"
-        externalSecret: true
-      siteId: "5"
-      tenantId: "1"
-      tenantName: "Admin"
-
-aap:
-  instanceGroups:
-    clusterFulfillment:
-      enabled: true
-    networkFulfillment:
-      enabled: true
-```
-
-Helm derives `NETWORK_CLASS`, manager ConfigMaps, and the default NetworkClass
-from this block. Do not set those by hand unless using expert overrides.
-
-See [docs/network-backend.md](docs/network-backend.md) for profiles,
-credentials, and the advanced/manual path.
+See [docs/network-backend.md](docs/network-backend.md) for the values, the
+checks a rollout runs, and the CI profiles.
 
 #### FabricDomain admin onboarding (Phase 1)
 

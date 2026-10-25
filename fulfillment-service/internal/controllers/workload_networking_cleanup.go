@@ -31,11 +31,9 @@ import (
 )
 
 const (
-	workloadAutoCreatedLabel        = "osac.openshift.io/auto-created"
-	workloadAutoCreatedForLabel     = "osac.openshift.io/auto-created-for"
-	workloadAutoProvisionedLabel    = "osac.openshift.io/auto-provisioned"
-	workloadAutoProvisionedForLabel = "osac.openshift.io/auto-provisioned-for"
-	workloadSystemCreator           = "system"
+	workloadAutoCreatedLabel    = "osac.openshift.io/auto-created"
+	workloadAutoCreatedForLabel = "osac.openshift.io/auto-created-for"
+	workloadSystemCreator       = "system"
 )
 
 // WorkloadNetworkingCleanup removes automatic ExternalIPAttachments before their
@@ -43,6 +41,15 @@ const (
 // both kinds of resources.
 type WorkloadNetworkingCleanup interface {
 	Cleanup(ctx context.Context, workloadID string) (complete bool, err error)
+
+	// CleanupSecurityGroups deletes the automatic SecurityGroups of a workload (the Cluster SecurityGroup). It
+	// reports complete once their records are removed.
+	CleanupSecurityGroups(ctx context.Context, workloadID string) (complete bool, err error)
+}
+
+type securityGroupsCleanupClient interface {
+	List(context.Context, *privatev1.SecurityGroupsListRequest, ...grpc.CallOption) (*privatev1.SecurityGroupsListResponse, error)
+	Delete(context.Context, *privatev1.SecurityGroupsDeleteRequest, ...grpc.CallOption) (*privatev1.SecurityGroupsDeleteResponse, error)
 }
 
 type externalIPAttachmentsCleanupClient interface {
@@ -56,8 +63,9 @@ type externalIPsCleanupClient interface {
 }
 
 type workloadNetworkingCleanup struct {
-	attachments externalIPAttachmentsCleanupClient
-	externalIPs externalIPsCleanupClient
+	attachments    externalIPAttachmentsCleanupClient
+	externalIPs    externalIPsCleanupClient
+	securityGroups securityGroupsCleanupClient
 }
 
 // NewWorkloadNetworkingCleanup creates the shared cleanup path used by workload
@@ -65,8 +73,9 @@ type workloadNetworkingCleanup struct {
 // cleanup reports complete.
 func NewWorkloadNetworkingCleanup(connection grpc.ClientConnInterface) WorkloadNetworkingCleanup {
 	return &workloadNetworkingCleanup{
-		attachments: privatev1.NewExternalIPAttachmentsClient(connection),
-		externalIPs: privatev1.NewExternalIPsClient(connection),
+		attachments:    privatev1.NewExternalIPAttachmentsClient(connection),
+		externalIPs:    privatev1.NewExternalIPsClient(connection),
+		securityGroups: privatev1.NewSecurityGroupsClient(connection),
 	}
 }
 
@@ -162,14 +171,60 @@ func (c *workloadNetworkingCleanup) cleanupExternalIPs(ctx context.Context, work
 }
 
 func automaticWorkloadNetworkFilter(workloadID string) string {
-	id := strconv.Quote(workloadID)
-	return fmt.Sprintf(
-		"(%s && %s) || (%s && %s)",
-		"this.metadata.labels['"+workloadAutoCreatedLabel+"'] == 'true'",
-		"this.metadata.labels['"+workloadAutoCreatedForLabel+"'] == "+id,
-		"this.metadata.labels['"+workloadAutoProvisionedLabel+"'] == 'true'",
-		"this.metadata.labels['"+workloadAutoProvisionedForLabel+"'] == "+id,
-	)
+	return fmt.Sprintf("this.metadata.labels['%s'] == 'true' && this.metadata.labels['%s'] == %s",
+		workloadAutoCreatedLabel, workloadAutoCreatedForLabel, strconv.Quote(workloadID))
+}
+
+func (c *workloadNetworkingCleanup) CleanupSecurityGroups(ctx context.Context, workloadID string) (bool, error) {
+	if c.securityGroups == nil {
+		return false, errors.New("networking cleanup clients are not configured")
+	}
+	filter := automaticWorkloadNetworkFilter(workloadID)
+	response, err := c.securityGroups.List(ctx, privatev1.SecurityGroupsListRequest_builder{
+		Filter: &filter,
+	}.Build())
+	if err != nil {
+		return false, fmt.Errorf("failed to list automatic SecurityGroups for workload %s: %w", workloadID, err)
+	}
+	pending := false
+	for _, group := range response.GetItems() {
+		if group.GetMetadata().GetCreator() != workloadSystemCreator {
+			continue
+		}
+		pending = true
+		if group.GetMetadata().HasDeletionTimestamp() {
+			continue
+		}
+		_, err = c.securityGroups.Delete(ctx, privatev1.SecurityGroupsDeleteRequest_builder{
+			Id: group.GetId(),
+		}.Build())
+		if err != nil && status.Code(err) != codes.NotFound {
+			return false, fmt.Errorf("failed to delete automatic SecurityGroup %s for workload %s: %w",
+				group.GetId(), workloadID, err)
+		}
+	}
+	return !pending, nil
+}
+
+// ReconcileWorkloadSecurityGroupCleanup keeps the workload finalizer in place and retries while the automatic
+// SecurityGroups of the workload are still being deleted.
+func ReconcileWorkloadSecurityGroupCleanup(
+	ctx context.Context,
+	cleanup WorkloadNetworkingCleanup,
+	workloadID string,
+) error {
+	if cleanup == nil {
+		return errors.New("workload networking cleanup is not configured")
+	}
+	complete, err := cleanup.CleanupSecurityGroups(ctx, workloadID)
+	if err != nil {
+		return RequeueAfter(fmt.Errorf("failed to clean up security groups for workload %s: %w", workloadID, err),
+			time.Second)
+	}
+	if !complete {
+		return RequeueAfterNetworkingCleanup()
+	}
+	return nil
 }
 
 // ReconcileWorkloadNetworkingCleanup keeps the workload finalizer in place and

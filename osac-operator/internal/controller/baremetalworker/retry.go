@@ -71,7 +71,7 @@ func ClassifyFailure(reason string) FailureCategory {
 	switch reason {
 	case eventReasonAgentRegistrationTimeout:
 		return FailureCategoryAgentTimeout
-	case "NoHostAvailable", "ResourceExhausted":
+	case "NoHostAvailable", "ResourceExhausted", "NetworkAttachmentFailed", "NetworkHandoffFailed", "IPDiscoveryFailed":
 		return FailureCategoryResource
 	default:
 		return FailureCategoryTransient

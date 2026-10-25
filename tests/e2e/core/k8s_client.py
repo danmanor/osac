@@ -294,6 +294,23 @@ class K8sClient:
 
     # VirtualNetwork queries
 
+    def get_ready_condition(self, *, resource: str, name: str, checked: bool = True) -> str:
+        """Status of the Ready condition ("True", "False", "Unknown"), or "" when absent.
+
+        Networking CRs report readiness only through this condition.
+        """
+        output, rc = self._get(
+            "get",
+            resource,
+            name,
+            "-n",
+            self.namespace,
+            "-o",
+            'jsonpath={.status.conditions[?(@.type=="Ready")].status}',
+            checked=checked,
+        )
+        return output if rc == 0 else ""
+
     def get_virtual_network_name(self, *, uuid: str, checked: bool = True) -> str:
         output, rc = self._get(
             "get",
@@ -305,12 +322,6 @@ class K8sClient:
             "-o",
             "jsonpath={.items[0].metadata.name}",
             checked=checked,
-        )
-        return output if rc == 0 else ""
-
-    def get_virtual_network_phase(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "virtualnetwork", name, "-n", self.namespace, "-o", "jsonpath={.status.phase}", checked=checked
         )
         return output if rc == 0 else ""
 
@@ -327,12 +338,6 @@ class K8sClient:
             "-o",
             "jsonpath={.items[0].metadata.name}",
             checked=checked,
-        )
-        return output if rc == 0 else ""
-
-    def get_subnet_phase(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "subnet", name, "-n", self.namespace, "-o", "jsonpath={.status.phase}", checked=checked
         )
         return output if rc == 0 else ""
 
@@ -447,12 +452,6 @@ class K8sClient:
         )
         return output if rc == 0 else ""
 
-    def get_external_ip_pool_phase(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "externalippool", name, "-n", self.namespace, "-o", "jsonpath={.status.phase}", checked=checked
-        )
-        return output if rc == 0 else ""
-
     # ExternalIP queries
 
     def get_external_ip_name(self, *, uuid: str, checked: bool = True) -> str:
@@ -469,12 +468,6 @@ class K8sClient:
         )
         return output if rc == 0 else ""
 
-    def get_external_ip_state(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "externalip", name, "-n", self.namespace, "-o", "jsonpath={.status.state}", checked=checked
-        )
-        return output if rc == 0 else ""
-
     # ExternalIPAttachment queries
 
     def get_external_ip_attachment_name(self, *, uuid: str, checked: bool = True) -> str:
@@ -488,12 +481,6 @@ class K8sClient:
             "-o",
             "jsonpath={.items[0].metadata.name}",
             checked=checked,
-        )
-        return output if rc == 0 else ""
-
-    def get_external_ip_attachment_phase(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "externalipattachment", name, "-n", self.namespace, "-o", "jsonpath={.status.phase}", checked=checked
         )
         return output if rc == 0 else ""
 
@@ -718,12 +705,6 @@ class K8sClient:
             "-o",
             "jsonpath={.items[0].metadata.name}",
             checked=checked,
-        )
-        return output if rc == 0 else ""
-
-    def get_security_group_phase(self, *, name: str, checked: bool = True) -> str:
-        output, rc = self._get(
-            "get", "securitygroup", name, "-n", self.namespace, "-o", "jsonpath={.status.phase}", checked=checked
         )
         return output if rc == 0 else ""
 

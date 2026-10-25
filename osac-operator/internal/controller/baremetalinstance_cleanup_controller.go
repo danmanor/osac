@@ -35,7 +35,11 @@ import (
 
 const bareMetalInstanceCleanupFinalizer = "osac.openshift.io/baremetalinstance-cleanup"
 
-// BareMetalInstanceCleanupReconciler removes automatically created networking resources before a BareMetalInstance is deleted.
+// BareMetalInstanceCleanupReconciler requests the automatic
+// ExternalIPAttachment of a BareMetalInstance and holds the BareMetalInstance
+// CR until no automatic ExternalIPAttachment or ExternalIP CR for it remains
+// (Unified design, Automatic external access; BMaaS design). It deletes none of
+// them: the fulfillment service does.
 type BareMetalInstanceCleanupReconciler struct {
 	client.Client
 	bareMetalInstanceNamespace  string
@@ -51,7 +55,7 @@ func NewBareMetalInstanceCleanupReconciler(c client.Client, bareMetalInstanceNam
 		Client:                     c,
 		bareMetalInstanceNamespace: bareMetalInstanceNamespace,
 		networkingNamespace:        networkingNamespace,
-		pollInterval:               5 * time.Second,
+		pollInterval:               automaticExternalAccessRecheck,
 	}
 }
 
@@ -69,8 +73,8 @@ func (r *BareMetalInstanceCleanupReconciler) SetupWithManager(mgr mcmanager.Mana
 
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalinstances,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalinstances/finalizers,verbs=update
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalips,verbs=get;list;delete
-// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalipattachments,verbs=get;list;delete
+// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalips,verbs=get;list;watch
+// +kubebuilder:rbac:groups=osac.openshift.io,resources=externalipattachments,verbs=get;list;watch
 
 // Reconcile guards BareMetalInstance deletion until its automatically created networking resources are gone.
 func (r *BareMetalInstanceCleanupReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -101,10 +105,13 @@ func (r *BareMetalInstanceCleanupReconciler) Reconcile(ctx context.Context, requ
 		controllerutil.RemoveFinalizer(bmi, bareMetalInstanceCleanupFinalizer)
 		return ctrl.Result{}, r.Update(ctx, bmi)
 	}
-	done, result, err := reconcileAutoExternalIPCleanup(ctx, r.Client, r.networkingNamespace,
-		autoExternalIPOwner{kind: bareMetalInstanceOwner, id: id}, r.pollInterval)
-	if err != nil || !done {
-		return result, err
+	remains, err := automaticExternalAccessRemains(ctx, r.Client, r.networkingNamespace,
+		autoExternalIPOwner{kind: bareMetalInstanceOwner, id: id})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if remains {
+		return ctrl.Result{RequeueAfter: r.pollInterval}, nil
 	}
 	controllerutil.RemoveFinalizer(bmi, bareMetalInstanceCleanupFinalizer)
 	return ctrl.Result{}, r.Update(ctx, bmi)
@@ -115,9 +122,21 @@ func (r *BareMetalInstanceCleanupReconciler) reconcileAutomaticExternalIPAttachm
 	bmi *bmfov1alpha1.BareMetalInstance,
 	bmiID string,
 ) (ctrl.Result, error) {
-	if bmi.Status.Phase != bmfov1alpha1.BareMetalInstancePhaseReady || !hasPrimaryBareMetalInstanceAddress(bmi) ||
-		r.BareMetalInstancesClient == nil || r.ExternalIPAttachmentsClient == nil {
+	if r.BareMetalInstancesClient == nil || r.ExternalIPAttachmentsClient == nil {
 		return ctrl.Result{}, nil
+	}
+	if bmi.Status.Phase == bmfov1alpha1.BareMetalInstancePhaseFailed {
+		// A FAILED workload gets no automatic ExternalIPAttachment; no recheck.
+		return ctrl.Result{}, nil
+	}
+	if !bareMetalInstanceEndpointReady(bmi) {
+		// Recheck while an automatic ExternalIP waits for the endpoint.
+		remains, err := automaticExternalAccessRemains(ctx, r.Client, r.networkingNamespace,
+			autoExternalIPOwner{kind: bareMetalInstanceOwner, id: bmiID})
+		if err != nil || !remains {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: r.pollInterval}, nil
 	}
 	response, err := r.BareMetalInstancesClient.Get(ctx,
 		privatev1.BareMetalInstancesGetRequest_builder{Id: bmiID}.Build())
@@ -146,11 +165,14 @@ func (r *BareMetalInstanceCleanupReconciler) reconcileAutomaticExternalIPAttachm
 		r.ExternalIPAttachmentsClient, r.pollInterval, target)
 }
 
-func hasPrimaryBareMetalInstanceAddress(bmi *bmfov1alpha1.BareMetalInstance) bool {
-	for _, attachment := range bmi.Status.NetworkAttachmentStatuses {
-		if attachment.Primary && attachment.IPAddress != "" {
-			return true
-		}
-	}
-	return false
+// bareMetalInstanceEndpointReady is the cleanup controller's endpoint test of
+// a BareMetalInstance (BMaaS design, ExternalIPAttachment target
+// baremetal_instance): phase Ready, the attachment address set, no
+// deletionTimestamp, and BMF's observed power state Always.
+func bareMetalInstanceEndpointReady(bmi *bmfov1alpha1.BareMetalInstance) bool {
+	return bmi.DeletionTimestamp.IsZero() &&
+		bmi.Status.Phase == bmfov1alpha1.BareMetalInstancePhaseReady &&
+		len(bmi.Status.NetworkAttachmentStatuses) > 0 &&
+		bmi.Status.NetworkAttachmentStatuses[0].IPAddress != "" &&
+		bmi.Status.RunStrategy == bmfov1alpha1.RunStrategyAlways
 }

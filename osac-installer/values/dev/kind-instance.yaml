@@ -4,6 +4,12 @@
 global:
   fulfillmentTrust:
     enabled: false
+  # Provider networking disabled: networking resources become READY without
+  # provider jobs in this test profile.
+  networking:
+    provisioningEnabled: false
+    fabricManager: example_fabric
+    k8sManager: example_k8s
   services:
     caas:
       enabled: true

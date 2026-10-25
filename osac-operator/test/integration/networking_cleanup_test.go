@@ -344,7 +344,9 @@ func cleanupDelete(object *unstructured.Unstructured) {
 }
 
 func restartCleanupManager() {
-	selector := "control-plane=controller-manager"
+	// BMF's deployment carries control-plane=controller-manager too; select
+	// osac-operator's own deployment.
+	selector := "control-plane=controller-manager,app.kubernetes.io/name=operator"
 	output, err := exec.Command("kubectl", "get", "deployments", "-n", operatorNamespace,
 		"-l", selector, "-o", "jsonpath={.items[0].metadata.name}").CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), string(output))

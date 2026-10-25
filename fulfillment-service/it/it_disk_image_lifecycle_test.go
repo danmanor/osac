@@ -151,14 +151,7 @@ var _ = Describe("DiskImage lifecycle", func() {
 		// Create NetworkClass — required for VirtualNetwork/Subnet chain so the
 		// ComputeInstance has a valid network attachment (the server rejects
 		// creation when no default subnet exists and no attachments are provided).
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("di-nc-%s", uuid.New())}.Build(),
-				Title:         "Test Network Class",
-				FabricManager: new("netris"),
-				K8SManager:    new(testVMK8SManagerName),
-			}.Build(),
-		}.Build())
+		ncResp, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId = ncResp.GetObject().GetId()
 		waitForNetworkClassReady(ctx, networkClassesClient, networkClassId)
@@ -173,9 +166,7 @@ var _ = Describe("DiskImage lifecycle", func() {
 				}.Build(),
 				Id: virtualNetworkId,
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new("10.200.0.0/16"),
+					Ipv4Cidr: new("10.200.0.0/16"),
 				}.Build(),
 			}.Build(),
 		}.Build())

@@ -83,13 +83,7 @@ var _ = Describe("Networking tenant isolation", func() {
 			deleteTenant(cleanupCtx, tenantsClient, projectsClient, tenantAID, tenantAName)
 		})
 
-		ncResp, err := networkClassesClient.Create(ctx, privatev1.NetworkClassesCreateRequest_builder{
-			Object: privatev1.NetworkClass_builder{
-				Metadata:      privatev1.Metadata_builder{Name: fmt.Sprintf("nc-%s", uuid.New()[24:32])}.Build(),
-				Title:         "Networking tenant isolation NetworkClass",
-				FabricManager: new("netris"),
-			}.Build(),
-		}.Build())
+		ncResp, err := sharedNetworkClass(ctx, networkClassesClient)
 		Expect(err).ToNot(HaveOccurred())
 		networkClassId = ncResp.GetObject().GetId()
 		DeferCleanup(func(cleanupCtx context.Context) {
@@ -123,9 +117,7 @@ var _ = Describe("Networking tenant isolation", func() {
 					Tenant: tenant,
 				}.Build(),
 				Spec: privatev1.VirtualNetworkSpec_builder{
-					NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClassId}.Build(),
-					Region:       "us-east-1",
-					Ipv4Cidr:     new(ipv4Cidr),
+					Ipv4Cidr: new(ipv4Cidr),
 				}.Build(),
 			}.Build(),
 		}.Build())
@@ -205,6 +197,7 @@ var _ = Describe("Networking tenant isolation", func() {
 	}
 
 	createExternalIP := func(tenant, poolID string) string {
+		ndSkipUnlessProviderNetworkingEnabled(ctx, "ExternalIP tenant isolation")
 		eipID := fmt.Sprintf("eip-%s", uuid.New())
 		_, err := externalIPsClient.Create(ctx, privatev1.ExternalIPsCreateRequest_builder{
 			Object: privatev1.ExternalIP_builder{

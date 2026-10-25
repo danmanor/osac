@@ -43,7 +43,7 @@ func observeWorkerFixture(workers []v1alpha1.WorkerStatus, agents *unstructured.
 	observed := indexWorkerBMIs(bmis)
 	observed.agents = agents
 	r := &Reconciler{fulfillment: absentProjectionClient{}, recorder: events.NewFakeRecorder(10)}
-	workers, err := r.observeExistingWorkers(context.Background(), co, "tenant", observed)
+	workers, err := r.observeExistingWorkers(context.Background(), co, workerBMITenant, observed)
 	Expect(err).NotTo(HaveOccurred())
 	var removed []string
 	for _, before := range co.Status.Workers {
@@ -208,7 +208,7 @@ var _ = It("backfills a legacy attempt clock once without extending its deadline
 	co.Status.Workers = []v1alpha1.WorkerStatus{legacy}
 	observed := indexWorkerBMIs([]*privatev1.BareMetalInstance{bmi})
 	observed.agents = &unstructured.UnstructuredList{}
-	got, err := r.observeExistingWorkers(ctx, co, "tenant", observed)
+	got, err := r.observeExistingWorkers(ctx, co, workerBMITenant, observed)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(got[0].AttemptStartedAt).NotTo(BeNil(), "legacy worker did not inherit the BMI creation time: %+v", got[0].AttemptStartedAt)
 	Expect(got[0].AttemptStartedAt.Time.Equal(created)).To(BeTrue(), "legacy worker did not inherit the BMI creation time: %+v", got[0].AttemptStartedAt)
@@ -217,7 +217,7 @@ var _ = It("backfills a legacy attempt clock once without extending its deadline
 	co.Status.Workers = got
 	observed = indexWorkerBMIs([]*privatev1.BareMetalInstance{bmi})
 	observed.agents = &unstructured.UnstructuredList{}
-	again, err := r.observeExistingWorkers(ctx, co, "tenant", observed)
+	again, err := r.observeExistingWorkers(ctx, co, workerBMITenant, observed)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(again[0].AttemptStartedAt).NotTo(BeNil(), "backfill refreshed an already persisted attempt origin")
 	Expect(again[0].AttemptStartedAt.Equal(got[0].AttemptStartedAt)).To(BeTrue(), "backfill refreshed an already persisted attempt origin")
@@ -229,7 +229,7 @@ var _ = It("backfills a legacy attempt clock once without extending its deadline
 	noclock.Status.Workers = []v1alpha1.WorkerStatus{noclockWorker}
 	fallbackObs := indexWorkerBMIs([]*privatev1.BareMetalInstance{ownedBMIFixture(noclock, "worker", "id")})
 	fallbackObs.agents = &unstructured.UnstructuredList{}
-	fallback, err := r.observeExistingWorkers(ctx, noclock, "tenant", fallbackObs)
+	fallback, err := r.observeExistingWorkers(ctx, noclock, workerBMITenant, fallbackObs)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(fallback[0].AttemptStartedAt).ToNot(BeNil(), "missing-clock legacy worker was not given a one-time origin")
 })
