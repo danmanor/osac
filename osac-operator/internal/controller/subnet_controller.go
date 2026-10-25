@@ -37,7 +37,6 @@ import (
 type SubnetReconciler struct {
 	Client              client.Client
 	Engine              *networktask.Engine
-	Claims              *networktask.SegmentClaimIndex
 	NetworkingNamespace string
 }
 
@@ -66,10 +65,6 @@ func (r *SubnetReconciler) create(ctx context.Context, subnet *v1alpha1.Subnet) 
 		if err := r.Client.Update(ctx, subnet); err != nil {
 			return ctrl.Result{}, err
 		}
-		return waitResult(), nil
-	}
-	if r.Engine.ProvisioningEnabled() && !r.Claims.Ready() {
-		networktask.SetProgressing(subnet, "waiting for network segment claim bootstrap")
 		return waitResult(), nil
 	}
 	var vn *v1alpha1.VirtualNetwork
@@ -121,11 +116,11 @@ func (r *SubnetReconciler) create(ctx context.Context, subnet *v1alpha1.Subnet) 
 		func() (networktask.Request, bool) {
 			req := taskRequest(subnet, kindSubnet, networktask.CreateSubnet, v1alpha1.NetworkJobManagerFabric, r.fabricVars(subnet, input))
 			req.BeforeLaunch = store
-			// The shared key protects both the launch reservation and segment
-			// acceptance through its status write, including delete-wait retries.
+			// The shared key prevents concurrent Subnet tasks within one
+			// VirtualNetwork and protects acceptance through its status write.
 			req.Slot = slot
 			req.Accept = func(ctx context.Context, result networktask.Result) error {
-				return networktask.AcceptSegment(ctx, r.Claims, subnet, networkType, result)
+				return networktask.AcceptSegment(ctx, subnet, networkType, result)
 			}
 			return req, true
 		},
@@ -141,11 +136,6 @@ func (r *SubnetReconciler) create(ctx context.Context, subnet *v1alpha1.Subnet) 
 	if done {
 		networktask.SetSucceeded(subnet)
 		return ctrl.Result{}, nil
-	}
-	if out.Entry.State == v1alpha1.NetworkJobStateFailed && subnet.Status.NetworkSegment == nil && r.Claims != nil {
-		if err := r.Claims.Release(ctx, subnet); err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 	reportOutcome(subnet, out)
 	return outcomeResult(out), nil
@@ -198,11 +188,6 @@ func (r *SubnetReconciler) remove(ctx context.Context, subnet *v1alpha1.Subnet) 
 	)
 	if err != nil || !done {
 		return done, result, err
-	}
-	if r.Claims != nil {
-		if err := r.Claims.Release(ctx, subnet); err != nil {
-			return false, ctrl.Result{}, err
-		}
 	}
 	return true, result, nil
 }

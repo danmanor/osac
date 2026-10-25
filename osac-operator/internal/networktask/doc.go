@@ -85,9 +85,8 @@ A networking resource controller reconciles roughly like this:
 		Vars:         networktask.WithLaunchKeys(input, map[string]any{"network_type": "evpn"}),
 		BeforeLaunch: before, // lands in the same write as the first Running entry
 		Slot:         &networktask.SubnetSlot{VirtualNetworkID: subnet.Spec.VirtualNetwork},
-		AcceptLock:   eng.SegmentLock(),
 		Accept: func(ctx context.Context, res networktask.Result) error {
-			return networktask.AcceptSegment(ctx, eng.APIReader(), subnet, "evpn", res)
+			return networktask.AcceptSegment(ctx, subnet, "evpn", res)
 		},
 	})
 	if err != nil { return ctrl.Result{}, err }
@@ -104,7 +103,7 @@ and remove the finalizer once all succeeded (none started: remove it at once).
 Call Forget(uid) after the finalizer is gone.
 
 Results: AcceptNoOutput (default), ParseBackendID, ParseNetworkSegment and
-AcceptSegment (with CheckSegment), ParseDHCPLease, ParseExternalIP,
+AcceptSegment, ParseDHCPLease, ParseExternalIP,
 ParseClusterIngress and ParseVMAttachment validate the typed outputs of
 contract §4.10; each returns a RejectError naming only the broken rule.
 

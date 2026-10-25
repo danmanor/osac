@@ -905,26 +905,6 @@ func setupNetworkingControllers(
 ) error {
 	localMgr := mgr.GetLocalManager()
 	networkingNamespace := os.Getenv(envNetworkingNamespace)
-	claims := networktask.NewSegmentClaimIndex(localMgr.GetClient(), localMgr.GetAPIReader(), networkingNamespace)
-	claims.Recorder = localMgr.GetEventRecorder("network-segment-claims")
-	if err := localMgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			if err := claims.Bootstrap(ctx); err == nil {
-				return nil
-			} else {
-				setupLog.Error(err, "Network segment claim bootstrap is not ready")
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-ticker.C:
-			}
-		}
-	})); err != nil {
-		return fmt.Errorf("segment claim bootstrap: %w", err)
-	}
 
 	if err := (&controller.NetworkClassReconciler{
 		Client:                localMgr.GetClient(),
@@ -942,7 +922,7 @@ func setupNetworkingControllers(
 		SetupWithManager(mcmanager.Manager) error
 	}{
 		"virtualnetwork":       &controller.VirtualNetworkReconciler{Client: c, Engine: e, NetworkingNamespace: ns},
-		"subnet":               &controller.SubnetReconciler{Client: c, Engine: e, Claims: claims, NetworkingNamespace: ns},
+		"subnet":               &controller.SubnetReconciler{Client: c, Engine: e, NetworkingNamespace: ns},
 		"securitygroup":        &controller.SecurityGroupReconciler{Client: c, Engine: e, NetworkingNamespace: ns},
 		"externalippool":       &controller.ExternalIPPoolReconciler{Client: c, Engine: e, NetworkingNamespace: ns},
 		"externalip":           &controller.ExternalIPReconciler{Client: c, Engine: e, NetworkingNamespace: ns},

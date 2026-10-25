@@ -736,17 +736,8 @@ func TestSubnetSlotReleasesBeforeAAP(t *testing.T) {
 	}
 }
 
-func TestWaitingSiblingAcceptanceSerializesThroughStatus(t *testing.T) {
-	old1, old2 := subnetObj("old1", "old1", "old-vn"), subnetObj("old2", "old2", "old-vn")
-	for i, old := range []*v1alpha1.Subnet{old1, old2} {
-		old.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: int32(100 + i), L3VNI: 900}
-		old.Status.Jobs = []v1alpha1.NetworkJobStatus{{Task: DeleteSubnet, Manager: v1alpha1.NetworkJobManagerFabric, State: v1alpha1.NetworkJobStateRunning}}
-	}
-	h := newHarness(t, old1, old2, subnetObj("s1", "s1", "vn1"), subnetObj("s2", "s2", "vn1"), subnetObj("s3", "s3", "vn2"))
-	index := NewSegmentClaimIndex(h.client, h.client, "claims")
-	if err := index.Bootstrap(h.ctx); err != nil {
-		t.Fatal(err)
-	}
+func TestSiblingAcceptanceSerializesThroughStatus(t *testing.T) {
+	h := newHarness(t, subnetObj("s1", "s1", "vn1"), subnetObj("s2", "s2", "vn1"), subnetObj("s3", "s3", "vn2"))
 	reqFor := func(s *v1alpha1.Subnet, entered chan struct{}) Request {
 		req := fabricReq(CreateSubnet)
 		req.Slot = &SubnetSlot{VirtualNetworkID: s.Spec.VirtualNetwork}
@@ -754,45 +745,21 @@ func TestWaitingSiblingAcceptanceSerializesThroughStatus(t *testing.T) {
 			if entered != nil {
 				close(entered)
 			}
-			return AcceptSegment(ctx, index, s, "evpn", result)
+			return AcceptSegment(ctx, s, "evpn", result)
 		}
 		return req
 	}
+	// Seed completed AAP jobs so both sibling acceptances can race for the
+	// shared VirtualNetwork lock.
 	for i, name := range []string{"s1", "s2", "s3"} {
 		s := h.get(name)
-		out, err := h.engine.Run(h.ctx, s, reqFor(s, nil))
+		out, err := h.engine.Run(h.ctx, s, fabricReq(CreateSubnet))
 		if err != nil {
 			t.Fatal(err)
 		}
 		l2 := 100 + i
-		if i == 2 {
-			l2 = 300
-		}
 		artifacts := fmt.Sprintf(`{"osac_result":{"network_segment":{"type":"evpn","l2_vni":%d,"l3_vni":%d}}}`, l2, 901+i)
 		h.aap.finish(out.Entry.JobID, "successful", artifacts, "")
-		if i < 2 {
-			s = h.get(name)
-			out, err = h.engine.Run(h.ctx, s, reqFor(s, nil))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out.Entry.Message != ErrWaitForDelete.Error() {
-				t.Fatalf("create did not wait for delete: %+v", out)
-			}
-		}
-	}
-	if slotHeld(&v1alpha1.Subnet{}, []v1alpha1.Subnet{*h.get("s1"), *h.get("s2")}, "vn1") {
-		t.Fatal("waiting siblings still hold launch slot")
-	}
-	for _, name := range []string{"old1", "old2"} {
-		old := h.get(name)
-		old.Status.Jobs[0].State = v1alpha1.NetworkJobStateSucceeded
-		if err := h.client.Status().Update(h.ctx, old); err != nil {
-			t.Fatal(err)
-		}
-		if err := index.Release(h.ctx, old); err != nil {
-			t.Fatal(err)
-		}
 	}
 	firstAtStatus, releaseStatus := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -828,11 +795,11 @@ func TestWaitingSiblingAcceptanceSerializesThroughStatus(t *testing.T) {
 	if out := awaitEngineRun(t, first); !out.Succeeded() {
 		t.Fatalf("first acceptance = %+v", out)
 	}
-	if out := awaitEngineRun(t, second); !out.Failed() || !strings.Contains(out.Entry.Message, SegmentL3DiffersSibling) {
-		t.Fatalf("inconsistent sibling accepted: %+v", out)
+	if out := awaitEngineRun(t, second); !out.Succeeded() {
+		t.Fatalf("second acceptance = %+v", out)
 	}
-	if h.get("s2").Status.NetworkSegment != nil {
-		t.Fatal("rejected sibling segment persisted")
+	if segment := h.get("s2").Status.NetworkSegment; segment == nil || segment.L3VNI != 902 {
+		t.Fatalf("second fabric segment was not stored: %+v", segment)
 	}
 	if len(h.engine.vnLocks.locks) != 0 {
 		t.Fatalf("acceptance locks retained: %d", len(h.engine.vnLocks.locks))
@@ -847,69 +814,27 @@ func TestProvisioningDisabledRefusesManagerTasks(t *testing.T) {
 	}
 }
 
-func TestSegmentAcceptanceWaitsForDelete(t *testing.T) {
+func TestFabricSegmentIsNotRejectedForVNIConflict(t *testing.T) {
 	other := subnetObj("old", "old", "vn2")
 	other.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: 100, L3VNI: 900}
-	other.Status.Jobs = []v1alpha1.NetworkJobStatus{{Task: DeleteSubnet, Manager: v1alpha1.NetworkJobManagerFabric, Attempt: 1, State: v1alpha1.NetworkJobStateRunning, JobID: "5"}}
 	h := newHarness(t, subnetObj("s1", "s1", "vn1"), other)
-	index := NewSegmentClaimIndex(h.client, h.client, "test")
-	if err := index.Bootstrap(h.ctx); err != nil {
-		t.Fatal(err)
-	}
 	req := func() Request {
 		r := fabricReq(CreateSubnet)
 
 		r.Accept = func(ctx context.Context, res Result) error {
-			return AcceptSegment(ctx, index, h.lastGet, "evpn", res)
+			return AcceptSegment(ctx, h.lastGet, "evpn", res)
 		}
 		return r
 	}
 	out := h.runKeep("s1", req())
 	h.aap.finish(out.Entry.JobID, "successful", `{"osac_result":{"network_segment":{"type":"evpn","l2_vni":100,"l3_vni":901}}}`, "")
 	out = h.runKeep("s1", req())
-	if out.Entry.State != v1alpha1.NetworkJobStateRunning || out.Entry.Message != ErrWaitForDelete.Error() {
+	if out.Entry.State != v1alpha1.NetworkJobStateSucceeded {
 		t.Fatalf("got %+v", out.Entry)
 	}
-	// The waiting entry does not hold the VirtualNetwork slot.
-	if slotHeld(&v1alpha1.Subnet{}, []v1alpha1.Subnet{*h.get("s1")}, "vn1") {
-		t.Fatal("waiting create_subnet holds the slot")
-	}
-	old := h.get("old")
-	old.Status.Jobs[0].State = v1alpha1.NetworkJobStateSucceeded
-	if err := h.client.Status().Update(h.ctx, old); err != nil {
-		t.Fatal(err)
-	}
-	out = h.runKeep("s1", req())
-	s := h.get("s1")
-	if out.Entry.State != v1alpha1.NetworkJobStateSucceeded || s.Status.NetworkSegment == nil || s.Status.NetworkSegment.L2VNI != 100 {
-		t.Fatalf("got %+v segment %+v", out.Entry, s.Status.NetworkSegment)
-	}
-}
-
-func TestSegmentRejectionIsFinal(t *testing.T) {
-	other := subnetObj("old", "old", "vn2")
-	other.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: 100, L3VNI: 900}
-	h := newHarness(t, subnetObj("s1", "s1", "vn1"), other)
-	index := NewSegmentClaimIndex(h.client, h.client, "test")
-	if err := index.Bootstrap(h.ctx); err != nil {
-		t.Fatal(err)
-	}
-	req := func() Request {
-		r := fabricReq(CreateSubnet)
-
-		r.Accept = func(ctx context.Context, res Result) error {
-			return AcceptSegment(ctx, index, h.lastGet, "evpn", res)
-		}
-		return r
-	}
-	out := h.runKeep("s1", req())
-	h.aap.finish(out.Entry.JobID, "successful", `{"osac_result":{"network_segment":{"type":"evpn","l2_vni":100,"l3_vni":901}}}`, "")
-	out = h.runKeep("s1", req())
-	if out.Entry.State != v1alpha1.NetworkJobStateFailed || out.Entry.Message != "OSAC rejected the create_subnet result: VNI already in use" {
-		t.Fatalf("got %+v", out.Entry)
-	}
-	if h.get("s1").Status.NetworkSegment != nil {
-		t.Fatal("rejected segment stored")
+	segment := h.get("s1").Status.NetworkSegment
+	if segment == nil || segment.L2VNI != 100 || segment.L3VNI != 901 {
+		t.Fatalf("fabric segment was not stored: %+v", segment)
 	}
 }
 

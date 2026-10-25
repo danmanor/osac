@@ -25,7 +25,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -159,65 +158,6 @@ func TestParseNetworkSegment(t *testing.T) {
 		}
 		expectReject(t, err, tc.reason)
 	}
-}
-
-func subnetWithSegment(name, vn string, l2, l3 int32, deleteState v1alpha1.NetworkJobState) v1alpha1.Subnet {
-	s := v1alpha1.Subnet{ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name)}}
-	s.Spec.VirtualNetwork = vn
-	s.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: l2, L3VNI: l3}
-	if deleteState != "" {
-		s.Status.Jobs = []v1alpha1.NetworkJobStatus{{Task: DeleteSubnet, Manager: v1alpha1.NetworkJobManagerFabric, Attempt: 1, State: deleteState}}
-	}
-	return s
-}
-
-func TestCheckSegment(t *testing.T) {
-	self := subnetWithSegment("self", "vn1", 0, 0, "")
-	self.Status.NetworkSegment = nil
-	seg := &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: 100, L3VNI: 900}
-	cases := []struct {
-		name   string
-		others []v1alpha1.Subnet
-		want   string // "" accept, "wait", or the rejection
-	}{
-		{"no other Subnet", nil, ""},
-		{"sibling with the same L3", []v1alpha1.Subnet{subnetWithSegment("a", "vn1", 101, 900, "")}, ""},
-		{"L2 equal to another L2", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 100, 901, "")}, SegmentVNIInUse},
-		{"L2 equal to another L3", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 101, 100, "")}, SegmentVNIInUse},
-		{"L3 equal to another L2", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 900, 901, "")}, SegmentL3InUse},
-		{"L3 of another VirtualNetwork", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 101, 900, "")}, SegmentL3InUse},
-		{"L3 differs from a sibling", []v1alpha1.Subnet{subnetWithSegment("a", "vn1", 101, 902, "")}, SegmentL3DiffersSibling},
-		{"reuse after a delete succeeded", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 100, 900, v1alpha1.NetworkJobStateSucceeded)}, ""},
-		{"conflict with a running delete waits", []v1alpha1.Subnet{subnetWithSegment("a", "vn2", 100, 900, v1alpha1.NetworkJobStateRunning)}, "wait"},
-		{"conflict with a retrying delete waits", []v1alpha1.Subnet{subnetWithSegment("a", "vn1", 100, 901, v1alpha1.NetworkJobStateRetrying)}, "wait"},
-		{"hard conflict wins over waiting", []v1alpha1.Subnet{
-			subnetWithSegment("a", "vn2", 100, 905, v1alpha1.NetworkJobStateRunning),
-			subnetWithSegment("b", "vn2", 101, 900, "")}, SegmentL3InUse},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := CheckSegment(context.Background(), &self, seg, tc.others)
-			switch tc.want {
-			case "":
-				if err != nil {
-					t.Fatal(err)
-				}
-			case "wait":
-				if !errors.Is(err, ErrWaitForDelete) {
-					t.Fatalf("got %v", err)
-				}
-			default:
-				expectReject(t, err, tc.want)
-			}
-		})
-	}
-	accepted := self
-	accepted.Status.NetworkSegment = &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: 100, L3VNI: 900}
-	if err := CheckSegment(context.Background(), &accepted, seg, nil); err != nil {
-		t.Fatal("same value rejected", err)
-	}
-	expectReject(t, CheckSegment(context.Background(), &accepted, &v1alpha1.NetworkSegment{Type: "evpn", L2VNI: 101, L3VNI: 900}, nil),
-		"network segment differs from the segment already accepted")
 }
 
 func TestParseDHCPLease(t *testing.T) {

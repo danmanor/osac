@@ -113,15 +113,10 @@ func Reject(format string, args ...any) error {
 	return &RejectError{Reason: fmt.Sprintf(format, args...)}
 }
 
-// ErrWaitForDelete means the result cannot be judged yet: it conflicts only
-// with resources whose delete started and has not succeeded. The engine keeps
-// the entry Running and unprocessed and checks again later.
-var ErrWaitForDelete = errors.New("waiting for a deleted Subnet's network segment to be freed")
-
 // AcceptFunc validates the result of a successful job and applies its typed
 // outputs to the object, which the engine then writes in the same status
 // update that marks the entry Succeeded. It returns a RejectError to reject
-// the result, ErrWaitForDelete to wait, or another error to retry the read.
+// the result or another error to retry the read.
 type AcceptFunc func(ctx context.Context, result Result) error
 
 // checkKeys rejects any key outside allowed and any missing required key.
@@ -202,8 +197,8 @@ func ParseBackendID(result Result) (string, error) {
 
 // ParseNetworkSegment reads the network_segment of a Fabric create_subnet.
 // networkType is the network_type of the input; without it the key is
-// undefined. It checks the shape rules of contract §4.9; uniqueness is
-// CheckSegment's.
+// undefined. It checks the shape rules of contract §4.9. VNI allocation and
+// uniqueness are owned by the Fabric Manager.
 func ParseNetworkSegment(result Result, networkType string) (*v1alpha1.NetworkSegment, error) {
 	if networkType == "" {
 		if _, ok := result["network_segment"]; ok {
