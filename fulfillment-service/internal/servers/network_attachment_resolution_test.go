@@ -156,3 +156,27 @@ var _ = Describe("Batched attachment SecurityGroup resolution", func() {
 		Expect(result.securityGroups[1].GetMetadata().GetName()).To(Equal("alpha"))
 	})
 })
+
+var _ = Describe("Network attachment Subnet resolution", func() {
+	It("rejects a reference whose ID and name identify different Subnets", func() {
+		virtualNetwork := seedVirtualNetwork(testTenant, "10.20.0.0/16",
+			privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY, nil)
+		subnet := seedSubnet(virtualNetwork, "subnet-a", "10.20.1.0/24",
+			privatev1.SubnetState_SUBNET_STATE_READY, nil)
+		request := networkAttachmentRequest{
+			tenant:     testTenant,
+			subnetsDao: fixtureDAO[*privatev1.Subnet](),
+			subnet: privatev1.SubnetLocalReference_builder{
+				Id: subnet.GetId(), Name: "different-subnet",
+			}.Build(),
+			source: "spec.network_attachments[0]",
+		}
+		guards := &networkingGuards{
+			subnets:         fixtureDAO[*privatev1.Subnet](),
+			virtualNetworks: fixtureDAO[*privatev1.VirtualNetwork](),
+		}
+
+		err := resolveAttachmentSubnet(ctx, guards, request, &networkAttachmentResolution{})
+		Expect(err).To(MatchError(ContainSubstring("id and name do not refer to the same resource")))
+	})
+})

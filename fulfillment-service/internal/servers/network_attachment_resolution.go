@@ -151,14 +151,15 @@ func resolveAttachmentSubnet(ctx context.Context, guards *networkingGuards, requ
 		}
 		result.usedDefaults = true
 	} else {
-		result.subnet, err = findInScope(ctx, request.subnetsDao, request.tenant, request.project,
-			refKey(request.subnet))
+		result.subnet, err = resolveResourceInScope(ctx, request.subnetsDao,
+			referenceScope{tenant: request.tenant, project: request.project},
+			request.subnet.GetId(), request.subnet.GetName(), "Subnet", " in "+request.source+".subnet", grpccodes.NotFound)
 		if err != nil {
+			if grpcstatus.Code(err) == grpccodes.NotFound {
+				return grpcstatus.Errorf(grpccodes.InvalidArgument,
+					"%s.subnet: Subnet '%s' does not exist", request.source, refKey(request.subnet))
+			}
 			return err
-		}
-		if result.subnet == nil {
-			return grpcstatus.Errorf(grpccodes.InvalidArgument,
-				"%s.subnet: Subnet '%s' does not exist", request.source, refKey(request.subnet))
 		}
 	}
 	result.subnet, err = lockRecord(ctx, guards.subnets, result.subnet.GetId())
@@ -393,32 +394,19 @@ func findTenantDefault[O lifecycleResource](ctx context.Context, objectDao *dao.
 // findInScope finds a record of the tenant and project by ID, or by name when no record has that ID. It returns nil
 // when there is none, also when the record belongs to another tenant or project or the DAO doesn't let the caller see
 // it.
-func findInScope[O lifecycleResource](ctx context.Context, objectDao *dao.GenericDAO[O], tenant, project,
+func findInScope[O referenceResource](ctx context.Context, objectDao *dao.GenericDAO[O], tenant, project,
 	key string) (O, error) {
 	var zero O
-	response, err := objectDao.List().
-		SetFilter(fmt.Sprintf("this.metadata.tenant == %q && this.metadata.project == %q && "+
-			"(this.id == %q || this.metadata.name == %q)", tenant, project, key, key)).
-		SetLimit(10).
-		Do(ctx)
-	if err != nil {
-		return zero, grpcstatus.Error(grpccodes.Internal, "failed to resolve the network references")
+	scope := referenceScope{tenant: tenant, project: project}
+	object, err := resolveResourceInScope(ctx, objectDao, scope, key, "", "VirtualNetwork", "", grpccodes.NotFound)
+	if err == nil || grpcstatus.Code(err) != grpccodes.NotFound {
+		return object, err
 	}
-	var byName []O
-	for _, item := range response.GetItems() {
-		if item.GetId() == key {
-			return item, nil
-		}
-		byName = append(byName, item)
+	object, err = resolveResourceInScope(ctx, objectDao, scope, "", key, "VirtualNetwork", "", grpccodes.NotFound)
+	if grpcstatus.Code(err) == grpccodes.NotFound {
+		return zero, nil
 	}
-	if len(byName) == 1 {
-		return byName[0], nil
-	}
-	if len(byName) > 1 {
-		return zero, grpcstatus.Errorf(grpccodes.InvalidArgument,
-			"name '%s' matches %d records; use the ID", key, len(byName))
-	}
-	return zero, nil
+	return object, err
 }
 
 // lockRecord locks a record found by a guard DAO.
