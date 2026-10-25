@@ -356,6 +356,9 @@ func ParseClusterIngress(result Result, subnetCIDR string, ipam *v1alpha1.Subnet
 // apply_network_attachment: only namespace, and the namespace exists (read from
 // the API server, not a cache) with osac.openshift.io/tenant equal to tenant.
 func ParseVMAttachment(ctx context.Context, apiReader client.Reader, result Result, tenant string) (*v1alpha1.NetworkAttachmentVMAttachment, error) {
+	if tenant == "" {
+		return nil, Reject("the NetworkAttachment has no tenant")
+	}
 	if err := result.checkKeys([]string{"vm_attachment"}, "vm_attachment"); err != nil {
 		return nil, err
 	}
@@ -374,7 +377,7 @@ func ParseVMAttachment(ctx context.Context, apiReader client.Reader, result Resu
 		}
 		return nil, err
 	}
-	if ns.Labels[TenantAnnotation] != tenant {
+	if value, ok := ns.Labels[TenantAnnotation]; !ok || value != tenant {
 		return nil, Reject("vm_attachment namespace %s is not labelled %s with the tenant", namespace, TenantAnnotation)
 	}
 	return &v1alpha1.NetworkAttachmentVMAttachment{Namespace: namespace}, nil

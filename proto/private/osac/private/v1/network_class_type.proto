@@ -87,19 +87,19 @@ message AddressPlan {
   };
 
   // Share of the overlay range (VM addresses on the Kubernetes overlay).
-  float overlay = 1 [(buf.validate.field).float = {
+  double overlay = 1 [(buf.validate.field).double = {
     gte: 0,
     lte: 1
   }];
 
   // Share of the fabric range (physical servers' DHCP addresses).
-  float fabric = 2 [(buf.validate.field).float = {
+  double fabric = 2 [(buf.validate.field).double = {
     gte: 0,
     lte: 1
   }];
 
   // Share of the load balancer VIP range (Cluster endpoints).
-  float lb_vip = 3 [(buf.validate.field).float = {
+  double lb_vip = 3 [(buf.validate.field).double = {
     gte: 0,
     lte: 1
   }];

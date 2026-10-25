@@ -136,8 +136,9 @@ func TestSyncExternalIPAllocatedOnlyWithAddress(t *testing.T) {
 	}
 }
 
-// TestSyncSecurityGroupWaitsForStoredRules covers the rule-update race: the
-// record keeps the state the Update set until the operator stored the rules.
+// TestSyncSecurityGroupWaitsForStoredRules covers the status barrier: the
+// record keeps the state the Update set until the stored input holds the
+// record's rules, even before the fulfillment controller patched the CR.
 func TestSyncSecurityGroupWaitsForStoredRules(t *testing.T) {
 	sg := &v1alpha1.SecurityGroup{Spec: v1alpha1.SecurityGroupSpec{VirtualNetwork: "vn-1",
 		IngressRules: []v1alpha1.SecurityRule{{Protocol: v1alpha1.SecurityGroupProtocolAll, SourceCIDR: "10.0.0.0/8"}}}}
@@ -149,19 +150,28 @@ func TestSyncSecurityGroupWaitsForStoredRules(t *testing.T) {
 	data, _ := json.Marshal(map[string]any{"resource": stored})
 	sg.Status.TaskInput = &runtime.RawExtension{Raw: data}
 
+	rule := func(cidr string) []*privatev1.SecurityRule {
+		r := &privatev1.SecurityRule{}
+		r.SetProtocol(privatev1.Protocol_PROTOCOL_ALL)
+		r.SetIpv4Cidr(cidr)
+		return []*privatev1.SecurityRule{r}
+	}
 	remote := &privatev1.SecurityGroup{}
+	remote.SetSpec(&privatev1.SecurityGroupSpec{})
 	remote.SetStatus(&privatev1.SecurityGroupStatus{})
 	remote.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
 	remote.GetStatus().SetMessage("Updating")
 
-	sg.Spec.IngressRules[0].SourceCIDR = "10.1.0.0/16" // copied by the fulfillment controller, not stored yet
+	// The tenant Update changed the record; the CR and the stored input still
+	// hold the old rules.
+	remote.GetSpec().SetIngress(rule("10.1.0.0/16"))
 	if err := syncSecurityGroupUpdate(context.Background(), sg, remote); err != nil {
 		t.Fatal(err)
 	}
 	if remote.GetStatus().GetMessage() != "Updating" {
 		t.Fatalf("message %q changed before the rules were stored", remote.GetStatus().GetMessage())
 	}
-	sg.Spec.IngressRules[0].SourceCIDR = "10.0.0.0/8"
+	remote.GetSpec().SetIngress(rule("10.0.0.0/8"))
 	if err := syncSecurityGroupUpdate(context.Background(), sg, remote); err != nil {
 		t.Fatal(err)
 	}

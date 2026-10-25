@@ -302,15 +302,22 @@ func (r *function) updateStatus(
 	// FAILED and PENDING results, so those assignments remain visible.
 	status.SetHub(resolution.HubID)
 	// The operator owns the state once the hub is resolved: it reports READY or FAILED from the manager
-	// registrations. This controller only reports hub-resolution problems.
-	if resolution.State != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY {
-		status.SetState(resolution.State)
+	// registrations, and it resolves a READY NetworkClass only once (contract §4.2). This controller only reports
+	// hub-resolution problems, and never downgrades READY: a problem on a READY NetworkClass goes to the message.
+	ready := status.GetState() == privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY
+	switch {
+	case resolution.State != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY:
+		if !ready {
+			status.SetState(resolution.State)
+		}
 		if resolution.Message == "" {
 			status.ClearMessage()
 		} else {
 			status.SetMessage(resolution.Message)
 		}
-	} else if status.GetState() == privatev1.NetworkClassState_NETWORK_CLASS_STATE_UNSPECIFIED {
+	case ready:
+		status.ClearMessage()
+	case status.GetState() == privatev1.NetworkClassState_NETWORK_CLASS_STATE_UNSPECIFIED:
 		status.SetState(privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING)
 	}
 	if networkClass.HasStatus() && proto.Equal(networkClass.GetStatus(), status) {

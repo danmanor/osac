@@ -87,7 +87,7 @@ var _ = Describe("Installation settings", func() {
 			}
 			err := CheckInstallationSettings(ctx, logger, pool, settings(true, "0.2.0", services...))
 			if expectErr {
-				Expect(err).To(MatchError("enabling BMaaS or CaaS after networking resources exist is not " +
+				Expect(err).To(MatchError("Enabling BMaaS or CaaS after networking resources exist is not " +
 					"supported in this release; delete every VirtualNetwork or reinstall"))
 			} else {
 				Expect(err).ToNot(HaveOccurred())
