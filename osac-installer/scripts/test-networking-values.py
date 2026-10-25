@@ -388,7 +388,6 @@ class ManifestsTest(unittest.TestCase):
         for name in (
             "networkclasses",
             "networkattachments/status",
-            "networksegmentclaims",
             "subnets",
             "fabricdomains/status",
         ):

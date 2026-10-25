@@ -188,7 +188,7 @@ var _ = Describe("Subnet controller", func() {
 	)
 	BeforeEach(func() {
 		h = newNetHarness(true)
-		r = &SubnetReconciler{Client: k8sClient, Engine: h.engine, Claims: h.claims, NetworkingNamespace: h.ns}
+		r = &SubnetReconciler{Client: k8sClient, Engine: h.engine, NetworkingNamespace: h.ns}
 	})
 
 	It("waits for its VirtualNetwork", func() {
