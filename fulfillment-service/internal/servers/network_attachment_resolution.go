@@ -391,9 +391,9 @@ func findTenantDefault[O lifecycleResource](ctx context.Context, objectDao *dao.
 	return zero, nil
 }
 
-// findInScope finds a record of the tenant and project by ID, or by name when no record has that ID. It returns nil
-// when there is none, also when the record belongs to another tenant or project or the DAO doesn't let the caller see
-// it.
+// findInScope finds a record of the tenant and project, or a tenant default of any project, by ID, or by name when no
+// record has that ID. It returns nil when there is none, also when the record belongs to another tenant or project or
+// the DAO doesn't let the caller see it.
 func findInScope[O referenceResource](ctx context.Context, objectDao *dao.GenericDAO[O], tenant, project,
 	key string) (O, error) {
 	var zero O
@@ -403,10 +403,17 @@ func findInScope[O referenceResource](ctx context.Context, objectDao *dao.Generi
 		return object, err
 	}
 	object, err = resolveResourceInScope(ctx, objectDao, scope, "", key, "VirtualNetwork", "", grpccodes.NotFound)
-	if grpcstatus.Code(err) == grpccodes.NotFound {
-		return zero, nil
+	if grpcstatus.Code(err) != grpccodes.NotFound {
+		return object, err
 	}
-	return object, err
+	// The tenant defaults are tenant-wide, as when the field is omitted: a reference to one resolves in any project.
+	object, err = findTenantDefault(ctx, objectDao, tenant, func(item O) bool {
+		return item.GetId() == key || item.GetMetadata().GetName() == key
+	})
+	if err != nil || object.GetId() == "" {
+		return zero, err
+	}
+	return object, nil
 }
 
 // lockRecord locks a record found by a guard DAO.

@@ -77,14 +77,14 @@ var _ = Describe("Networking design: installation-created NetworkClass", Label("
 		By("checking the derived address plan against the plan validation rules")
 		plan := nc.GetSpec().GetAddressPlan()
 		Expect(plan).ToNot(BeNil(), "the installer always writes spec.address_plan: %s", ndText(nc))
-		sixteenths := func(value float32) float32 { return value * 16 }
-		for name, share := range map[string]float32{
+		sixteenths := func(value float64) float64 { return value * 16 }
+		for name, share := range map[string]float64{
 			"overlay": plan.GetOverlay(), "fabric": plan.GetFabric(), "lb_vip": plan.GetLbVip(),
 		} {
-			Expect(sixteenths(share)).To(Equal(float32(int(sixteenths(share)))),
+			Expect(sixteenths(share)).To(Equal(float64(int(sixteenths(share)))),
 				"address_plan.%s %v is not a multiple of 0.0625", name, share)
 		}
-		Expect(plan.GetOverlay()+plan.GetFabric()+plan.GetLbVip()).To(Equal(float32(1)), "the shares sum to 1")
+		Expect(plan.GetOverlay()+plan.GetFabric()+plan.GetLbVip()).To(Equal(float64(1)), "the shares sum to 1")
 		Expect(plan.GetOverlay()).To(BeNumerically(">", 0), "k8sManager is set, so overlay > 0")
 		Expect(plan.GetFabric()).To(BeNumerically(">", 0), "BMaaS and CaaS are enabled, so fabric > 0")
 		Expect(plan.GetLbVip()).To(BeNumerically(">", 0), "CaaS is enabled, so lbVip > 0")
@@ -158,7 +158,7 @@ var _ = Describe("Networking design: installation-created NetworkClass", Label("
 			By("making sure a VirtualNetwork exists")
 			ndCreateVirtualNetwork(ctx, c, usersGroup, ndVirtualNetworkCIDR())
 
-			writePlan := func(overlay, fabric, lbVip float32) error {
+			writePlan := func(overlay, fabric, lbVip float64) error {
 				object := proto.Clone(nc).(*privatev1.NetworkClass)
 				object.GetSpec().SetAddressPlan(privatev1.AddressPlan_builder{
 					Overlay: overlay, Fabric: fabric, LbVip: lbVip,
@@ -311,7 +311,7 @@ var _ = Describe("Networking design: creation gates and address rules", Label("n
 			ndLog("Address plan", plan)
 			// The prefix limit is 28 - log2(1/g), with g the largest power of two dividing every non-zero share.
 			granule := 16
-			for _, share := range []float32{plan.GetOverlay(), plan.GetFabric(), plan.GetLbVip()} {
+			for _, share := range []float64{plan.GetOverlay(), plan.GetFabric(), plan.GetLbVip()} {
 				n := int(share * 16)
 				for n != 0 && n%granule != 0 {
 					granule /= 2

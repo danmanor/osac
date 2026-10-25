@@ -124,8 +124,8 @@ func addressPlanSixteenths(plan *privatev1.AddressPlan) (overlay, fabric, lbVip 
 		err = grpcstatus.Error(grpccodes.InvalidArgument, "field 'spec.address_plan' is required")
 		return
 	}
-	convert := func(name string, value float32) (int, error) {
-		scaled := float64(value) * 16
+	convert := func(name string, value float64) (int, error) {
+		scaled := value * 16
 		if math.IsNaN(scaled) || scaled < 0 || scaled > 16 || scaled != math.Trunc(scaled) {
 			return 0, grpcstatus.Errorf(grpccodes.InvalidArgument,
 				"field 'spec.address_plan.%s' must be a multiple of 0.0625 from 0 to 1", name)

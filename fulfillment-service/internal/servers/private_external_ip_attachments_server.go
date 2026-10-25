@@ -272,7 +272,7 @@ func (s *PrivateExternalIPAttachmentsServer) prepareCreate(ctx context.Context,
 			"ExternalIP '%s' is a tenant default and can't be attached", externalIP.GetId())
 	}
 	if isAutomatic(externalIP.GetMetadata()) &&
-		(attachment.GetMetadata().GetCreator() != systemCreator ||
+		(!isSystemCreate(ctx, attachment.GetMetadata()) ||
 			attachment.GetMetadata().GetName() != automaticExternalIPAttachmentPrefix+externalIP.GetId()) {
 		return grpcstatus.Errorf(grpccodes.FailedPrecondition,
 			"ExternalIP '%s' is automatic; only the system attaches it", externalIP.GetId())

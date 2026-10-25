@@ -243,7 +243,10 @@ func (s *PrivateSubnetsServer) validateSubnet(ctx context.Context, subnet *priva
 		return err
 	}
 	networkClass, err := findSingletonNetworkClass(ctx, s.guards.networkClasses)
-	if err != nil || networkClass == nil {
+	if err != nil {
+		return grpcstatus.Error(grpccodes.Internal, "failed to find the NetworkClass")
+	}
+	if networkClass == nil {
 		return grpcstatus.Error(grpccodes.FailedPrecondition, "no NetworkClass is configured")
 	}
 	if err := validatePrefixLimit("spec.ipv4_cidr", prefix, networkClass); err != nil {

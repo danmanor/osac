@@ -40,9 +40,9 @@ func RefKeyStr(ref RefKeyer) string {
 // sixteenths that the hub CRs use.
 func AddressPlanSixteenths(plan *privatev1.AddressPlan) osacv1alpha1.SubnetAddressPlan {
 	return osacv1alpha1.SubnetAddressPlan{
-		Overlay: int32(math.Round(float64(plan.GetOverlay()) * 16)),
-		Fabric:  int32(math.Round(float64(plan.GetFabric()) * 16)),
-		LBVIP:   int32(math.Round(float64(plan.GetLbVip()) * 16)),
+		Overlay: int32(math.Round(plan.GetOverlay() * 16)),
+		Fabric:  int32(math.Round(plan.GetFabric() * 16)),
+		LBVIP:   int32(math.Round(plan.GetLbVip() * 16)),
 	}
 }
 

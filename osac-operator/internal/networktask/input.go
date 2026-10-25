@@ -124,7 +124,7 @@ func LoadInput(obj v1alpha1.NetworkInputObject) (map[string]any, error) {
 // WithLaunchKeys returns a copy of input with keys added at launch (for
 // example network_type and network_segment, which are never stored).
 func WithLaunchKeys(input map[string]any, keys map[string]any) map[string]any {
-	out := make(map[string]any, len(input)+len(keys))
+	out := make(map[string]any)
 	for k, v := range input {
 		out[k] = v
 	}
