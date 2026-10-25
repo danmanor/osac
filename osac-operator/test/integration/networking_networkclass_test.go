@@ -184,6 +184,16 @@ func ensureNetrisRegistration() unstructured.Unstructured {
 	return matches[0]
 }
 
+// skipResolutionWhenDisabled skips a resolution spec on an operator deployed
+// with provider networking disabled, which marks the NetworkClass Ready without
+// reading the registrations (unified design, "Provider networking disabled").
+// internal/controller/networkclass_controller_test.go covers resolution.
+func skipResolutionWhenDisabled() {
+	if operatorDeploymentEnv("OSAC_PROVISIONING_ENABLED") == "false" {
+		Skip("provider networking is disabled: the operator does not resolve manager registrations")
+	}
+}
+
 var _ = Describe("NetworkClass resolution "+
 	"by the deployed operator (TC-REG-01)", Label("networking", "networkclass"), func() {
 	var sfx, fabricName, k8sName, fabricCM, k8sCM, ncName string
@@ -198,6 +208,7 @@ var _ = Describe("NetworkClass resolution "+
 	})
 
 	It("resolves the chart-rendered cudn_evpn and the installed Netris registration and records evpn", func() {
+		skipResolutionWhenDisabled()
 		By("finding the cudn_evpn registration the operator chart renders")
 		cudn := configMapsWithManager(k8sManagerLabel, "cudn_evpn")
 		Expect(cudn).To(HaveLen(1), "the operator chart renders exactly one cudn_evpn registration")
@@ -219,12 +230,14 @@ var _ = Describe("NetworkClass resolution "+
 	})
 
 	It("resolves a Fabric Manager alone, accepts an empty key as absent and leaves the network type empty", func() {
+		skipResolutionWhenDisabled()
 		createRegistration(fabricRegistration(fabricCM, fabricName, map[string]string{"capabilities": "", "description": ""}))
 		createNetworkClass(ncName, fabricName, "", false)
 		expectNetworkClassReady(ncName, fabricName, "acme.network.fabric_"+fabricName, "", "", "")
 	})
 
 	It("resolves east-west Ethernet when the Fabric Manager declares eastWestEthernet", func() {
+		skipResolutionWhenDisabled()
 		createRegistration(fabricRegistration(fabricCM, fabricName, map[string]string{"capabilities": "eastWestEthernet"}))
 		createRegistration(k8sRegistration(k8sCM, k8sName, nil))
 		createNetworkClass(ncName, fabricName, k8sName, true)
@@ -239,6 +252,7 @@ var _ = Describe("NetworkClass resolution "+
 	})
 
 	It("fails while the Fabric Manager is missing and resolves once its registration is created", func() {
+		skipResolutionWhenDisabled()
 		createNetworkClass(ncName, fabricName, "", false)
 		expectNetworkClassFailed(ncName, fmt.Sprintf(
 			"fabric manager %q matches no ConfigMap labelled %s", fabricName, fabricManagerLabel))
@@ -249,6 +263,7 @@ var _ = Describe("NetworkClass resolution "+
 	})
 
 	It("fails on a duplicate registration naming both ConfigMaps and resolves once one is deleted", func() {
+		skipResolutionWhenDisabled()
 		first, second := fabricCM+"-a", fabricCM+"-b"
 		createRegistration(fabricRegistration(first, fabricName, nil))
 		createRegistration(fabricRegistration(second, fabricName, nil))
@@ -262,6 +277,7 @@ var _ = Describe("NetworkClass resolution "+
 	})
 
 	It("keeps a Ready NetworkClass Ready when its registration is deleted", func() {
+		skipResolutionWhenDisabled()
 		createRegistration(fabricRegistration(fabricCM, fabricName, nil))
 		createNetworkClass(ncName, fabricName, "", false)
 		before := expectNetworkClassReady(ncName, fabricName, "acme.network.fabric_"+fabricName, "", "", "")
