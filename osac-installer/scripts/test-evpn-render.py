@@ -200,10 +200,26 @@ def test_single_node() -> None:
     assert not cluster_resources.intersection(
         {"pods", "clusterserviceversions", "frrconfigurations", "bgpsessionstates"}
     ), "namespaced permissions must not be granted cluster-wide"
+    crd_rule = next(
+        rule
+        for rule in cluster_role["rules"]
+        if "customresourcedefinitions" in rule["resources"]
+    )
+    assert set(crd_rule["verbs"]) == {"get", "list", "watch"}
     nmstate_rule = next(
         rule for rule in cluster_role["rules"] if "nmstates" in rule["resources"]
     )
-    assert nmstate_rule["verbs"] == ["get", "create", "patch"]
+    assert set(nmstate_rule["verbs"]) == {
+        "get", "list", "watch", "create", "patch"
+    }
+    nncp_rule = next(
+        rule
+        for rule in cluster_role["rules"]
+        if "nodenetworkconfigurationpolicies" in rule["resources"]
+    )
+    assert set(nncp_rule["verbs"]) == {
+        "get", "list", "watch", "create", "patch", "delete"
+    }
     for resource_name in ("nodes", "vteps", "routeadvertisements"):
         rule = next(
             rule
