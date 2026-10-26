@@ -23,13 +23,13 @@
 #   Test 6 (Unknown OS value falls through to linux defaults):
 #     ansible-playbook ... -e test_unknown_os_fallback=true
 #
-#   Test 7 (vm_network labels propagated to VM):
+#   Test 7 (security group labels propagated to VM):
 #     ansible-playbook ... -e test_create_sg_labels=true
 #
-#   Test 8 (namespace and networks from vm_network):
+#   Test 8 (Subnet reference extracted from networkAttachments):
 #     ansible-playbook ... -e test_create_subnet_ref_extracted=true
 #
-#   Test 9 (missing vm_network rejected):
+#   Test 9 (Missing networkAttachments rejected):
 #     ansible-playbook ... -e test_create_missing_subnet_fails=true
 #
 #   Test 10 (Missing spec.vcpus/memoryGiB rejected):
@@ -70,8 +70,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_defaults | default(false) | bool
@@ -142,8 +140,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_validation_valid | default(false) | bool
@@ -214,8 +210,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_windows_requires_image | default(false) | bool
@@ -273,8 +267,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_windows_with_image | default(false) | bool
@@ -317,8 +309,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_unknown_os_fallback | default(false) | bool
@@ -360,10 +350,11 @@
             fail_msg: "Expected linux default (10Gi), got {{ vm_boot_disk_size | default('undefined') }}"
 
 # ──────────────────────────────────────────────────────────────
-# Test 7: The vm_network labels are added to the VM labels
-# Expected: default_vm_labels holds the base label and the API ID label
+# Test 7: Security group labels are propagated to default_vm_labels
+# Expected: default_vm_labels includes osac.openshift.io/<sg-ref>: ""
+#           for each securityGroupRef across all spec.networkAttachments
 # ──────────────────────────────────────────────────────────────
-- name: "Test ocp_virt_vm -- vm_network labels propagated to VM"
+- name: "Test ocp_virt_vm -- security group labels propagated to VM"
   hosts: localhost
 
   collections:
@@ -371,90 +362,152 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_sg_labels | default(false) | bool
       block:
-        - name: Read ComputeInstance fixture
+        - name: Read ComputeInstance fixture with security groups
           ansible.builtin.set_fact:
-            compute_instance: "{{ lookup('file', 'fixtures/computeinstance-defaults-test.yaml') | from_yaml }}"
-            vm_network_labels:
-              osac.openshift.io/compute-instance-id: 3c0b9d2e-1111-4a5b-9c7d-2e4f6a8b0c12
+            compute_instance: "{{ lookup('file', 'fixtures/computeinstance-with-security-groups.yaml') | from_yaml }}"
 
         - name: Set compute instance name
           ansible.builtin.set_fact:
             compute_instance_name: "{{ compute_instance.metadata.name }}"
 
-        - name: Run create_validate to build labels
+        - name: Run create_validate to extract VM config and build labels
           ansible.builtin.include_role:
             name: osac.templates.ocp_virt_vm
             tasks_from: create_validate.yaml
 
-        - name: Verify the base label and the API ID label
+        - name: Verify compute instance base label is present
           ansible.builtin.assert:
             that:
-              - default_vm_labels | length == 2
-              - default_vm_labels['osac.openshift.io/computeinstance'] == compute_instance_name
-              - default_vm_labels['osac.openshift.io/compute-instance-id'] == '3c0b9d2e-1111-4a5b-9c7d-2e4f6a8b0c12'
-            fail_msg: "Unexpected VM labels: {{ default_vm_labels | default('undefined') }}"
+              - default_vm_labels is defined
+              - default_vm_labels['osac.openshift.io/computeinstance'] == 'test-vm-sgs'
+            fail_msg: >-
+              Expected default_vm_labels to contain osac.openshift.io/computeinstance=test-vm-sgs,
+              got {{ default_vm_labels | default('undefined') }}
+
+        - name: Verify securitygroup-web01 label is present in VM labels
+          ansible.builtin.assert:
+            that:
+              - "'osac.openshift.io/securitygroup-web01' in default_vm_labels"
+              - default_vm_labels['osac.openshift.io/securitygroup-web01'] == ''
+            fail_msg: >-
+              Expected default_vm_labels to contain osac.openshift.io/securitygroup-web01='',
+              got {{ default_vm_labels | default('undefined') }}
+
+        - name: Verify securitygroup-db01 label is present in VM labels
+          ansible.builtin.assert:
+            that:
+              - "'osac.openshift.io/securitygroup-db01' in default_vm_labels"
+              - default_vm_labels['osac.openshift.io/securitygroup-db01'] == ''
+            fail_msg: >-
+              Expected default_vm_labels to contain osac.openshift.io/securitygroup-db01='',
+              got {{ default_vm_labels | default('undefined') }}
+
+        - name: Verify securitygroup-mon01 label is present in VM labels
+          ansible.builtin.assert:
+            that:
+              - "'osac.openshift.io/securitygroup-mon01' in default_vm_labels"
+              - default_vm_labels['osac.openshift.io/securitygroup-mon01'] == ''
+            fail_msg: >-
+              Expected default_vm_labels to contain osac.openshift.io/securitygroup-mon01='',
+              got {{ default_vm_labels | default('undefined') }}
+
+        - name: Verify exactly 4 labels are set (computeinstance + 3 SGs)
+          ansible.builtin.assert:
+            that:
+              - default_vm_labels | length == 4
+            fail_msg: >-
+              Expected 4 labels in default_vm_labels (1 base + 3 SGs),
+              got {{ default_vm_labels | length }}: {{ default_vm_labels | default('undefined') }}
 
 # ──────────────────────────────────────────────────────────────
-# Test 8: The VM namespace, networks, and interfaces come from vm_network
+# Test 8: Subnet reference extracted from networkAttachments
+# Expected: vm_subnet_ref == subnetRef from fixture
 # ──────────────────────────────────────────────────────────────
-- name: "Test ocp_virt_vm -- namespace and networks from vm_network"
+- name: "Test ocp_virt_vm -- subnet reference extracted from networkAttachments"
   hosts: localhost
+
+  collections:
+    - osac.templates
+
+  vars:
+    compute_instance_label: "osac.openshift.io/computeinstance"
 
   tasks:
     - when: test_create_subnet_ref_extracted | default(false) | bool
       block:
-        - name: Resolve the target namespace
+        - name: Read ComputeInstance fixture with networkAttachments
+          ansible.builtin.set_fact:
+            compute_instance: "{{ lookup('file', 'fixtures/computeinstance-with-security-groups.yaml') | from_yaml }}"
+
+        - name: Set compute instance name
+          ansible.builtin.set_fact:
+            compute_instance_name: "{{ compute_instance.metadata.name }}"
+
+        - name: Run create_validate to extract subnet reference
           ansible.builtin.include_role:
             name: osac.templates.ocp_virt_vm
-            tasks_from: resolve_target_namespace.yaml
-          vars:
-            osac_job_vars:
-              vm_network:
-                namespace: tenant-a-subnet-1
-                networks: [{name: tenant, pod: {}}]
-                interfaces: [{name: tenant, binding: {name: l2bridge}}]
-                labels: {osac.openshift.io/compute-instance-id: 3c0b9d2e-1111-4a5b-9c7d-2e4f6a8b0c12}
+            tasks_from: create_validate.yaml
 
-        - name: Verify the resolved network
+        - name: Verify vm_subnet_ref matches first subnetRef
           ansible.builtin.assert:
             that:
-              - compute_instance_target_namespace == 'tenant-a-subnet-1'
-              - vm_network_networks[0].name == 'tenant'
-              - vm_network_interfaces[0].binding.name == 'l2bridge'
-              - vm_network_labels['osac.openshift.io/compute-instance-id'] == '3c0b9d2e-1111-4a5b-9c7d-2e4f6a8b0c12'
+              - vm_subnet_ref is defined
+              - vm_subnet_ref == "test-subnet"
+            fail_msg: "Expected vm_subnet_ref='test-subnet', got {{ vm_subnet_ref | default('undefined') }}"
 
 # ──────────────────────────────────────────────────────────────
-# Test 9: A job input without vm_network is rejected
+# Test 9: Missing networkAttachments must fail validation
+# Expected: validation fails with message about networkAttachments
 # ──────────────────────────────────────────────────────────────
-- name: "Test ocp_virt_vm -- missing vm_network rejected"
+- name: "Test ocp_virt_vm -- missing networkAttachments rejected"
   hosts: localhost
+
+  collections:
+    - osac.templates
+
+  vars:
+    compute_instance_label: "osac.openshift.io/computeinstance"
 
   tasks:
     - when: test_create_missing_subnet_fails | default(false) | bool
       block:
-        - name: Resolve the target namespace (expect failure)
+        - name: Read ComputeInstance fixture without networkAttachments
+          ansible.builtin.set_fact:
+            compute_instance: "{{ lookup('file', 'fixtures/computeinstance-no-subnet-test.yaml') | from_yaml }}"
+
+        - name: Set compute instance name
+          ansible.builtin.set_fact:
+            compute_instance_name: "{{ compute_instance.metadata.name }}"
+
+        - name: Run create_validate (expect failure — no networkAttachments)
           block:
-            - name: Include resolve_target_namespace
+            - name: Include create_validate
               ansible.builtin.include_role:
                 name: osac.templates.ocp_virt_vm
-                tasks_from: resolve_target_namespace.yaml
-              vars:
-                osac_job_vars: {}
+                tasks_from: create_validate.yaml
           rescue:
-            - name: Record the failure
+            - name: Capture error message
               ansible.builtin.set_fact:
-                missing_vm_network_failed: "{{ 'no vm_network' in (ansible_failed_result.msg | default('')) }}"
+                validation_error: "{{ ansible_failed_result.msg | default('') }}"
+                missing_subnet_failed: true
 
-        - name: Verify the input was rejected
+            - name: Verify failure was due to missing networkAttachments
+              ansible.builtin.assert:
+                that:
+                  - "'spec.networkAttachments[0].subnetRef set' in validation_error"
+                fail_msg: "Validation failed for unexpected reason: {{ validation_error }}"
+
+        - name: Verify validation failed without networkAttachments
           ansible.builtin.assert:
             that:
-              - missing_vm_network_failed | default(false)
+              - missing_subnet_failed | default(false)
+            fail_msg: >-
+              Expected create_validate to fail when spec.networkAttachments
+              is not set on the ComputeInstance
 
 # ──────────────────────────────────────────────────────────────
 # Test 10: Missing spec.vcpus/memoryGiB must fail validation
@@ -470,8 +523,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_missing_vcpus_fails | default(false) | bool
@@ -523,8 +574,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_gpu_single | default(false) | bool
@@ -588,8 +637,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_gpu_many | default(false) | bool
@@ -645,8 +692,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_create_no_gpu | default(false) | bool
@@ -698,8 +743,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_linux_userdata_no_extraction | default(false) | bool
@@ -764,8 +807,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_windows_userdata_sysprep | default(false) | bool
@@ -845,8 +886,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_windows_no_userdata | default(false) | bool
@@ -925,8 +964,6 @@
 
   vars:
     compute_instance_label: "osac.openshift.io/computeinstance"
-    vm_network_networks: [{name: tenant, pod: {}}]
-    vm_network_interfaces: [{name: tenant, binding: {name: l2bridge}}]
 
   tasks:
     - when: test_linux_userdata_cloudinit | default(false) | bool
