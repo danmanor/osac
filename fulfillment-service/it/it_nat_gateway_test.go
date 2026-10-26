@@ -125,9 +125,7 @@ var _ = Describe("NATGateway lifecycle", func() {
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		vn := vnGetResp.GetObject()
-		vn.SetStatus(privatev1.VirtualNetworkStatus_builder{
-			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
-		}.Build())
+		vn.GetStatus().SetState(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY)
 		_, err = virtualNetworksClient.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
 			Object:     vn,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -336,10 +334,6 @@ var _ = Describe("NATGateway lifecycle", func() {
 		}
 		for _, id := range networkClassIDs {
 			Expect(cleanupNetworkClassFixture(ctx, networkClassesClient, id)).To(Succeed())
-			waitForNotFound(func() error {
-				_, err := networkClassesClient.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: id}.Build())
-				return err
-			})
 		}
 	})
 

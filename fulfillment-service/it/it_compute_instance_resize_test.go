@@ -188,15 +188,7 @@ var _ = Describe("ComputeInstance InstanceType resize", func() {
 			g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
 		}, time.Minute, time.Second).Should(Succeed())
 
-		subnetResponse, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		subnet := subnetResponse.GetObject()
-		subnet.SetStatus(privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build())
-		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
-			Object:     subnet,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		setSubnetReady(ctx, subnetsClient, subnetId)
 
 		securityGroupId = createComputeInstanceFixtureSecurityGroup(ctx, fixtureClients.securityGroups,
 			fmt.Sprintf("test-resize-sg-%s", uuid.New()), virtualNetworkId)

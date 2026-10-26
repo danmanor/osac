@@ -536,6 +536,11 @@ func (s *PrivateComputeInstancesServer) Update(ctx context.Context,
 				return err
 			}
 		}
+		if updateIncludesField(request.GetUpdateMask(), "spec.network_attachments") {
+			if err := s.validateNetworkAttachmentsForUpdate(ctx, current, candidate); err != nil {
+				return err
+			}
+		}
 		return rejectStateChangeWhileDeleting(current, candidate, current.GetMetadata())
 	})
 	if err != nil {
@@ -545,6 +550,137 @@ func (s *PrivateComputeInstancesServer) Update(ctx context.Context,
 		response.SetWarnings(warnings)
 	}
 	return
+}
+
+// validateNetworkAttachmentsForUpdate rechecks the stored attachment dependencies when a
+// request masks spec.network_attachments. The persisted ComputeInstance deletion timestamp
+// controls whether readiness is required; a timestamp supplied in the update candidate must
+// not make a live instance skip those checks.
+func (s *PrivateComputeInstancesServer) validateNetworkAttachmentsForUpdate(
+	ctx context.Context,
+	current, candidate *privatev1.ComputeInstance,
+) error {
+	if current.GetMetadata().HasDeletionTimestamp() {
+		return s.validateNetworkReferencesTenancy(ctx, candidate)
+	}
+
+	attachments := candidate.GetSpec().GetNetworkAttachments()
+	if err := computeinstancespec.ValidateNetworkAttachments(attachments); err != nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"invalid network attachments configuration: %s", err.Error())
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+
+	metadata := current.GetMetadata()
+	hubReferences := make([]networkingHubReference, 0, len(attachments))
+	for i, attachment := range attachments {
+		request := networkAttachmentRequest{
+			tenant:            metadata.GetTenant(),
+			project:           metadata.GetProject(),
+			subnetsDao:        s.subnetsDao,
+			securityGroupsDao: s.securityGroupsDao,
+			subnet:            attachment.GetSubnet(),
+			securityGroups:    attachment.GetSecurityGroups(),
+			source:            fmt.Sprintf("spec.network_attachments[%d]", i),
+		}
+		resolution := &networkAttachmentResolution{}
+		if err := resolveAttachmentSubnet(ctx, s.guards, request, resolution); err != nil {
+			return err
+		}
+		if len(request.securityGroups) > 0 {
+			if err := resolveAttachmentSecurityGroups(ctx, s.guards, request, resolution); err != nil {
+				return err
+			}
+			if err := lockAttachmentSecurityGroups(ctx, s.guards, resolution); err != nil {
+				return err
+			}
+		}
+		if err := checkAttachmentResolution(request, resolution); err != nil {
+			return err
+		}
+		hubReferences = append(hubReferences, resolution.hubReferences()...)
+	}
+
+	canonicalHubID, err := canonicalNetworkingHubID(ctx, s.logger, s.networkClassesDao)
+	if err != nil {
+		return err
+	}
+	return validateNetworkingHubReferences(canonicalHubID, hubReferences...)
+}
+
+// validateNetworkReferencesTenancy keeps tenant filtering in place during deletion while
+// allowing dependencies to be missing or no longer READY during cleanup.
+func (s *PrivateComputeInstancesServer) validateNetworkReferencesTenancy(
+	ctx context.Context,
+	vm *privatev1.ComputeInstance,
+) error {
+	if vm == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance is mandatory")
+	}
+	if vm.GetSpec() == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance spec is mandatory")
+	}
+	if vm.GetMetadata() == nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument, "compute instance metadata is mandatory")
+	}
+
+	attachments := vm.GetSpec().GetNetworkAttachments()
+	if err := computeinstancespec.ValidateNetworkAttachments(attachments); err != nil {
+		return grpcstatus.Errorf(grpccodes.InvalidArgument,
+			"invalid network attachments configuration: %s", err.Error())
+	}
+	for _, attachment := range attachments {
+		subnetID := refKey(attachment.GetSubnet())
+		var subnet *privatev1.Subnet
+		if response, err := s.guards.subnets.Get().SetId(subnetID).Do(ctx); err != nil {
+			var notFoundErr *dao.ErrNotFound
+			if !errors.As(err, &notFoundErr) {
+				s.logger.ErrorContext(ctx, "Failed to query Subnet for tenancy check",
+					slog.String("subnet_id", subnetID), slog.Any("error", err))
+				return grpcstatus.Errorf(grpccodes.Internal, "failed to validate subnet")
+			}
+		} else {
+			subnet = response.GetObject()
+			if !computeInstanceNetworkResourceInScope(vm.GetMetadata(), subnet.GetMetadata()) {
+				return grpcstatus.Errorf(grpccodes.NotFound, "Subnet '%s' does not exist", subnetID)
+			}
+		}
+		for _, securityGroup := range attachment.GetSecurityGroups() {
+			if securityGroup == nil {
+				continue
+			}
+			securityGroupID := refKey(securityGroup)
+			response, err := s.guards.securityGroups.Get().SetId(securityGroupID).Do(ctx)
+			if err != nil {
+				var notFoundErr *dao.ErrNotFound
+				if errors.As(err, &notFoundErr) {
+					continue
+				}
+				s.logger.ErrorContext(ctx, "Failed to query SecurityGroup for tenancy check",
+					slog.String("security_group_id", securityGroupID), slog.Any("error", err))
+				return grpcstatus.Errorf(grpccodes.Internal, "failed to validate security group")
+			}
+			group := response.GetObject()
+			if !computeInstanceNetworkResourceInScope(vm.GetMetadata(), group.GetMetadata()) {
+				return grpcstatus.Errorf(grpccodes.NotFound, "SecurityGroup '%s' does not exist", securityGroupID)
+			}
+			if subnet != nil && refKey(group.GetSpec().GetVirtualNetwork()) !=
+				refKey(subnet.GetSpec().GetVirtualNetwork()) {
+				return grpcstatus.Errorf(grpccodes.InvalidArgument,
+					"security group '%s' does not belong to the attachment Subnet's VirtualNetwork", securityGroupID)
+			}
+		}
+	}
+	return nil
+}
+
+func computeInstanceNetworkResourceInScope(owner, resource *privatev1.Metadata) bool {
+	if owner == nil || resource == nil || resource.GetTenant() != owner.GetTenant() {
+		return false
+	}
+	return resource.GetProject() == owner.GetProject() || resource.GetLabels()[defaultLabel] == "true"
 }
 
 func onlyInstanceTypeMask(mask *fieldmaskpb.FieldMask) bool {
