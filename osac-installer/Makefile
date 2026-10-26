@@ -816,7 +816,7 @@ csi-render-test: helm-deps helm-infra-deps ## Verify CSI and storage-provider ch
 		helm template osac-infra $(INFRA_CHART) \
 			--values values/caas-ci/infra.yaml > "$$infra_render"; \
 		! rg -q 'osac-infra-create-csi-creds|osac-csi-driver-credentials' "$$infra_render"; \
-		assert_helm_failure "at '/namespace': value must be one of" \
+		assert_helm_failure "(namespace: namespace|'/namespace': value) must be one of" \
 			helm template csi-driver ../osac-csi-driver/charts/csi-driver \
 			--set namespace=not-osac-csi; \
 		echo 'CSI render checks passed.'
