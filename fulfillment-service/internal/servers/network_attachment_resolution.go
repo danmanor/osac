@@ -68,7 +68,10 @@ type networkAttachmentResolution struct {
 }
 
 func (r *networkAttachmentResolution) subnetReference() *privatev1.SubnetLocalReference {
-	return privatev1.SubnetLocalReference_builder{Id: r.subnet.GetId()}.Build()
+	return privatev1.SubnetLocalReference_builder{
+		Id:   r.subnet.GetId(),
+		Name: r.subnet.GetMetadata().GetName(),
+	}.Build()
 }
 
 func (r *networkAttachmentResolution) securityGroupReferences() []*privatev1.SecurityGroupLocalReference {
