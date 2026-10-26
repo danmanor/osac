@@ -318,10 +318,13 @@ var _ = Describe("MCP server", func() {
 		securityGroupGetResponse, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		securityGroup := securityGroupGetResponse.GetObject()
-		securityGroup.SetStatus(privatev1.SecurityGroupStatus_builder{State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY}.Build())
+		securityGroup.SetStatus(privatev1.SecurityGroupStatus_builder{
+			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
+			Hub:   hubId,
+		}.Build())
 		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 			Object:     securityGroup,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state", "status.hub"}},
 		}.Build())
 		Expect(err).ToNot(HaveOccurred())
 
