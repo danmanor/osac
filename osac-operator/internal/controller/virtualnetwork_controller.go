@@ -53,7 +53,7 @@ func (r *VirtualNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *VirtualNetworkReconciler) create(ctx context.Context, vn *v1alpha1.VirtualNetwork) (ctrl.Result, error) {
 	if vn.Status.NetworkManagers == nil {
-		nc, err := readyNetworkClass(ctx, r.Client, vn.Namespace)
+		nc, err := readyNetworkClass(ctx, r.Client, vn.Namespace, r.Engine.ProvisioningEnabled())
 		if err != nil {
 			return ctrl.Result{}, err
 		}
