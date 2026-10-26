@@ -290,7 +290,7 @@ and `osac-infra`. Keys a chart doesn't recognize are ignored.
 | `aapOperator.channel` | Update channel for the AAP Operator. | `stable-2.6-cluster-scoped` |
 | `cnv.enabled` | Creates the OpenShift Virtualization `Subscription` and the `HyperConverged` custom resource. Required for VMaaS. | `false` |
 | `cnv.channel` | Update channel for OpenShift Virtualization. | `stable` |
-| `evpn.enabled` | Configures OpenShift host networking for VMaaS CUDN EVPN. OpenShift only; leave disabled on Kind. | `false` |
+| `evpn.enabled` | Configures OpenShift host networking for VMaaS CUDN EVPN; requires OpenShift 4.22 or later. Leave disabled on Kind. | `false` |
 | `lvms.enabled` | Creates the LVM Storage `Subscription` and the `LVMCluster` custom resource. | `false` |
 | `lvms.channel` | Update channel for LVM Storage. Set it to `stable-<cluster_minor>` at installation. | `stable-4.22` |
 | `metallb.enabled` | Creates the MetalLB `Subscription`, the `caas-address-pool` `IPAddressPool`, and the `L2Advertisement`. | `false` |
@@ -356,7 +356,7 @@ fabric loopback ranges; the installer accepts only /32 routes within them.
 
 | Value | Meaning and source |
 |---|---|
-| `evpn.enabled` | Enables EVPN host setup on OpenShift. Keep `false` on Kind. |
+| `evpn.enabled` | Enables EVPN host setup on OpenShift; requires OpenShift 4.22 or later. Keep `false` on Kind. |
 | `evpn.nmstate.install` | Installs the NMState operator subscription; set `false` when it is already installed. |
 | `evpn.nmstate.channel` | NMState operator channel supported by the cluster. |
 | `evpn.configureClusterNetwork` | Applies the cluster network operator settings. It triggers one OVN-Kubernetes restart. |
