@@ -379,7 +379,7 @@ var _ = Describe("Private ExternalIPPool CRUD", func() {
 			}.Build(),
 		}.Build())
 		Expect(err).To(HaveOccurred())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.AlreadyExists))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
 
 		DeferCleanup(func() {
 			_, _ = client.Delete(ctx, privatev1.ExternalIPPoolsDeleteRequest_builder{

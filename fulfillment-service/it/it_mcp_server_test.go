@@ -257,15 +257,7 @@ var _ = Describe("MCP server", func() {
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_PENDING))
 		}, time.Minute, time.Second).Should(Succeed())
-		virtualNetworkResponse, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: virtualNetworkID}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		virtualNetwork := virtualNetworkResponse.GetObject()
-		virtualNetwork.SetStatus(privatev1.VirtualNetworkStatus_builder{State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY}.Build())
-		_, err = virtualNetworksClient.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
-			Object:     virtualNetwork,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		setComputeInstanceFixtureVirtualNetworkReady(ctx, virtualNetworksClient, virtualNetworkID)
 
 		subnetID = fmt.Sprintf("mcp-subnet-%s", uuid.New())
 		_, err = subnetsClient.Create(ctx, privatev1.SubnetsCreateRequest_builder{
@@ -287,15 +279,7 @@ var _ = Describe("MCP server", func() {
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
 		}, time.Minute, time.Second).Should(Succeed())
-		subnetResponse, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetID}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		subnet := subnetResponse.GetObject()
-		subnet.SetStatus(privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build())
-		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
-			Object:     subnet,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		setSubnetReady(ctx, subnetsClient, subnetID)
 
 		securityGroupResponse, err := securityGroupsClient.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
 			Object: privatev1.SecurityGroup_builder{
@@ -315,18 +299,7 @@ var _ = Describe("MCP server", func() {
 			g.Expect(err).ToNot(HaveOccurred())
 			g.Expect(response.GetObject().GetStatus().GetState()).To(Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING))
 		}, time.Minute, time.Second).Should(Succeed())
-		securityGroupGetResponse, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: securityGroupID}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		securityGroup := securityGroupGetResponse.GetObject()
-		securityGroup.SetStatus(privatev1.SecurityGroupStatus_builder{
-			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
-			Hub:   hubId,
-		}.Build())
-		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
-			Object:     securityGroup,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state", "status.hub"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+		setSecurityGroupReady(ctx, securityGroupsClient, securityGroupID)
 
 		catalogItemID = fmt.Sprintf("mcp-compute-catalog-item-%s", uuid.New())
 		_, err = catalogItemsClient.Create(ctx, privatev1.ComputeInstanceCatalogItemsCreateRequest_builder{
