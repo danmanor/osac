@@ -87,7 +87,7 @@ func (r *FabricDomainReconciler) create(ctx context.Context, fd *v1alpha1.Fabric
 		return ctrl.Result{}, store()
 	}
 	if !networktask.Started(fd, networktask.CreateFabricDomain, v1alpha1.NetworkJobManagerFabric) {
-		nc, err := readyNetworkClass(ctx, r.Client, fd.Namespace)
+		nc, err := readyNetworkClass(ctx, r.Client, fd.Namespace, r.Engine.ProvisioningEnabled())
 		if err != nil {
 			return ctrl.Result{}, err
 		}

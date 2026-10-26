@@ -305,6 +305,7 @@ var _ = Describe("NetworkClass resolution "+
 	DescribeTable(
 		"sets Failed with the exact reason for an invalid registration or selection",
 		func(c invalidCase) {
+			skipResolutionWhenDisabled()
 			fabric := fabricRegistration(fabricCM, fabricName, c.fabric)
 			fabric.immutable = !c.mutable
 			if c.both {

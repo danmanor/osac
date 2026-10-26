@@ -19,8 +19,10 @@ package controller
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
@@ -47,6 +49,26 @@ var _ = Describe("VirtualNetwork controller", func() {
 		reconcileNet(r, vn)
 		Expect(expectReady(vn, metav1.ConditionFalse, v1alpha1.ReasonProgressing).Message).To(Equal(msgWaitingForNetworkClass))
 		Expect(controllerutil.ContainsFinalizer(vn, osacVirtualNetworkFinalizer)).To(BeTrue())
+		Expect(h.aap.tasks("")).To(BeEmpty())
+	})
+
+	It("uses a Ready NetworkClass without manager status when provisioning is disabled", func() {
+		h = newNetHarness(false)
+		r = &VirtualNetworkReconciler{Client: k8sClient, Engine: h.engine, NetworkingNamespace: h.ns}
+		h.networkClass(false, false)
+		nc := &v1alpha1.NetworkClass{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: h.ns, Name: "default"}, nc)).To(Succeed())
+		nc.Status.NetworkManagers = nil
+		nc.Status.NetworkType = ""
+		meta.SetStatusCondition(&nc.Status.Conditions, metav1.Condition{
+			Type: v1alpha1.NetworkConditionReady, Status: metav1.ConditionTrue, Reason: v1alpha1.ReasonProvisioningDisabled,
+		})
+		Expect(k8sClient.Status().Update(ctx, nc)).To(Succeed())
+
+		vn := h.virtualNetwork("vn-disabled")
+		reconcileNet(r, vn)
+		expectReady(vn, metav1.ConditionTrue, v1alpha1.ReasonProvisioningDisabled)
+		Expect(vn.Status.NetworkManagers).To(BeNil())
 		Expect(h.aap.tasks("")).To(BeEmpty())
 	})
 

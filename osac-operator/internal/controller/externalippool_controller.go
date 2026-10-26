@@ -52,7 +52,7 @@ func (r *ExternalIPPoolReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *ExternalIPPoolReconciler) create(ctx context.Context, pool *v1alpha1.ExternalIPPool) (ctrl.Result, error) {
 	if pool.Status.NetworkManagers == nil {
-		nc, err := readyNetworkClass(ctx, r.Client, pool.Namespace)
+		nc, err := readyNetworkClass(ctx, r.Client, pool.Namespace, r.Engine.ProvisioningEnabled())
 		if err != nil {
 			return ctrl.Result{}, err
 		}

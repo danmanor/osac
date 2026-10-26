@@ -278,8 +278,11 @@ func findExternalIP(ctx context.Context, c client.Reader, namespace, id string) 
 }
 
 // readyNetworkClass returns the deployment's NetworkClass when it is Ready
-// (a deployment has exactly one), or nil while none is.
-func readyNetworkClass(ctx context.Context, c client.Reader, namespace string) (*v1alpha1.NetworkClass, error) {
+// (a deployment has exactly one), or nil while none is. Manager status is
+// required only when provider networking is enabled.
+func readyNetworkClass(
+	ctx context.Context, c client.Reader, namespace string, provisioningEnabled bool,
+) (*v1alpha1.NetworkClass, error) {
 	list := &v1alpha1.NetworkClassList{}
 	if err := c.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("listing NetworkClasses: %w", err)
@@ -288,7 +291,7 @@ func readyNetworkClass(ctx context.Context, c client.Reader, namespace string) (
 	for i := range list.Items {
 		nc := &list.Items[i]
 		if nc.DeletionTimestamp == nil && meta.IsStatusConditionTrue(nc.Status.Conditions, v1alpha1.NetworkConditionReady) &&
-			nc.Status.NetworkManagers != nil && nc.Status.NetworkManagers.Fabric != nil {
+			(!provisioningEnabled || (nc.Status.NetworkManagers != nil && nc.Status.NetworkManagers.Fabric != nil)) {
 			ready = append(ready, nc)
 		}
 	}
