@@ -400,7 +400,7 @@ else
 		--set keycloak.hostname=https://keycloak-keycloak.$(DOMAIN) \
 		--set keycloak.route.hostname=keycloak-keycloak.$(DOMAIN) \
 		--set "bundledVault.keycloakIssuerUrl=https://keycloak-keycloak.$(DOMAIN)/realms/osac" \
-		--timeout 30m --wait-for-jobs \
+		--timeout 60m --wait-for-jobs \
 	|| { \
 		echo "=== osac-infra release status ==="; \
 		helm status osac-infra -n osac-infra --show-desc || true; \
@@ -601,7 +601,8 @@ install-multicluster: ## Prepare a VMaaS workload cluster, then install OSAC on 
 	fi
 	$(MAKE) prepare-remote-cluster NS=$(NS) \
 		REMOTE_KUBECONFIG="$(REMOTE_KUBECONFIG)" \
-		REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)"
+		REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)" \
+		EVPN_VALUES="$(INFRA_VALUES)"
 	$(MAKE) install-infra PLATFORM=openshift PROFILE=vmaas-ci NS=$(NS) \
 		KUBECONFIG="$(KUBECONFIG)" \
 		INFRA_VALUES_EXTRA="-f values/vmaas-ci/multicluster-infra.yaml"
@@ -612,11 +613,12 @@ install-multicluster: ## Prepare a VMaaS workload cluster, then install OSAC on 
 		EXTRA_HELM_ARGS="$(EXTRA_HELM_ARGS)"
 
 .PHONY: prepare-remote-cluster
-prepare-remote-cluster: ## Prepare the remote VMaaS workload cluster without changing management
+prepare-remote-cluster: helm-infra-deps ## Prepare the remote VMaaS workload cluster without changing management
 	@test -r "$(REMOTE_KUBECONFIG)" || { echo "ERROR: REMOTE_KUBECONFIG is not readable: $(REMOTE_KUBECONFIG)" >&2; exit 1; }
 	@oc --kubeconfig "$(REMOTE_KUBECONFIG)" get clusterversion version >/dev/null
 	REMOTE_KUBECONFIG="$(REMOTE_KUBECONFIG)" \
 	REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)" \
+	EVPN_VALUES="$(EVPN_VALUES)" \
 	INSTALLER_NAMESPACE="$(NS)" \
 	bash scripts/setup-remote-cluster.sh prepare
 
@@ -835,6 +837,10 @@ event-publisher-render-test: helm-deps ## Check the event publisher and metering
 mce-render-test: helm-infra-deps ## Check disabled MCE defaults, explicit enablement, and CaaS inheritance
 	uv run --project .. python scripts/test-mce-render.py
 
+.PHONY: evpn-render-test
+evpn-render-test: helm-infra-deps ## Check EVPN host networking renders
+	uv run --project .. python scripts/test-evpn-render.py
+
 .PHONY: fulfillment-auth-test
 fulfillment-auth-test: ## Check Fulfillment service-account token exchange behavior
 	./scripts/test-fulfillment-auth.sh
@@ -860,7 +866,7 @@ chart-name-independence-render-test: helm-osac-deps ## Check cross-chart secret/
 	uv run --project .. python scripts/test-chart-name-independence-render.py
 
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test evpn-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
 	@# bmaas-netbox-ci layers bmaas-ci as its base (see the profile-selection
 	@# block); validate the same combination the installer deploys.
 	@for d in values/*/; do \
