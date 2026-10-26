@@ -248,9 +248,14 @@ func (f *ipv4NetworkingContractFixture) createSubnet(ctx context.Context) *priva
 	getResponse, err := f.subnets.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: f.subnetID}.Build())
 	Expect(err).ToNot(HaveOccurred())
 	subnet := getResponse.GetObject()
-	subnet.SetStatus(privatev1.SubnetStatus_builder{
-		State: privatev1.SubnetState_SUBNET_STATE_READY,
-	}.Build())
+	expectNetworkingResourceHub(ctx, hubId, func(getCtx context.Context) (string, error) {
+		response, getErr := f.subnets.Get(getCtx, privatev1.SubnetsGetRequest_builder{Id: f.subnetID}.Build())
+		if getErr != nil {
+			return "", getErr
+		}
+		return response.GetObject().GetStatus().GetHub(), nil
+	})
+	subnet.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
 	_, err = f.subnets.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
 		Object:     subnet,
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -431,7 +436,7 @@ var _ = Describe("IPv4-only VirtualNetwork gRPC contract", func() {
 		Entry("non-canonical IPv4 CIDR", privatev1.VirtualNetworkSpec_builder{Ipv4Cidr: new("10.242.0.1/16")}.Build(), "canonical"),
 	)
 
-	It("rejects non-canonical, IPv6, dual-stack, and clearing updates through field masks", func() {
+	It("rejects invalid and immutable CIDR changes through field masks", func() {
 		_ = newIPv4NetworkingContractFixture(ctx)
 		name := fmt.Sprintf("ipv4-vn-update-%s", uuid.New()[24:])
 		response, err := client.Create(ctx, privatev1.VirtualNetworksCreateRequest_builder{
@@ -455,7 +460,7 @@ var _ = Describe("IPv4-only VirtualNetwork gRPC contract", func() {
 			want  string
 		}{
 			{name: "non-canonical IPv4", field: "spec.ipv4_cidr", value: new("10.243.0.1/16"), want: "canonical"},
-			{name: "cleared IPv4", field: "spec.ipv4_cidr", value: new(""), want: "immutable"},
+			{name: "changed IPv4", field: "spec.ipv4_cidr", value: new("10.244.0.0/16"), want: "immutable"},
 		}
 		for _, testCase := range cases {
 			By("rejecting " + testCase.name)
@@ -466,6 +471,9 @@ var _ = Describe("IPv4-only VirtualNetwork gRPC contract", func() {
 				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{testCase.field}},
 			}.Build())
 			expectIPv4ContractError(err, testCase.want)
+			stored, getErr := client.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: id}.Build())
+			Expect(getErr).ToNot(HaveOccurred())
+			Expect(stored.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.243.0.0/16"))
 		}
 	})
 })
@@ -544,7 +552,7 @@ var _ = Describe("IPv4-only Subnet gRPC contract", func() {
 			want  string
 		}{
 			{name: "non-canonical IPv4", field: "spec.ipv4_cidr", value: new("10.240.1.1/24"), want: "canonical"},
-			{name: "cleared IPv4", field: "spec.ipv4_cidr", value: new(""), want: "immutable"},
+			{name: "changed IPv4", field: "spec.ipv4_cidr", value: new("10.240.2.0/24"), want: "immutable"},
 		}
 		for _, testCase := range cases {
 			By("rejecting " + testCase.name)
@@ -555,6 +563,9 @@ var _ = Describe("IPv4-only Subnet gRPC contract", func() {
 				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{testCase.field}},
 			}.Build())
 			expectIPv4ContractError(err, testCase.want)
+			stored, getErr := client.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: id}.Build())
+			Expect(getErr).ToNot(HaveOccurred())
+			Expect(stored.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.240.1.0/24"))
 		}
 	})
 })
@@ -645,6 +656,18 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 			})).To(Succeed())
 			g.Expect(securityGroups.Items).To(HaveLen(1))
 		}, time.Minute, time.Second).Should(Succeed())
+
+		By("marking the initial SecurityGroup READY for a rule update")
+		initial, err := fixture.securityGroups.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{
+			Id: fixture.securityGroupID,
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
+		initial.GetObject().GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
+		_, err = fixture.securityGroups.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+			Object:     initial.GetObject(),
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+		}.Build())
+		Expect(err).ToNot(HaveOccurred())
 
 		updatedIngress := publicv1.SecurityRule_builder{
 			Protocol: publicv1.Protocol_PROTOCOL_UDP,
@@ -768,7 +791,7 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 		Entry("host-bit egress IPv4", false, privatev1.SecurityRule_builder{Protocol: privatev1.Protocol_PROTOCOL_ALL, Ipv4Cidr: new("10.246.0.1/24")}.Build(), "canonical"),
 	)
 
-	It("rejects a field-masked ingress change without changing the stored rule", func() {
+	It("rejects a private field-masked ingress change without changing the stored rule", func() {
 		fixture := newIPv4NetworkingContractFixture(ctx)
 		rule := privatev1.SecurityRule_builder{Protocol: privatev1.Protocol_PROTOCOL_ALL, Ipv4Cidr: new("0.0.0.0/0")}.Build()
 		response, err := client.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
@@ -794,7 +817,7 @@ var _ = Describe("IPv4-only SecurityGroup gRPC contract", func() {
 			}.Build(),
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.ingress"}},
 		}.Build())
-		expectIPv4ContractError(err, "spec' is immutable")
+		expectIPv4ContractError(err, "spec is immutable")
 		stored, err := client.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: fixture.securityGroupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		Expect(stored.GetObject().GetSpec().GetIngress()[0].GetIpv4Cidr()).To(Equal("0.0.0.0/0"))
@@ -878,7 +901,7 @@ var _ = Describe("IPv4-only ExternalIPPool gRPC contract", func() {
 		Entry("IPv6 CIDR with IPv4 family", privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"2001:db8::/64"}, IpFamily: privatev1.IPFamily_IP_FAMILY_IPV4}.Build(), "IPv4 CIDR"),
 	)
 
-	It("rejects IPv6, unspecified-family, non-canonical, and multiple-CIDR updates", func() {
+	It("rejects invalid and immutable field-masked updates", func() {
 		cidr := "10.250.0.0/28"
 		response, err := client.Create(ctx, privatev1.ExternalIPPoolsCreateRequest_builder{
 			Object: privatev1.ExternalIPPool_builder{
@@ -898,10 +921,11 @@ var _ = Describe("IPv4-only ExternalIPPool gRPC contract", func() {
 			mask string
 			want string
 		}{
-			{name: "IPv6 family", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{IpFamily: privatev1.IPFamily_IP_FAMILY_IPV6}.Build()}.Build(), mask: "spec.ip_family", want: "IP_FAMILY_IPV4"},
-			{name: "unspecified family", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{IpFamily: privatev1.IPFamily_IP_FAMILY_UNSPECIFIED}.Build()}.Build(), mask: "spec.ip_family", want: "validation failed"},
+			{name: "IPv6 family", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{IpFamily: privatev1.IPFamily_IP_FAMILY_IPV6}.Build()}.Build(), mask: "spec.ip_family", want: "spec.ip_family"},
+			{name: "unspecified family", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{IpFamily: privatev1.IPFamily_IP_FAMILY_UNSPECIFIED}.Build()}.Build(), mask: "spec.ip_family", want: "spec.ip_family"},
 			{name: "non-canonical CIDR", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.250.0.1/28"}}.Build()}.Build(), mask: "spec.cidrs", want: "canonical"},
 			{name: "multiple CIDRs", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.250.0.0/28", "10.250.1.0/28"}}.Build()}.Build(), mask: "spec.cidrs", want: "spec.cidrs"},
+			{name: "changed canonical CIDR", obj: privatev1.ExternalIPPool_builder{Id: id, Spec: privatev1.ExternalIPPoolSpec_builder{Cidrs: []string{"10.250.1.0/28"}}.Build()}.Build(), mask: "spec.cidrs", want: "immutable"},
 		}
 		for _, testCase := range cases {
 			By("rejecting " + testCase.name)
@@ -910,6 +934,10 @@ var _ = Describe("IPv4-only ExternalIPPool gRPC contract", func() {
 				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{testCase.mask}},
 			}.Build())
 			expectIPv4ContractError(err, testCase.want)
+			stored, getErr := client.Get(ctx, privatev1.ExternalIPPoolsGetRequest_builder{Id: id}.Build())
+			Expect(getErr).ToNot(HaveOccurred())
+			Expect(stored.GetObject().GetSpec().GetCidrs()).To(Equal([]string{cidr}))
+			Expect(stored.GetObject().GetSpec().GetIpFamily()).To(Equal(privatev1.IPFamily_IP_FAMILY_IPV4))
 		}
 	})
 })

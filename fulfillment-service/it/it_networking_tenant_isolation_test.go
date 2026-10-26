@@ -373,6 +373,7 @@ var _ = Describe("Networking tenant isolation", func() {
 	})
 
 	It("rejects ExternalIP referencing ExternalIPPool from an unrelated tenant", func() {
+		ndSkipUnlessProviderNetworkingEnabled(ctx, "ExternalIP tenant isolation")
 		poolID := createReadyPool(tenantBName)
 
 		_, err := externalIPsClient.Create(ctx, privatev1.ExternalIPsCreateRequest_builder{

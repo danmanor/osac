@@ -549,7 +549,7 @@ var _ = Describe("SecurityGroups server", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		It("rejects rule edits while PENDING and allows status updates", func() {
+		It("rejects private rule edits and allows status updates", func() {
 			created, err := privateServer.Create(ctx, privatev1.SecurityGroupsCreateRequest_builder{
 				Object: privatev1.SecurityGroup_builder{
 					Metadata: privatev1.Metadata_builder{Name: "immutable-security-group-rules", Tenant: testTenant}.Build(),
@@ -562,14 +562,14 @@ var _ = Describe("SecurityGroups server", func() {
 			}.Build())
 			Expect(err).ToNot(HaveOccurred())
 
-			// A rule change waits while the SecurityGroup is PENDING:
+			// Private updates are reserved for controller status and feedback.
 			changed := proto.Clone(created.GetObject()).(*privatev1.SecurityGroup)
 			changed.GetSpec().GetIngress()[0].SetIpv4Cidr("10.0.0.0/8")
 			_, err = privateServer.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 				Object: changed, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.ingress"}},
 			}.Build())
-			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-			Expect(err).To(MatchError(ContainSubstring("is being created or updated")))
+			Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
+			Expect(err).To(MatchError(ContainSubstring("spec is immutable")))
 			stored, getErr := privateServer.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: created.GetObject().GetId()}.Build())
 			Expect(getErr).ToNot(HaveOccurred())
 			Expect(proto.Equal(stored.GetObject().GetSpec(), created.GetObject().GetSpec())).To(BeTrue())

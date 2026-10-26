@@ -4482,6 +4482,24 @@ var _ = Describe("Private compute instances server", func() {
 	})
 })
 
+var _ = Describe("Compute instance networking reference scope", func() {
+	It("allows only same-tenant resources in the instance project or tenant defaults", func() {
+		owner := privatev1.Metadata_builder{Tenant: "tenant-a", Project: "project-a"}.Build()
+		Expect(computeInstanceNetworkResourceInScope(owner,
+			privatev1.Metadata_builder{Tenant: "tenant-a", Project: "project-a"}.Build())).To(BeTrue())
+		Expect(computeInstanceNetworkResourceInScope(owner,
+			privatev1.Metadata_builder{Tenant: "tenant-a", Project: "project-b"}.Build())).To(BeFalse())
+		Expect(computeInstanceNetworkResourceInScope(owner,
+			privatev1.Metadata_builder{
+				Tenant: "tenant-a", Project: "project-b", Labels: map[string]string{defaultLabel: "true"},
+			}.Build())).To(BeTrue())
+		Expect(computeInstanceNetworkResourceInScope(owner,
+			privatev1.Metadata_builder{
+				Tenant: "tenant-b", Project: "project-b", Labels: map[string]string{defaultLabel: "true"},
+			}.Build())).To(BeFalse())
+	})
+})
+
 var _ = Describe("Catalog materialized defaults", func() {
 	BeforeEach(func() {
 		seedReadyDefaultNetworking(testTenant, 0)

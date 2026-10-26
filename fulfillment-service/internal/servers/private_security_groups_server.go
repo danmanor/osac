@@ -206,8 +206,7 @@ func (s *PrivateSecurityGroupsServer) prepareCreate(ctx context.Context, group *
 	return nil
 }
 
-// Update writes status. A change of the rules follows the rule-update rules of the public Update; every other spec
-// change fails.
+// Update writes status only; the spec is immutable. Public rule updates use updateFromPublic.
 func (s *PrivateSecurityGroupsServer) Update(ctx context.Context,
 	request *privatev1.SecurityGroupsUpdateRequest) (response *privatev1.SecurityGroupsUpdateResponse, err error) {
 	if request.GetObject().GetId() == "" {
@@ -216,12 +215,8 @@ func (s *PrivateSecurityGroupsServer) Update(ctx context.Context,
 	}
 	err = s.generic.UpdateWithCandidatePreparation(ctx, request, &response,
 		func(_ context.Context, current, candidate *privatev1.SecurityGroup) error {
-			if err := validateNetworkingStatusOnlyUpdate("SecurityGroup", current, candidate,
-				"spec.ingress", "spec.egress"); err != nil {
+			if err := validateNetworkingStatusOnlyUpdate("SecurityGroup", current, candidate); err != nil {
 				return err
-			}
-			if !rulesEqual(current, candidate) {
-				return s.applyRuleUpdate(current, candidate)
 			}
 			return rejectStateChangeWhileDeleting(current, candidate, current.GetMetadata())
 		})
@@ -242,22 +237,6 @@ func (s *PrivateSecurityGroupsServer) updateFromPublic(ctx context.Context,
 			return s.applyRuleUpdate(current, candidate)
 		})
 	return response, err
-}
-
-func rulesEqual(current, candidate *privatev1.SecurityGroup) bool {
-	equal := func(a, b []*privatev1.SecurityRule) bool {
-		if len(a) != len(b) {
-			return false
-		}
-		for i := range a {
-			if !proto.Equal(a[i], b[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	return equal(current.GetSpec().GetIngress(), candidate.GetSpec().GetIngress()) &&
-		equal(current.GetSpec().GetEgress(), candidate.GetSpec().GetEgress())
 }
 
 // securityGroupUpdatingMessage is the status message of a READY SecurityGroup whose rule update runs.

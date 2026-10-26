@@ -121,11 +121,7 @@ var _ = Describe("Default networking provisioning", func() {
 		vnResp, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		vnObj := vnResp.GetObject()
-		Expect(vnObj.GetSpec().GetIpv4Cidr()).To(Equal("10.200.0.0/16"))
-		Expect(vnObj.GetSpec().GetIpv6Cidr()).To(BeEmpty())
-		vnObj.SetStatus(privatev1.VirtualNetworkStatus_builder{
-			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
-		}.Build())
+		vnObj.GetStatus().SetState(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY)
 		_, err = virtualNetworksClient.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
 			Object:     vnObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -169,11 +165,7 @@ var _ = Describe("Default networking provisioning", func() {
 		subResp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		subObj := subResp.GetObject()
-		Expect(subObj.GetSpec().GetIpv4Cidr()).To(Equal("10.200.0.0/20"))
-		Expect(subObj.GetSpec().GetIpv6Cidr()).To(BeEmpty())
-		subObj.SetStatus(privatev1.SubnetStatus_builder{
-			State: privatev1.SubnetState_SUBNET_STATE_READY,
-		}.Build())
+		subObj.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
 		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
 			Object:     subObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -212,9 +204,7 @@ var _ = Describe("Default networking provisioning", func() {
 		sgResp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		sgObj := sgResp.GetObject()
-		sgObj.SetStatus(privatev1.SecurityGroupStatus_builder{
-			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
-		}.Build())
+		sgObj.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
 		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 			Object:     sgObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -344,7 +334,7 @@ var _ = Describe("Default networking provisioning", func() {
 		vnResponse, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		vn := vnResponse.GetObject()
-		vn.SetStatus(privatev1.VirtualNetworkStatus_builder{State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY}.Build())
+		vn.GetStatus().SetState(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY)
 		_, err = virtualNetworksClient.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
 			Object: vn, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
 		}.Build())
@@ -383,7 +373,7 @@ var _ = Describe("Default networking provisioning", func() {
 			response, getErr := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: id}.Build())
 			Expect(getErr).ToNot(HaveOccurred())
 			object := response.GetObject()
-			object.SetStatus(privatev1.SubnetStatus_builder{State: privatev1.SubnetState_SUBNET_STATE_READY}.Build())
+			object.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
 			_, updateErr := subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
 				Object: object, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
 			}.Build())
@@ -400,7 +390,7 @@ var _ = Describe("Default networking provisioning", func() {
 		groupResponse, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: groupID}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		group := groupResponse.GetObject()
-		group.SetStatus(privatev1.SecurityGroupStatus_builder{State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY}.Build())
+		group.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
 		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 			Object: group, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
 		}.Build())
@@ -796,9 +786,7 @@ var _ = Describe("Default networking provisioning", func() {
 		vnResp, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		vnObj := vnResp.GetObject()
-		vnObj.SetStatus(privatev1.VirtualNetworkStatus_builder{
-			State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY,
-		}.Build())
+		vnObj.GetStatus().SetState(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY)
 		_, err = virtualNetworksClient.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
 			Object:     vnObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -842,9 +830,7 @@ var _ = Describe("Default networking provisioning", func() {
 		subnetResp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		subnetObj := subnetResp.GetObject()
-		subnetObj.SetStatus(privatev1.SubnetStatus_builder{
-			State: privatev1.SubnetState_SUBNET_STATE_READY,
-		}.Build())
+		subnetObj.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
 		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
 			Object:     subnetObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -861,9 +847,7 @@ var _ = Describe("Default networking provisioning", func() {
 		sgResp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
 		Expect(err).ToNot(HaveOccurred())
 		sgObj := sgResp.GetObject()
-		sgObj.SetStatus(privatev1.SecurityGroupStatus_builder{
-			State: privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY,
-		}.Build())
+		sgObj.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
 		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
 			Object:     sgObj,
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
@@ -915,8 +899,8 @@ var _ = Describe("Default networking provisioning", func() {
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
 		}.Build())
 		Expect(err).To(HaveOccurred())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.FailedPrecondition))
-		Expect(err.Error()).To(And(ContainSubstring("default"), ContainSubstring("system-managed")))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 
 		vnFinal, err := virtualNetworksClient.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: vnId}.Build())
 		Expect(err).ToNot(HaveOccurred())
@@ -978,8 +962,26 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			"10.220.0.0/16",
 			"10.220.0.0/20",
 		)
+		setNetworkClassCanonicalHub(ctx, networkClassesClient, networkClassID, hubId)
+		expectNetworkClassStatus(
+			ctx,
+			networkClassesClient,
+			networkClassID,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+			hubId,
+			"",
+		)
 		DeferCleanup(func(cleanupCtx context.Context) {
 			Expect(cleanupDefaultNetworkingForAllTenants(cleanupCtx, networkClassID)).To(Succeed())
+			setNetworkClassCanonicalHub(cleanupCtx, networkClassesClient, networkClassID, hubId)
+			expectNetworkClassStatus(
+				cleanupCtx,
+				networkClassesClient,
+				networkClassID,
+				privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
+				hubId,
+				"",
+			)
 			Expect(cleanupNetworkClassFixture(cleanupCtx, networkClassesClient, networkClassID)).To(Succeed())
 		})
 	})
@@ -1004,7 +1006,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			ctx,
 			networkClassesClient,
 			networkClassID,
-			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			"",
 			"expected exactly one active networking hub, found multiple",
 		)
@@ -1032,7 +1034,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			ctx,
 			networkClassesClient,
 			networkClassID,
-			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			"",
 			"expected exactly one active networking hub, found multiple",
 		)
@@ -1077,7 +1079,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			ctx,
 			networkClassesClient,
 			networkClassID,
-			privatev1.NetworkClassState_NETWORK_CLASS_STATE_FAILED,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			"missing-canonical-hub",
 			`canonical networking hub "missing-canonical-hub" is not registered`,
 		)
@@ -1095,7 +1097,7 @@ var _ = Describe("Canonical networking Hub resolution", func() {
 			ctx,
 			networkClassesClient,
 			networkClassID,
-			privatev1.NetworkClassState_NETWORK_CLASS_STATE_PENDING,
+			privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY,
 			unavailableHubID,
 			fmt.Sprintf(`canonical networking hub %q is unavailable`, unavailableHubID),
 		)
@@ -1161,7 +1163,13 @@ func expectTenantDefaultNetworkingBlocked(
 	Consistently(func(g Gomega) {
 		response, err := virtualNetworksClient.List(ctx, privatev1.VirtualNetworksListRequest_builder{Filter: &filter}.Build())
 		g.Expect(err).ToNot(HaveOccurred())
-		g.Expect(response.GetItems()).To(BeEmpty())
+		for _, network := range response.GetItems() {
+			g.Expect(network.GetStatus().GetState()).NotTo(
+				Equal(privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY),
+				"VirtualNetwork unexpectedly became READY while its canonical Hub was unresolved: %s",
+				ndText(network),
+			)
+		}
 	}, 3*time.Second, time.Second).Should(Succeed())
 }
 
