@@ -254,27 +254,29 @@ class K8sClient:
     def get_compute_instance_last_restarted_at(self, *, name: str) -> str:
         return self.get_jsonpath(resource="computeinstance", name=name, jsonpath="{.status.lastRestartedAt}")
 
-    def get_compute_instance_latest_job_id(self, *, name: str, job_type: str, checked: bool = True) -> str:
+    def _get_latest_compute_instance_job(
+        self, *, name: str, job_type: str, checked: bool
+    ) -> dict[str, Any] | None:
         output, rc = self._get("get", "computeinstance", name, "-n", self.namespace, "-o", "json", checked=checked)
         if rc != 0:
-            return ""
-        jobs: list[dict[str, Any]] = [
-            j for j in json.loads(output).get("status", {}).get("jobs", []) if j["type"] == job_type
+            return None
+        jobs = [
+            job
+            for job in json.loads(output).get("status", {}).get("jobs", [])
+            if job.get("task") == job_type and job.get("manager") == "none"
         ]
         if not jobs:
-            return ""
-        return sorted(jobs, key=lambda j: j["timestamp"], reverse=True)[0]["jobID"]
+            return None
+        return max(jobs, key=lambda job: job.get("attempt", 0))
+
+    def get_compute_instance_latest_job_id(self, *, name: str, job_type: str, checked: bool = True) -> str:
+        job = self._get_latest_compute_instance_job(name=name, job_type=job_type, checked=checked)
+        return job.get("jobID", "") if job else ""
 
     def get_compute_instance_latest_job_state(self, *, name: str, job_type: str, checked: bool = True) -> str:
-        output, rc = self._get("get", "computeinstance", name, "-n", self.namespace, "-o", "json", checked=checked)
-        if rc != 0:
-            return ""
-        jobs: list[dict[str, Any]] = [
-            j for j in json.loads(output).get("status", {}).get("jobs", []) if j["type"] == job_type
-        ]
-        if not jobs:
-            return ""
-        return sorted(jobs, key=lambda j: j["timestamp"], reverse=True)[0].get("state", "")
+        job = self._get_latest_compute_instance_job(name=name, job_type=job_type, checked=checked)
+        state = job.get("state", "") if job else ""
+        return "Canceled" if state == "Cancelled" else state
 
     def get_compute_instance_condition_status(self, *, name: str, condition_type: str, checked: bool = True) -> str:
         output, rc = self._get("get", "computeinstance", name, "-n", self.namespace, "-o", "json", checked=checked)
