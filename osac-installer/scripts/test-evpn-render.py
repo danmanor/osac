@@ -164,12 +164,54 @@ def test_single_node() -> None:
     named(infra, "ConfigMap", "osac-infra-evpn-config")
     job = named(infra, "Job", "osac-infra-configure-evpn")
     assert job["metadata"]["annotations"]["helm.sh/hook-weight"] == "30"
+    frr_namespace = named(infra, "Namespace", "openshift-frr-k8s")
+    assert frr_namespace["metadata"]["annotations"][
+        "helm.sh/resource-policy"
+    ] == "keep"
     for kind in ("ServiceAccount", "ClusterRole", "ClusterRoleBinding"):
         resource = named(infra, kind, "osac-infra-configure-evpn")
         annotations = resource["metadata"].get("annotations", {})
         assert annotations.get("helm.sh/hook-weight") == "30"
         assert "helm.sh/hook" not in annotations, (
             f"{kind} must be Helm-managed so uninstall removes the EVPN permissions"
+        )
+
+    scoped_rbac = (
+        ("Role", "osac-infra-configure-evpn-nmstate", "openshift-nmstate"),
+        ("RoleBinding", "osac-infra-configure-evpn-nmstate", "openshift-nmstate"),
+        ("Role", "osac-infra-configure-evpn-frr", "openshift-frr-k8s"),
+        ("RoleBinding", "osac-infra-configure-evpn-frr", "openshift-frr-k8s"),
+    )
+    for kind, name, namespace in scoped_rbac:
+        resource = named(infra, kind, name)
+        assert resource["metadata"]["namespace"] == namespace
+        annotations = resource["metadata"].get("annotations", {})
+        assert annotations.get("helm.sh/hook-weight") == "30"
+        assert "helm.sh/hook" not in annotations, (
+            f"{kind}/{name} must be Helm-managed for uninstall cleanup"
+        )
+
+    cluster_role = named(infra, "ClusterRole", "osac-infra-configure-evpn")
+    cluster_resources = {
+        resource
+        for rule in cluster_role["rules"]
+        for resource in rule["resources"]
+    }
+    assert not cluster_resources.intersection(
+        {"pods", "clusterserviceversions", "frrconfigurations", "bgpsessionstates"}
+    ), "namespaced permissions must not be granted cluster-wide"
+    nmstate_rule = next(
+        rule for rule in cluster_role["rules"] if "nmstates" in rule["resources"]
+    )
+    assert nmstate_rule["verbs"] == ["get", "create", "patch"]
+    for resource_name in ("nodes", "vteps", "routeadvertisements"):
+        rule = next(
+            rule
+            for rule in cluster_role["rules"]
+            if resource_name in rule["resources"]
+        )
+        assert "list" not in rule["verbs"], (
+            f"the hook must not list unrelated {resource_name} resources"
         )
 
     data = config_data(infra)

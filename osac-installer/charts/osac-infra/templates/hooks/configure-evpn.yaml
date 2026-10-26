@@ -1,4 +1,13 @@
 {{- if .Values.evpn.enabled }}
+{{- if not (lookup "v1" "Namespace" "" "openshift-frr-k8s") }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-frr-k8s
+  annotations:
+    "helm.sh/resource-policy": keep
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -30,25 +39,16 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["nodes"]
-    verbs: ["get", "list"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
-  - apiGroups: ["operators.coreos.com"]
-    resources: ["clusterserviceversions"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
   - apiGroups: ["nmstate.io"]
-    resources: ["nmstates", "nodenetworkconfigurationpolicies"]
+    resources: ["nmstates"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["nmstate.io"]
+    resources: ["nodenetworkconfigurationpolicies"]
     verbs: ["get", "list", "create", "patch", "delete"]
   - apiGroups: ["k8s.ovn.org"]
     resources: ["vteps", "routeadvertisements"]
-    verbs: ["get", "list", "create", "patch"]
-  - apiGroups: ["frrk8s.metallb.io"]
-    resources: ["frrconfigurations"]
-    verbs: ["get", "list", "create", "patch", "delete"]
-  - apiGroups: ["frrk8s.metallb.io"]
-    resources: ["bgpsessionstates"]
-    verbs: ["get", "list"]
+    verbs: ["get", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -62,6 +62,76 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: osac-infra-configure-evpn
+subjects:
+  - kind: ServiceAccount
+    name: osac-infra-configure-evpn
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: osac-infra-configure-evpn-nmstate
+  namespace: openshift-nmstate
+  labels:
+    {{- include "osac-infra.hookLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook-weight": "30"
+rules:
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: osac-infra-configure-evpn-nmstate
+  namespace: openshift-nmstate
+  labels:
+    {{- include "osac-infra.hookLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook-weight": "30"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: osac-infra-configure-evpn-nmstate
+subjects:
+  - kind: ServiceAccount
+    name: osac-infra-configure-evpn
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: osac-infra-configure-evpn-frr
+  namespace: openshift-frr-k8s
+  labels:
+    {{- include "osac-infra.hookLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook-weight": "30"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["frrk8s.metallb.io"]
+    resources: ["frrconfigurations"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["frrk8s.metallb.io"]
+    resources: ["bgpsessionstates"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: osac-infra-configure-evpn-frr
+  namespace: openshift-frr-k8s
+  labels:
+    {{- include "osac-infra.hookLabels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook-weight": "30"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: osac-infra-configure-evpn-frr
 subjects:
   - kind: ServiceAccount
     name: osac-infra-configure-evpn
