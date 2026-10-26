@@ -384,7 +384,8 @@ interface addresses from the node, so remove stale addresses separately when
 needed.
 
 Uninstalling `osac-infra` does not remove the EVPN resources or revert the
-cluster network operator patch. To remove the labeled resources manually:
+cluster network operator patch. Helm removes the configure-EVPN ServiceAccount
+and RBAC resources on uninstall. To remove the labeled EVPN resources manually:
 
 ```bash
 oc delete routeadvertisements,vteps -l osac.openshift.io/evpn=true

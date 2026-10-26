@@ -162,7 +162,15 @@ def test_single_node() -> None:
     subscription = named(deps, "Subscription", "kubernetes-nmstate-operator")
     assert subscription["metadata"]["namespace"] == "openshift-nmstate"
     named(infra, "ConfigMap", "osac-infra-evpn-config")
-    named(infra, "Job", "osac-infra-configure-evpn")
+    job = named(infra, "Job", "osac-infra-configure-evpn")
+    assert job["metadata"]["annotations"]["helm.sh/hook-weight"] == "30"
+    for kind in ("ServiceAccount", "ClusterRole", "ClusterRoleBinding"):
+        resource = named(infra, kind, "osac-infra-configure-evpn")
+        annotations = resource["metadata"].get("annotations", {})
+        assert annotations.get("helm.sh/hook-weight") == "30"
+        assert "helm.sh/hook" not in annotations, (
+            f"{kind} must be Helm-managed so uninstall removes the EVPN permissions"
+        )
 
     data = config_data(infra)
     nncp = named(parse_documents(data["nncp.yaml"]), "NodeNetworkConfigurationPolicy", "osac-evpn-worker-0")

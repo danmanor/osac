@@ -103,6 +103,42 @@ bgp_session_established() {
     return 1
 }
 
+prune_evpn_resources() {
+    local resource_type="$1"
+    local namespace="$2"
+    local display_name="$3"
+    shift 3
+
+    local -a desired_names=("$@")
+    local -a namespace_args=()
+    local resource resource_name desired_name desired
+
+    if [[ -n "${namespace}" ]]; then
+        namespace_args=(-n "${namespace}")
+    fi
+
+    while IFS= read -r resource; do
+        [[ -z "${resource}" ]] && continue
+        resource_name="${resource##*/}"
+        desired=false
+        for desired_name in "${desired_names[@]}"; do
+            if [[ "${resource_name}" == "${desired_name}" ]]; then
+                desired=true
+                break
+            fi
+        done
+        if [[ "${desired}" == "false" ]]; then
+            oc delete "${namespace_args[@]}" "${resource}"
+            if [[ "${resource_type}" == "nncp" ]]; then
+                echo "Deleted stale NNCP ${resource_name}; deleting it does not remove interface addresses from the node."
+            else
+                echo "Deleted stale ${display_name} ${resource_name}."
+            fi
+        fi
+    done < <(oc get "${resource_type}" "${namespace_args[@]}" \
+        -l osac.openshift.io/evpn=true -o name)
+}
+
 echo "Checking EVPN cluster prerequisites"
 network_type="$(oc get network.operator.openshift.io cluster \
     -o jsonpath='{.spec.defaultNetwork.type}' 2>/dev/null || true)"
@@ -171,39 +207,17 @@ echo "Applying underlay FRR configuration and route advertisements"
 oc apply -f "${CONFIG_DIR}/frr.yaml"
 oc apply -f "${CONFIG_DIR}/routeadvertisements.yaml"
 
-while IFS= read -r resource; do
-    [[ -z "${resource}" ]] && continue
-    resource_name="${resource##*/}"
-    desired=false
-    while IFS= read -r node_name || [[ -n "${node_name:-}" ]]; do
-        if [[ "${resource_name}" == "osac-evpn-${node_name}" ]]; then
-            desired=true
-            break
-        fi
-    done < "${CONFIG_DIR}/nodes.txt"
-    if [[ "${desired}" == "false" ]]; then
-        oc delete "${resource}"
-        echo "Deleted stale NNCP ${resource_name}; deleting it does not remove interface addresses from the node."
-    fi
-done < <(oc get nncp -l osac.openshift.io/evpn=true -o name)
+declare -a desired_nncp_names=()
+declare -a desired_frr_names=()
+while IFS= read -r node_name || [[ -n "${node_name:-}" ]]; do
+    [[ -z "${node_name}" ]] && continue
+    desired_nncp_names+=("osac-evpn-${node_name}")
+    desired_frr_names+=("osac-evpn-${node_name}" "osac-evpn-raw-${node_name}")
+done < "${CONFIG_DIR}/nodes.txt"
 
-while IFS= read -r resource; do
-    [[ -z "${resource}" ]] && continue
-    resource_name="${resource##*/}"
-    desired=false
-    while IFS= read -r node_name || [[ -n "${node_name:-}" ]]; do
-        if [[ "${resource_name}" == "osac-evpn-${node_name}" \
-            || "${resource_name}" == "osac-evpn-raw-${node_name}" ]]; then
-            desired=true
-            break
-        fi
-    done < "${CONFIG_DIR}/nodes.txt"
-    if [[ "${desired}" == "false" ]]; then
-        oc delete -n openshift-frr-k8s "${resource}"
-        echo "Deleted stale FRRConfiguration ${resource_name}."
-    fi
-done < <(oc get frrconfigurations -n openshift-frr-k8s \
-    -l osac.openshift.io/evpn=true -o name)
+prune_evpn_resources nncp "" "NNCP" "${desired_nncp_names[@]}"
+prune_evpn_resources frrconfigurations openshift-frr-k8s \
+    "FRRConfiguration" "${desired_frr_names[@]}"
 
 if [[ "${WAIT_FOR_ESTABLISHED}" == "true" ]]; then
     while read -r node_name peer_address \
