@@ -106,6 +106,12 @@ var _ = Describe("Batched attachment SecurityGroup resolution", func() {
 		result := &networkAttachmentResolution{virtualNetwork: vn, subnet: privatev1.Subnet_builder{Id: "subnet"}.Build()}
 		Expect(resolveAttachmentSecurityGroups(ctx, nil, r, result)).To(Succeed())
 		Expect(result.securityGroupIDs()).To(Equal([]string{second.GetId(), first.GetId()}))
+		references := result.securityGroupReferences()
+		Expect(references).To(HaveLen(2))
+		Expect(references[0].GetId()).To(Equal(second.GetId()))
+		Expect(references[0].GetName()).To(Equal("beta"))
+		Expect(references[1].GetId()).To(Equal(first.GetId()))
+		Expect(references[1].GetName()).To(Equal("alpha"))
 	})
 
 	It("cannot resolve a group in another tenant even through a total-visibility DAO", func() {

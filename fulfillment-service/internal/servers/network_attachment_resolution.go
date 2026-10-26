@@ -77,7 +77,10 @@ func (r *networkAttachmentResolution) subnetReference() *privatev1.SubnetLocalRe
 func (r *networkAttachmentResolution) securityGroupReferences() []*privatev1.SecurityGroupLocalReference {
 	result := make([]*privatev1.SecurityGroupLocalReference, len(r.securityGroups))
 	for i, group := range r.securityGroups {
-		result[i] = privatev1.SecurityGroupLocalReference_builder{Id: group.GetId()}.Build()
+		result[i] = privatev1.SecurityGroupLocalReference_builder{
+			Id:   group.GetId(),
+			Name: group.GetMetadata().GetName(),
+		}.Build()
 	}
 	return result
 }
