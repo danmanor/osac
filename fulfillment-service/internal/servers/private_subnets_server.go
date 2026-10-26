@@ -310,7 +310,8 @@ func (s *PrivateSubnetsServer) lockParent(ctx context.Context, subnet *privatev1
 		return nil, err
 	}
 	subnet.GetSpec().SetVirtualNetwork(privatev1.VirtualNetworkLocalReference_builder{
-		Id: virtualNetwork.GetId(),
+		Id:   virtualNetwork.GetId(),
+		Name: virtualNetwork.GetMetadata().GetName(),
 	}.Build())
 	return virtualNetwork, nil
 }
