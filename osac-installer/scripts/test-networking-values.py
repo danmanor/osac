@@ -132,6 +132,7 @@ class RemovedKeysTest(RenderFailureCase):
     def test_removed_keys_are_rejected(self):
         cases = {
             "global.networking.netris": networking(netris={"controllerUrl": "https://netris.example.com"}),
+            "global.networking.networkClass.enabled": networking(networkClass={"enabled": True}),
             "top-level networkClass": {"networkClass": {"enabled": True}},
             "global.expertOverrides": {"global": {"expertOverrides": {"aap": True}}},
             "operator.controllers.networkingProvisioning": {
