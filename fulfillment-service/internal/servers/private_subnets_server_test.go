@@ -76,6 +76,13 @@ var _ = Describe("Private subnets server", func() {
 			object, err := create(vn.GetMetadata().GetName(), "s1", "10.1.1.0/24", nil)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(object.GetSpec().GetVirtualNetwork().GetId()).To(Equal(vn.GetId()))
+			Expect(object.GetSpec().GetVirtualNetwork().GetName()).To(Equal(vn.GetMetadata().GetName()))
+
+			filter := fmt.Sprintf("this.spec.virtual_network.name == %q", vn.GetMetadata().GetName())
+			list, err := server.List(ctx, privatev1.SubnetsListRequest_builder{Filter: &filter}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			Expect(list.GetItems()).To(HaveLen(1))
+			Expect(list.GetItems()[0].GetId()).To(Equal(object.GetId()))
 		})
 
 		It("rejects a missing parent", func() {
