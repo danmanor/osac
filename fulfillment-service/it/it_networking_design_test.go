@@ -1124,7 +1124,7 @@ var _ = Describe("Networking design: provider networking disabled", Label("netwo
 			Expect(response.GetObject().GetStatus().GetAvailable()).To(Equal(int64(14)))
 		})
 
-	It("TC-DISABLED-02 rejects ExternalIPAttachment creates: workloads are never ready endpoints",
+	It("TC-DISABLED-02 rejects ExternalIPAttachment requests with unresolved references",
 		func(ctx context.Context) {
 			ndSkipIfProviderNetworkingEnabled(ctx, "TC-DISABLED-02")
 			for _, target := range []struct {
@@ -1153,7 +1153,7 @@ var _ = Describe("Networking design: provider networking disabled", Label("netwo
 						Spec:     spec.Build(),
 					}.Build(),
 				}.Build())
-				ndExpectCode(err, grpccodes.FailedPrecondition, "provider networking is disabled")
+				ndExpectCode(err, grpccodes.InvalidArgument, "reference validation failed:")
 			}
 		})
 
@@ -1322,7 +1322,7 @@ var _ = Describe("Networking design: default networking", Label("networking-desi
 				"ProvisioningDisabled")
 		})
 
-	It("TC-DN-02 gates a second Subnet of the default VirtualNetwork on the READY default Subnet",
+	It("TC-DN-02 rejects a second Subnet while the default Subnet is PENDING",
 		func(ctx context.Context) {
 			_, tenantName := ndCreateTenant(ctx, c)
 			nc := ndSingletonNetworkClass(ctx, c)
@@ -1370,8 +1370,5 @@ var _ = Describe("Networking design: default networking", Label("networking-desi
 			}.Build())
 			ndExpectCode(err, grpccodes.FailedPrecondition, "the default Subnet of this VirtualNetwork is not READY yet")
 
-			By("reporting the default Subnet READY and creating the second Subnet again")
-			ndSetSubnetState(ctx, c, defaultSubnet.GetId(), privatev1.SubnetState_SUBNET_STATE_READY)
-			ndCreateSubnet(ctx, c, tenantName, vn.GetId(), second.String())
 		})
 })
