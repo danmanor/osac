@@ -2219,6 +2219,7 @@ var _ = Describe("Private compute instances server", func() {
 				Expect(err).ToNot(HaveOccurred())
 				attachment := response.GetObject().GetSpec().GetNetworkAttachments()[0]
 				Expect(attachment.GetSubnet().GetId()).To(Equal(defaultSubnet.GetId()))
+				Expect(attachment.GetSubnet().GetName()).To(Equal(defaultSubnet.GetMetadata().GetName()))
 				Expect(attachment.GetSecurityGroups()).To(HaveLen(1))
 				Expect(attachment.GetSecurityGroups()[0].GetId()).ToNot(BeEmpty())
 			})
