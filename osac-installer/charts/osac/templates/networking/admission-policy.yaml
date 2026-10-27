@@ -1,14 +1,13 @@
 {{- if .Values.service.enabled }}
 {{/*
-Rejects changes to OSAC-managed resources from identities other than the OSAC
+Rejects changes to networking resources from identities other than the OSAC
 controllers (unified networking design, Non-goals): the fulfillment
 controllers (hub-access), the OSAC operator, BMF, and the AAP job pods
-(osac-sa), which remove the finalizers their delete playbooks own (for
-example osac.openshift.io/computeinstance-aap). The Kubernetes garbage
-collector and namespace controller are allowed so cascades of an OSAC delete
-still work. Helm deletes the policy and binding first on uninstall (unknown
-kinds go first). One OSAC release per cluster: the binding matches the release
-namespace, but cluster-scoped OSAC resources are matched in every namespace.
+(osac-sa). The Kubernetes garbage collector and namespace controller are
+allowed so cascades of an OSAC delete still work. Helm deletes the policy and
+binding first on uninstall (unknown kinds go first). One OSAC release per
+cluster: the binding matches the release namespace, but cluster-scoped OSAC
+resources are matched in every namespace.
 */}}
 {{- $ns := .Release.Namespace }}
 {{- $allowed := list
@@ -18,7 +17,7 @@ namespace, but cluster-scoped OSAC resources are matched in every namespace.
       (printf "system:serviceaccount:%s:osac-sa" $ns)
       "system:serviceaccount:kube-system:generic-garbage-collector"
       "system:serviceaccount:kube-system:namespace-controller" }}
-{{- $networking := list "networkclasses" "externalippools" "virtualnetworks" "subnets" "securitygroups" "externalips" "externalipattachments" "natgateways" "fabricdomains" "networkattachments" "networksegmentclaims" }}
+{{- $networking := list "networkclasses" "externalippools" "virtualnetworks" "subnets" "securitygroups" "externalips" "externalipattachments" "natgateways" "fabricdomains" "networkattachments" }}
 {{- $resources := list }}
 {{- range $networking }}{{ $resources = append (append $resources .) (printf "%s/status" .) }}{{ end }}
 apiVersion: admissionregistration.k8s.io/v1
@@ -35,28 +34,13 @@ spec:
       apiVersions: ["*"]
       operations: ["CREATE", "UPDATE", "DELETE"]
       resources: {{ toJson $resources }}
-    - apiGroups: ["osac.openshift.io"]
-      apiVersions: ["*"]
-      operations: ["CREATE"]
-      resources: ["computeinstances", "baremetalinstances", "clusterorders"]
-    - apiGroups: ["osac.openshift.io"]
-      apiVersions: ["*"]
-      operations: ["UPDATE", "DELETE"]
-      resources: ["*"]
   variables:
   - name: osacIdentity
     expression: {{ printf "request.userInfo.username in %s" (toJson $allowed) | quote }}
   - name: networking
     expression: {{ printf "request.resource.resource in %s" (toJson $networking) | quote }}
-  - name: workloadMutation
-    expression: "request.resource.resource in ['computeinstances', 'baremetalinstances', 'clusterorders']"
-  - name: removesOsacFinalizer
-    expression: >-
-      request.operation == 'UPDATE' && has(oldObject.metadata.finalizers) &&
-      oldObject.metadata.finalizers.exists(f, f.startsWith('osac.openshift.io/') &&
-      !(has(object.metadata.finalizers) && f in object.metadata.finalizers))
   validations:
-  - expression: "variables.osacIdentity || !(variables.networking || variables.workloadMutation || variables.removesOsacFinalizer)"
+  - expression: "variables.osacIdentity || !variables.networking"
     message: "OSAC manages this resource; change it through the fulfillment API"
     reason: Forbidden
 ---

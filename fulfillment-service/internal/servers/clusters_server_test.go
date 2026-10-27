@@ -148,6 +148,7 @@ var _ = Describe("Clusters server", func() {
 
 		BeforeEach(func() {
 			var err error
+			seedReadyDefaultNetworking(testTenant, 0)
 
 			// Create the server:
 			publicServer, buildErr := NewClustersServer().
@@ -2378,6 +2379,7 @@ var _ = Describe("Clusters server", func() {
 
 		BeforeEach(func() {
 			var err error
+			seedReadyDefaultNetworking(testTenant, 0)
 
 			publicServer, buildErr := NewClustersServer().
 				SetLogger(logger).
