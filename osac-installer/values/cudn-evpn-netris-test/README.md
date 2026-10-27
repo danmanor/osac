@@ -51,7 +51,7 @@ evpn:
       uplinks:
         - interface: ens6
           address: 169.254.133.2/31
-          peerAddress: 169.254.133.1
+          peerAddress: 169.254.133.3
           peerASN: 4200300002
 ```
 

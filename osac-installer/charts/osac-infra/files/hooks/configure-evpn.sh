@@ -54,11 +54,12 @@ network_operator_ready() {
 }
 
 frr_pod_ready() {
-    local pods name ready
+    local pods ready
     pods="$(oc get pods -n openshift-frr-k8s \
-        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')"
-    while read -r name ready; do
-        if [[ "${name}" == frr-k8s-* && "${ready}" == "True" ]]; then
+        -l "app=frr-k8s,component=frr-k8s" \
+        -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}')"
+    while read -r ready; do
+        if [[ "${ready}" == "True" ]]; then
             return 0
         fi
     done <<< "${pods}"
@@ -66,12 +67,12 @@ frr_pod_ready() {
 }
 
 nmstate_csv_ready() {
-    local csvs name phase
+    local csvs phase
     csvs="$(oc get csv -n openshift-nmstate \
-        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}')"
-    while read -r name phase; do
-        if [[ "${name}" == kubernetes-nmstate-operator* \
-            && "${phase}" == "Succeeded" ]]; then
+        -l 'operators.coreos.com/kubernetes-nmstate-operator.openshift-nmstate' \
+        -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}')"
+    while read -r phase; do
+        if [[ "${phase}" == "Succeeded" ]]; then
             return 0
         fi
     done <<< "${csvs}"

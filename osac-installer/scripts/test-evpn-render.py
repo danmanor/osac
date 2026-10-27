@@ -15,6 +15,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEPS_CHART = ROOT / "charts/osac-deps"
 INFRA_CHART = ROOT / "charts/osac-infra"
+HOOK_SCRIPT = INFRA_CHART / "files/hooks/configure-evpn.sh"
 
 
 def render(release: str, chart: pathlib.Path, *args: str) -> list[dict[str, Any]]:
@@ -81,6 +82,18 @@ def absent(resources: list[dict[str, Any]], kind: str, name: str) -> None:
 
 def config_data(resources: list[dict[str, Any]]) -> dict[str, str]:
     return named(resources, "ConfigMap", "osac-infra-evpn-config")["data"]
+
+
+def granted_verbs(
+    rules: list[dict[str, Any]], api_group: str, resource: str
+) -> set[str]:
+    return {
+        verb
+        for rule in rules
+        if (api_group in rule["apiGroups"] or "*" in rule["apiGroups"])
+        and (resource in rule["resources"] or "*" in rule["resources"])
+        for verb in rule["verbs"]
+    }
 
 
 def parse_documents(value: str) -> list[dict[str, Any]]:
@@ -150,9 +163,38 @@ def test_defaults() -> None:
     absent(infra, "Job", "osac-infra-configure-evpn")
 
 
+def test_granted_verbs_aggregates_rules_and_wildcards() -> None:
+    rules = [
+        {"apiGroups": ["nmstate.io"], "resources": ["nmstates"], "verbs": ["get"]},
+        {"apiGroups": ["*"], "resources": ["*"], "verbs": ["watch"]},
+    ]
+    assert granted_verbs(rules, "nmstate.io", "nmstates") == {"get", "watch"}
+
+
+def test_readiness_uses_operator_labels() -> None:
+    script = HOOK_SCRIPT.read_text(encoding="utf-8")
+    assert '-l "app=frr-k8s,component=frr-k8s"' in script
+    assert (
+        "-l 'operators.coreos.com/kubernetes-nmstate-operator.openshift-nmstate'"
+        in script
+    )
+
+
 def test_single_node() -> None:
     values = base_values(
-        [node("worker-0", "10.200.255.1", [uplink("ens6", "169.254.133.1", address="169.254.133.2/31")])]
+        [
+            node(
+                "worker-0",
+                "10.200.255.1",
+                [
+                    uplink(
+                        "ens6",
+                        "169.254.133.3",
+                        address="169.254.133.2/31",
+                    )
+                ],
+            )
+        ]
     )
     with tempfile.TemporaryDirectory(prefix="evpn-values-") as temp:
         values_file = write_values(pathlib.Path(temp), "single.yaml", values)
@@ -192,42 +234,34 @@ def test_single_node() -> None:
         )
 
     cluster_role = named(infra, "ClusterRole", "osac-infra-configure-evpn")
-    cluster_resources = {
-        resource
-        for rule in cluster_role["rules"]
-        for resource in rule["resources"]
-    }
-    assert not cluster_resources.intersection(
-        {"pods", "clusterserviceversions", "frrconfigurations", "bgpsessionstates"}
-    ), "namespaced permissions must not be granted cluster-wide"
-    crd_rule = next(
-        rule
-        for rule in cluster_role["rules"]
-        if "customresourcedefinitions" in rule["resources"]
-    )
-    assert set(crd_rule["verbs"]) == {"get", "list", "watch"}
-    nmstate_rule = next(
-        rule for rule in cluster_role["rules"] if "nmstates" in rule["resources"]
-    )
-    assert set(nmstate_rule["verbs"]) == {
+    cluster_rules = cluster_role["rules"]
+    assert granted_verbs(
+        cluster_rules, "apiextensions.k8s.io", "customresourcedefinitions"
+    ) == {"get", "list", "watch"}
+    assert granted_verbs(cluster_rules, "nmstate.io", "nmstates") == {
         "get", "list", "watch", "create", "patch"
     }
-    nncp_rule = next(
-        rule
-        for rule in cluster_role["rules"]
-        if "nodenetworkconfigurationpolicies" in rule["resources"]
-    )
-    assert set(nncp_rule["verbs"]) == {
-        "get", "list", "watch", "create", "patch", "delete"
-    }
-    for resource_name in ("nodes", "vteps", "routeadvertisements"):
-        rule = next(
-            rule
-            for rule in cluster_role["rules"]
-            if resource_name in rule["resources"]
+    assert granted_verbs(
+        cluster_rules, "nmstate.io", "nodenetworkconfigurationpolicies"
+    ) == {"get", "list", "watch", "create", "patch", "delete"}
+
+    for api_group, resource in (
+        ("", "pods"),
+        ("operators.coreos.com", "clusterserviceversions"),
+        ("frrk8s.metallb.io", "frrconfigurations"),
+        ("frrk8s.metallb.io", "bgpsessionstates"),
+    ):
+        assert not granted_verbs(cluster_rules, api_group, resource), (
+            f"{resource} permissions must be namespaced"
         )
-        assert "list" not in rule["verbs"], (
-            f"the hook must not list unrelated {resource_name} resources"
+
+    for api_group, resource in (
+        ("", "nodes"),
+        ("k8s.ovn.org", "vteps"),
+        ("k8s.ovn.org", "routeadvertisements"),
+    ):
+        assert "list" not in granted_verbs(cluster_rules, api_group, resource), (
+            f"the hook must not list unrelated {resource} resources"
         )
 
     data = config_data(infra)
@@ -254,7 +288,7 @@ def test_single_node() -> None:
     assert router["asn"] == 4209999999 and isinstance(router["asn"], int)
     assert "sourceaddress" in router["neighbors"][0]
     assert "e+09" not in str(infra), "large ASNs must not render as float notation"
-    assert data["peers.txt"].splitlines() == ["worker-0 169.254.133.1"]
+    assert data["peers.txt"].splitlines() == ["worker-0 169.254.133.3"]
 
 
 def test_multiple_nodes() -> None:
@@ -371,6 +405,8 @@ def test_invalid_values() -> None:
 
 def main() -> None:
     test_defaults()
+    test_granted_verbs_aggregates_rules_and_wildcards()
+    test_readiness_uses_operator_labels()
     test_single_node()
     test_multiple_nodes()
     test_uplink_without_address()
