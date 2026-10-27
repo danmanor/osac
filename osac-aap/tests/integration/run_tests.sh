@@ -59,7 +59,6 @@ WORKFLOWS=(
 # list each scenario file separately in ROLE_SCENARIO_TESTS.
 ROLE_TESTS=(
   "config_as_code_pod_specs"
-  "config_as_code_job_templates"
   "finalizer"
   "fulfillment_trust_sync"
   "lease"

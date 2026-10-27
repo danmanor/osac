@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 from ansible.module_utils.common.arg_spec import ArgumentSpecValidator
+from jinja2 import Environment, StrictUndefined
 
 
 AAP_ROOT = Path(__file__).resolve().parents[2]
@@ -23,14 +24,29 @@ def move_argument_spec():
 @pytest.mark.parametrize("offboard", [False, True])
 @pytest.mark.parametrize("include_subnet_ref", [False, True])
 def test_netris_accepts_shared_move_attachment_payload(offboard, include_subnet_ref):
-    payload = {
+    tasks = yaml.safe_load(
+        (AAP_ROOT / "_move_one_attachment.yaml").read_text(encoding="utf-8")
+    )
+    move = next(task for task in tasks if task["name"] == "Move port with lock held")
+    payload_template = move["block"][0]["vars"]["network_attachment"]
+    render = Environment(undefined=StrictUndefined)
+    render.filters["ternary"] = lambda condition, yes, no: yes if condition else no
+    context = {
         "host_name": "test-host",
-        "logical_interface_name": "eth9",
-        "from_vnet_name": "tenant-vnet" if offboard else "bm-provisioning",
-        "to_vnet_name": "bm-provisioning" if offboard else "tenant-vnet",
+        "item": {
+            "interface": "eth9",
+            "subnet_ref": "11111111-2222-4333-8444-555555555555",
+            "tenant_vnet": "tenant-vnet",
+        },
+        "provisioning_vnet": "bm-provisioning",
+        "offboard": offboard,
     }
-    if include_subnet_ref:
-        payload["subnet_ref"] = "11111111-2222-4333-8444-555555555555"
+    payload = {
+        key: render.from_string(value).render(**context)
+        for key, value in payload_template.items()
+    }
+    if not include_subnet_ref:
+        payload.pop("subnet_ref")
 
     result = ArgumentSpecValidator(move_argument_spec()).validate(
         {"network_attachment": payload}, validate_role_argument_spec=True
