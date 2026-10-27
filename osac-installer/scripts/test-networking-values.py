@@ -389,14 +389,24 @@ class ManifestsTest(unittest.TestCase):
             "OSAC manages this resource; change it through the fulfillment API",
         )
         resources = policy["spec"]["matchConstraints"]["resourceRules"][0]["resources"]
-        for name in (
+        networking_resources = (
             "networkclasses",
-            "networkattachments/status",
-            "networksegmentclaims",
+            "externalippools",
+            "virtualnetworks",
             "subnets",
-            "fabricdomains/status",
-        ):
-            self.assertIn(name, resources)
+            "securitygroups",
+            "externalips",
+            "externalipattachments",
+            "natgateways",
+            "fabricdomains",
+            "networkattachments",
+        )
+        expected_resources = [
+            resource
+            for name in networking_resources
+            for resource in (name, f"{name}/status")
+        ]
+        self.assertEqual(resources, expected_resources)
         self.assertEqual(binding["spec"]["policyName"], policy["metadata"]["name"])
         self.assertEqual(binding["spec"]["validationActions"], ["Deny"])
         self.assertEqual(

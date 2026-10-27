@@ -440,7 +440,7 @@ var _ = Describe("Networking design: creation gates and address rules", Label("n
 					}.Build(),
 				}.Build(),
 			}.Build())
-			ndExpectCode(err, grpccodes.InvalidArgument, "IP_FAMILY_IPV4")
+			ndExpectCode(err, grpccodes.InvalidArgument, "object.spec.ip_family")
 		})
 
 	It("TC-POOL-01 computes pool capacity, ignores written counters and shows tenants only READY pools",
@@ -586,7 +586,7 @@ var _ = Describe("Networking design: deletion guards and DELETING", Label("netwo
 			By("holding the record with a test finalizer, so the spec can inspect it while it is DELETING")
 			ndMutateVirtualNetworkFinalizers(ctx, c, vn.GetId(), ndAddHold)
 			DeferCleanup(func(cleanupCtx context.Context) {
-				ndMutateVirtualNetworkFinalizers(cleanupCtx, c, vn.GetId(), ndRemoveHold)
+				ndRemoveVirtualNetworkHoldIfPresent(cleanupCtx, c, vn.GetId())
 			})
 
 			By("deleting the VirtualNetwork through the public API")
@@ -677,7 +677,7 @@ var _ = Describe("Networking design: deletion guards and DELETING", Label("netwo
 
 		ndMutateSubnetFinalizers(ctx, c, subnet.GetId(), ndAddHold)
 		DeferCleanup(func(cleanupCtx context.Context) {
-			ndMutateSubnetFinalizers(cleanupCtx, c, subnet.GetId(), ndRemoveHold)
+			ndRemoveSubnetHoldIfPresent(cleanupCtx, c, subnet.GetId())
 		})
 
 		By("deleting the READY Subnet twice through the public API")
@@ -1016,7 +1016,7 @@ var _ = Describe("Networking design: SecurityGroup rules", Label("networking-des
 		ndSetSecurityGroupStatus(ctx, c, group.GetId(), privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY, "")
 		ndMutateSecurityGroupFinalizers(ctx, c, group.GetId(), ndAddHold)
 		DeferCleanup(func(cleanupCtx context.Context) {
-			ndMutateSecurityGroupFinalizers(cleanupCtx, c, group.GetId(), ndRemoveHold)
+			ndRemoveSecurityGroupHoldIfPresent(cleanupCtx, c, group.GetId())
 		})
 		_, err = c.publicSecurityGroups.Delete(ctx, publicv1.SecurityGroupsDeleteRequest_builder{
 			Id: group.GetId(),

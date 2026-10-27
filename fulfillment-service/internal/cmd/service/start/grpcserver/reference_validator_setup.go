@@ -33,6 +33,8 @@ import (
 // BMI Create network attachments are resolved by the private handler after tenant
 // assignment; resolving their names here can pick another tenant's same-named
 // default subnet/security group before the handler can enforce owner scope.
+// NATGateway Create ExternalIPs are resolved by the handler after checking that
+// only the system may create a NATGateway for a tenant-default VirtualNetwork.
 // Other references continue through the interceptor's registered lookups.
 func newReferenceValidator(logger *slog.Logger, tenancy auth.TenancyLogic, registerer prometheus.Registerer) (*references.ReferenceValidator, error) {
 	validator, err := references.NewReferenceValidator().SetLogger(logger).SetMetricsRegisterer(registerer).
@@ -42,6 +44,7 @@ func newReferenceValidator(logger *slog.Logger, tenancy auth.TenancyLogic, regis
 		SetExcludedReferencePaths(computeInstanceSSHKeyMethods(), "object.spec.ssh_key").
 		SetExcludedReferencePaths(clusterAddOnOperatorMethods(), "object.spec.add_on_operators").
 		SetExcludedReferencePaths(bareMetalInstanceCreationMethods(), "object.spec.network_attachments").
+		SetExcludedReferencePaths(natGatewayCreationMethods(), "object.spec.external_ip").
 		Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create reference validator: %w", err)
@@ -50,6 +53,13 @@ func newReferenceValidator(logger *slog.Logger, tenancy auth.TenancyLogic, regis
 		return nil, err
 	}
 	return validator, nil
+}
+
+func natGatewayCreationMethods() []string {
+	return []string{
+		publicv1.NATGateways_Create_FullMethodName,
+		privatev1.NATGateways_Create_FullMethodName,
+	}
 }
 
 func bareMetalInstanceCreationMethods() []string {

@@ -31,8 +31,8 @@ import (
 )
 
 // Networking tenant isolation exercises the private API Create path with admin
-// TotalVisibility. Cross-tenant reference rejection must not rely on DAO
-// tenancy filtering (which is a no-op for private callers).
+// TotalVisibility. Cross-tenant references must be rejected without exposing
+// details about the referenced resource's tenant.
 var _ = Describe("Networking tenant isolation", func() {
 	var (
 		ctx context.Context
@@ -324,7 +324,7 @@ var _ = Describe("Networking tenant isolation", func() {
 			}.Build(),
 		}.Build())
 		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(err).To(MatchError(ContainSubstring("does not exist")))
 	})
 
 	It("accepts Subnet referencing same-tenant VirtualNetwork", func() {
@@ -364,7 +364,7 @@ var _ = Describe("Networking tenant isolation", func() {
 			}.Build(),
 		}.Build())
 		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(err).To(MatchError(ContainSubstring("does not exist")))
 	})
 
 	It("accepts ExternalIP referencing a shared ExternalIPPool", func() {
@@ -387,8 +387,7 @@ var _ = Describe("Networking tenant isolation", func() {
 				}.Build(),
 			}.Build(),
 		}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound))
 	})
 
 	It("rejects NATGateway referencing VirtualNetwork from a different tenant", func() {
@@ -409,8 +408,7 @@ var _ = Describe("Networking tenant isolation", func() {
 				}.Build(),
 			}.Build(),
 		}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound))
 	})
 
 	It("rejects NATGateway referencing ExternalIP from a different tenant", func() {
@@ -431,8 +429,7 @@ var _ = Describe("Networking tenant isolation", func() {
 				}.Build(),
 			}.Build(),
 		}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument))
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound))
 	})
 
 	It("rejects ExternalIPAttachment referencing ExternalIP from a different tenant", func() {
@@ -461,7 +458,6 @@ var _ = Describe("Networking tenant isolation", func() {
 				}.Build(),
 			}.Build(),
 		}.Build())
-		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.InvalidArgument), "attachment create error: %v", err)
-		Expect(err).To(MatchError(ContainSubstring("belongs to tenant")))
+		Expect(grpcstatus.Code(err)).To(Equal(grpccodes.NotFound), "attachment create error: %v", err)
 	})
 })

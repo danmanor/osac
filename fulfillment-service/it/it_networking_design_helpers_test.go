@@ -612,6 +612,68 @@ func ndMutateSecurityGroupFinalizers(ctx context.Context, c ndClients, id string
 	})
 }
 
+func ndRemoveVirtualNetworkHoldIfPresent(ctx context.Context, c ndClients, id string) {
+	ndRemoveHoldIfPresent(ctx, fmt.Sprintf("release the test finalizer of VirtualNetwork %s", id), func(ctx context.Context) error {
+		response, err := c.virtualNetworks.Get(ctx, privatev1.VirtualNetworksGetRequest_builder{Id: id}.Build())
+		if err != nil {
+			return err
+		}
+		object := response.GetObject()
+		object.GetMetadata().SetFinalizers(ndRemoveHold(slices.Clone(object.GetMetadata().GetFinalizers())))
+		_, err = c.virtualNetworks.Update(ctx, privatev1.VirtualNetworksUpdateRequest_builder{
+			Object:     object,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
+			Lock:       true,
+		}.Build())
+		return err
+	})
+}
+
+func ndRemoveSubnetHoldIfPresent(ctx context.Context, c ndClients, id string) {
+	ndRemoveHoldIfPresent(ctx, fmt.Sprintf("release the test finalizer of Subnet %s", id), func(ctx context.Context) error {
+		response, err := c.subnets.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: id}.Build())
+		if err != nil {
+			return err
+		}
+		object := response.GetObject()
+		object.GetMetadata().SetFinalizers(ndRemoveHold(slices.Clone(object.GetMetadata().GetFinalizers())))
+		_, err = c.subnets.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
+			Object:     object,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
+			Lock:       true,
+		}.Build())
+		return err
+	})
+}
+
+func ndRemoveSecurityGroupHoldIfPresent(ctx context.Context, c ndClients, id string) {
+	ndRemoveHoldIfPresent(ctx, fmt.Sprintf("release the test finalizer of SecurityGroup %s", id), func(ctx context.Context) error {
+		response, err := c.securityGroups.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: id}.Build())
+		if err != nil {
+			return err
+		}
+		object := response.GetObject()
+		object.GetMetadata().SetFinalizers(ndRemoveHold(slices.Clone(object.GetMetadata().GetFinalizers())))
+		_, err = c.securityGroups.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+			Object:     object,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.finalizers"}},
+			Lock:       true,
+		}.Build())
+		return err
+	})
+}
+
+func ndRemoveHoldIfPresent(ctx context.Context, what string, update func(context.Context) error) {
+	GinkgoHelper()
+	ndStatusUpdate(ctx, what, func() error {
+		err := update(ctx)
+		if grpcstatus.Code(err) == grpccodes.NotFound {
+			return nil
+		}
+		return err
+	})
+}
+
 // ndAddHold returns a finalizer mutation that adds ndHoldFinalizer.
 func ndAddHold(finalizers []string) []string {
 	if slices.Contains(finalizers, ndHoldFinalizer) {
