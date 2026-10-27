@@ -6,7 +6,9 @@ global:
     provisioningEnabled: true
     excludedIpv4Cidrs:
     - 192.0.2.0/24
-    fabricManager: netris
+    # Synthetic registration names keep this chart smoke fixture independent
+    # of provider-specific manager configuration owned by the manager teams.
+    fabricManager: test_fabric
     k8sManager: cudn_evpn
     networkClass:
       defaults:
@@ -125,9 +127,7 @@ aap:
     networkFulfillment:
       enabled: true
       config:
-        NETRIS_CONTROLLER_URL: "https://test-ctl.netris.io"
-        NETRIS_VALIDATE_CERTS: "false"
-        CUDN_EVPN_DNS_RESOLVERS: "192.0.2.53"
+        ACME_FABRIC_URL: "https://test-fabric.example.com"
       secret: {}
 
 bmf:
