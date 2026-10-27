@@ -438,6 +438,7 @@ class AapSettingsTest(unittest.TestCase):
     def test_network_fulfillment_settings_written_verbatim(self):
         ca = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
         docs = render(
+            networking(fabricManager="test_fabric"),
             {
                 "aap": {
                     "instanceGroups": {
