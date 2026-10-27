@@ -112,10 +112,16 @@ prune_evpn_resources() {
 
     local -a desired_names=("$@")
     local -a namespace_args=()
-    local resource resource_name desired_name desired
+    local resources resource resource_name desired_name desired
 
     if [[ -n "${namespace}" ]]; then
         namespace_args=(-n "${namespace}")
+    fi
+
+    if ! resources="$(oc get "${resource_type}" "${namespace_args[@]}" \
+        -l osac.openshift.io/evpn=true -o name)"; then
+        echo "Failed to list ${display_name} resources for pruning" >&2
+        return 1
     fi
 
     while IFS= read -r resource; do
@@ -136,8 +142,7 @@ prune_evpn_resources() {
                 echo "Deleted stale ${display_name} ${resource_name}."
             fi
         fi
-    done < <(oc get "${resource_type}" "${namespace_args[@]}" \
-        -l osac.openshift.io/evpn=true -o name)
+    done <<< "${resources}"
 }
 
 echo "Checking EVPN cluster prerequisites"

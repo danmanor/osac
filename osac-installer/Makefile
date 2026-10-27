@@ -392,6 +392,25 @@ else
 	@bash -c 'source scripts/lib.sh && wait_for_namespace_cleanup keycloak'
 	$(eval DOMAIN := $(shell oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'))
 	@[ -n "$(DOMAIN)" ] || { echo "ERROR: could not determine cluster domain" >&2; exit 1; }
+	# Match Helm's wait to the rendered EVPN Job deadline plus a scheduling margin.
+	@evpn_job_deadline="$$(helm template osac-infra $(INFRA_CHART) \
+		--namespace osac-infra \
+		--values $(INFRA_VALUES) $(INFRA_VALUES_EXTRA) \
+		--set osacNamespace=$(NS) \
+		--set lvms.channel=stable-$(OCP_VERSION) \
+		--set keycloak.hostname=https://keycloak-keycloak.$(DOMAIN) \
+		--set keycloak.route.hostname=https://keycloak-keycloak.$(DOMAIN) \
+		--set "bundledVault.keycloakIssuerUrl=https://keycloak-keycloak.$(DOMAIN)/realms/osac" \
+		--show-only templates/hooks/configure-evpn.yaml 2>/dev/null \
+		| awk \
+			-e '/^kind: Job$$/ { job=1 }' \
+			-e 'job && /^  name: osac-infra-configure-evpn$$/ { evpn=1 }' \
+			-e 'evpn && /^  activeDeadlineSeconds:/ { print $$2; exit }' \
+			-e '/^---$$/ { job=0; evpn=0 }')"; \
+	helm_timeout_seconds=3600; \
+	if [ -n "$$evpn_job_deadline" ]; then \
+		helm_timeout_seconds=$$((evpn_job_deadline + 300)); \
+	fi; \
 	helm upgrade --install osac-infra $(INFRA_CHART) \
 		--namespace osac-infra --create-namespace \
 		--values $(INFRA_VALUES) $(INFRA_VALUES_EXTRA) \
@@ -400,7 +419,7 @@ else
 		--set keycloak.hostname=https://keycloak-keycloak.$(DOMAIN) \
 		--set keycloak.route.hostname=keycloak-keycloak.$(DOMAIN) \
 		--set "bundledVault.keycloakIssuerUrl=https://keycloak-keycloak.$(DOMAIN)/realms/osac" \
-		--timeout 60m --wait-for-jobs \
+		--timeout "$${helm_timeout_seconds}s" --wait-for-jobs \
 	|| { \
 		echo "=== osac-infra release status ==="; \
 		helm status osac-infra -n osac-infra --show-desc || true; \

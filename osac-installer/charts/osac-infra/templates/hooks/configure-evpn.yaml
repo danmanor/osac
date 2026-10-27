@@ -1,4 +1,12 @@
 {{- if .Values.evpn.enabled }}
+{{- $evpn := .Values.evpn -}}
+{{- $bgpWaitSeconds := 0 -}}
+{{- if $evpn.bgp.waitForEstablished -}}
+  {{- range $evpn.nodes -}}
+    {{- $bgpWaitSeconds = add $bgpWaitSeconds (mul (int $evpn.bgp.timeoutSeconds) (len .uplinks)) -}}
+  {{- end -}}
+{{- end -}}
+{{- $activeDeadlineSeconds := add 3600 $bgpWaitSeconds -}}
 {{- if not (lookup "v1" "Namespace" "" "openshift-frr-k8s") }}
 ---
 apiVersion: v1
@@ -150,7 +158,7 @@ metadata:
     "helm.sh/hook-weight": "30"
 spec:
   backoffLimit: 2
-  activeDeadlineSeconds: 3600
+  activeDeadlineSeconds: {{ int64 $activeDeadlineSeconds }}
   ttlSecondsAfterFinished: 3600
   template:
     metadata:

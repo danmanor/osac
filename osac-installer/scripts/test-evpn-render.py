@@ -180,6 +180,91 @@ def test_readiness_uses_operator_labels() -> None:
     )
 
 
+def test_job_deadline_covers_bgp_wait() -> None:
+    values = base_values(
+        [node("worker-0", "10.200.255.1", [uplink("ens6", "169.254.133.3")])]
+    )
+    values["evpn"]["bgp"]["timeoutSeconds"] = 3600
+    with tempfile.TemporaryDirectory(prefix="evpn-deadline-") as temp:
+        values_file = write_values(pathlib.Path(temp), "deadline.yaml", values)
+        infra = render("osac-infra", INFRA_CHART, "--values", str(values_file))
+
+    job = named(infra, "Job", "osac-infra-configure-evpn")
+    assert job["spec"]["activeDeadlineSeconds"] == 7200
+
+
+def test_prune_listing_failure_is_fatal() -> None:
+    with tempfile.TemporaryDirectory(prefix="evpn-prune-") as temp:
+        directory = pathlib.Path(temp)
+        config_dir = directory / "config"
+        bin_dir = directory / "bin"
+        config_dir.mkdir()
+        bin_dir.mkdir()
+
+        (config_dir / "settings.env").write_text(
+            "CONFIGURE_CLUSTER_NETWORK=false\n"
+            "WAIT_FOR_ESTABLISHED=false\n"
+            "BGP_TIMEOUT_SECONDS=60\n",
+            encoding="utf-8",
+        )
+        (config_dir / "nodes.txt").write_text("worker-0\n", encoding="utf-8")
+        (config_dir / "peers.txt").write_text("", encoding="utf-8")
+        for filename in (
+            "cluster-network-patch.json",
+            "nmstate.yaml",
+            "nncp.yaml",
+            "vtep.yaml",
+            "frr.yaml",
+            "routeadvertisements.yaml",
+        ):
+            (config_dir / filename).write_text("", encoding="utf-8")
+
+        oc_log = directory / "oc.log"
+        mock_oc = bin_dir / "oc"
+        mock_oc.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "printf '%s\\n' \"$*\" >> \"${MOCK_OC_LOG}\"\n"
+            "case \"${1:-} ${2:-}\" in\n"
+            "  'get network.operator.openshift.io') echo OVNKubernetes ;;\n"
+            "  'get pods') echo True ;;\n"
+            "  'get csv') echo Succeeded ;;\n"
+            "  'get vtep.k8s.ovn.org')\n"
+            "    if [[ \"${5:-}\" == *reason* ]]; then echo Allocated; else echo True; fi\n"
+            "    ;;\n"
+            "  'get nncp')\n"
+            "    if [[ \"${4:-}\" == osac.openshift.io/evpn=true ]]; then\n"
+            "      echo nncp/osac-evpn-stale\n"
+            "      echo 'simulated list failure' >&2\n"
+            "      exit 1\n"
+            "    fi\n"
+            "    ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        mock_oc.chmod(0o755)
+
+        env = os.environ.copy()
+        env["CONFIG_DIR"] = str(config_dir)
+        env["MOCK_OC_LOG"] = str(oc_log)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(HOOK_SCRIPT)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+            timeout=30,
+        )
+
+        calls = oc_log.read_text(encoding="utf-8").splitlines()
+        assert result.returncode != 0, "hook must fail when pruning list fails"
+        assert "Failed to list NNCP resources for pruning" in result.stderr, (
+            result.stderr
+        )
+        assert not any(call.startswith("delete ") for call in calls)
+
+
 def test_single_node() -> None:
     values = base_values(
         [
@@ -307,6 +392,9 @@ def test_multiple_nodes() -> None:
         values_file = write_values(pathlib.Path(temp), "multiple.yaml", values)
         infra = render("osac-infra", INFRA_CHART, "--values", str(values_file))
 
+    job = named(infra, "Job", "osac-infra-configure-evpn")
+    assert job["spec"]["activeDeadlineSeconds"] == 6300
+
     data = config_data(infra)
     nncps = parse_documents(data["nncp.yaml"])
     assert {item["metadata"]["name"] for item in nncps} == {
@@ -407,6 +495,8 @@ def main() -> None:
     test_defaults()
     test_granted_verbs_aggregates_rules_and_wildcards()
     test_readiness_uses_operator_labels()
+    test_job_deadline_covers_bgp_wait()
+    test_prune_listing_failure_is_fatal()
     test_single_node()
     test_multiple_nodes()
     test_uplink_without_address()
