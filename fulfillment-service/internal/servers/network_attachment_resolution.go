@@ -129,7 +129,7 @@ func resolveNetworkAttachment(ctx context.Context, logger *slog.Logger, guards *
 	}
 	if result.usedDefaults {
 		if settings.ProvisioningEnabled {
-			if err := requireDefaultNetworkingReady(ctx, guards, request.tenant); err != nil {
+			if err := requireDefaultNetworkingReady(ctx, guards.tenants, request.tenant); err != nil {
 				return nil, err
 			}
 		}
@@ -361,8 +361,8 @@ func checkAttachmentResolution(request networkAttachmentRequest, result *network
 }
 
 // requireDefaultNetworkingReady checks that the tenant's DefaultNetworkingReady condition is True.
-func requireDefaultNetworkingReady(ctx context.Context, guards *networkingGuards, tenant string) error {
-	response, err := guards.tenants.List().SetFilter(fmt.Sprintf("this.id == %q", tenant)).SetLimit(1).Do(ctx)
+func requireDefaultNetworkingReady(ctx context.Context, tenants *dao.GenericDAO[*privatev1.Tenant], tenant string) error {
+	response, err := tenants.List().SetFilter(fmt.Sprintf("this.id == %q", tenant)).SetLimit(1).Do(ctx)
 	if err != nil {
 		return grpcstatus.Error(grpccodes.Internal, "failed to check the tenant default networking")
 	}

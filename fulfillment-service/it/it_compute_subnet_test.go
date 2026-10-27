@@ -234,7 +234,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id: computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),
@@ -281,7 +281,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id: computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),
@@ -315,7 +315,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 			}.Build(),
 			Spec: privatev1.ComputeInstanceSpec_builder{
 				Template:     privatev1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-				InstanceType: privatev1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+				InstanceType: privatev1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 				RunStrategy:  privatev1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 				BootDisk: privatev1.ComputeInstanceDisk_builder{
 					SizeGib:     proto.Int32(20),
@@ -461,7 +461,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id:       computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),
@@ -491,7 +491,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id:       computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),
@@ -521,7 +521,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id: computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),
@@ -551,7 +551,7 @@ var _ = Describe("ComputeInstance with Subnet attachment", func() {
 				Id: computeInstanceId,
 				Spec: publicv1.ComputeInstanceSpec_builder{
 					Template:     publicv1.ComputeInstanceTemplateReference_builder{Id: computeInstanceTemplateId}.Build(),
-					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId}.Build(),
+					InstanceType: publicv1.InstanceTypeReference_builder{Name: instanceTypeId, Shared: true}.Build(),
 					RunStrategy:  publicv1.ComputeInstanceRunStrategy_COMPUTE_INSTANCE_RUN_STRATEGY_ALWAYS.Enum(),
 					BootDisk: publicv1.ComputeInstanceDisk_builder{
 						SizeGib:     proto.Int32(20),

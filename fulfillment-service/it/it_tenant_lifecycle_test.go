@@ -268,6 +268,50 @@ func waitForTenantDefaultNetworkingReady(ctx context.Context, client privatev1.T
 	).Should(Succeed())
 }
 
+func setTenantDefaultNetworkingResourcesReady(
+	ctx context.Context,
+	tenantName string,
+	virtualNetworksClient privatev1.VirtualNetworksClient,
+	subnetsClient privatev1.SubnetsClient,
+	securityGroupsClient privatev1.SecurityGroupsClient,
+) {
+	GinkgoHelper()
+
+	var virtualNetworkID string
+	virtualNetworkFilter := ndDefaultFilter(tenantName, "default")
+	Eventually(func(g Gomega) {
+		response, err := virtualNetworksClient.List(ctx, privatev1.VirtualNetworksListRequest_builder{
+			Filter: &virtualNetworkFilter,
+		}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(response.GetItems()).To(HaveLen(1))
+		virtualNetworkID = response.GetItems()[0].GetId()
+	}, time.Minute, time.Second).Should(Succeed())
+	setComputeInstanceFixtureVirtualNetworkReady(ctx, virtualNetworksClient, virtualNetworkID)
+
+	var subnetID string
+	var securityGroupID string
+	subnetFilter := ndDefaultFilter(tenantName, "default-ipv4")
+	securityGroupFilter := ndDefaultFilter(tenantName, "default")
+	Eventually(func(g Gomega) {
+		subnets, err := subnetsClient.List(ctx, privatev1.SubnetsListRequest_builder{
+			Filter: &subnetFilter,
+		}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(subnets.GetItems()).To(HaveLen(1))
+		subnetID = subnets.GetItems()[0].GetId()
+
+		securityGroups, err := securityGroupsClient.List(ctx, privatev1.SecurityGroupsListRequest_builder{
+			Filter: &securityGroupFilter,
+		}.Build())
+		g.Expect(err).ToNot(HaveOccurred())
+		g.Expect(securityGroups.GetItems()).To(HaveLen(1))
+		securityGroupID = securityGroups.GetItems()[0].GetId()
+	}, time.Minute, time.Second).Should(Succeed())
+	setSubnetReady(ctx, subnetsClient, subnetID)
+	setSecurityGroupReady(ctx, securityGroupsClient, securityGroupID)
+}
+
 func verifyTenantInKeycloak(ctx context.Context, name string) {
 	code, body, err := tool.KeycloakAdminRequest(ctx, http.MethodGet,
 		fmt.Sprintf("/organizations?exact=true&search=%s", name), nil)
@@ -430,11 +474,18 @@ var _ = Describe("Tenant lifecycle", func() {
 	})
 
 	It("deletes a tenant with domains configured", func(ctx context.Context) {
+		getOrCreateTenantDefaultNetworkClassFixture(ctx)
 		name := fmt.Sprintf("test-%s", uuid.New())
 		id := createTenant(ctx, tenantsClient, name)
+		virtualNetworksClient := privatev1.NewVirtualNetworksClient(tool.InternalView().AdminConn())
+		subnetsClient := privatev1.NewSubnetsClient(tool.InternalView().AdminConn())
+		securityGroupsClient := privatev1.NewSecurityGroupsClient(tool.InternalView().AdminConn())
 
-		By("Waiting for the tenant and its default networking to become ready")
+		By("Waiting for the tenant to sync")
 		waitForTenantSynced(ctx, tenantsClient, id)
+		By("Simulating operator readiness for the tenant's default networking")
+		setTenantDefaultNetworkingResourcesReady(ctx, name, virtualNetworksClient, subnetsClient, securityGroupsClient)
+		By("Waiting for the tenant's default networking readiness condition")
 		waitForTenantDefaultNetworkingReady(ctx, tenantsClient, id)
 
 		By("Recording the automatically created root project")

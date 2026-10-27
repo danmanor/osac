@@ -246,7 +246,7 @@ func createCatalogItemNetworkClassFixtureWithoutCleanup(ctx context.Context) str
 	class, err := sharedNetworkClass(ctx, classes)
 	Expect(err).NotTo(HaveOccurred())
 	classID := class.GetObject().GetId()
-	waitForNetworkClassReady(ctx, classes, classID)
+	ensureCatalogItemNetworkClassReady(ctx, classes, classID)
 	return classID
 }
 
@@ -259,13 +259,13 @@ func getOrCreateTenantDefaultNetworkClassFixture(ctx context.Context) (string, b
 	Expect(err).NotTo(HaveOccurred())
 	if items := listed.GetItems(); len(items) > 0 {
 		Expect(items[0].GetFabricManager()).NotTo(BeEmpty(), "tenant default networking requires a fabric-backed NetworkClass")
-		return items[0].GetId(), false
+		classID := items[0].GetId()
+		ensureCatalogItemNetworkClassReady(ctx, classes, classID)
+		return classID, false
 	}
 
 	classID := createCatalogItemNetworkClassFixtureWithoutCleanup(ctx)
 	// The NetworkClass is the installer's deployment singleton: the fixture never deletes it.
-	waitForNetworkClassReady(ctx, classes, classID)
-	setNetworkClassCanonicalHub(ctx, classes, classID, hubId)
 	expectNetworkClassStatus(
 		ctx,
 		classes,
@@ -275,6 +275,38 @@ func getOrCreateTenantDefaultNetworkClassFixture(ctx context.Context) (string, b
 		"",
 	)
 	return classID, false
+}
+
+// ensureCatalogItemNetworkClassReady normalizes the deployment singleton for
+// test fixtures that need to create tenant default networking. Preserve an
+// existing canonical Hub; assign the integration suite's Hub when none exists.
+func ensureCatalogItemNetworkClassReady(
+	ctx context.Context,
+	client privatev1.NetworkClassesClient,
+	id string,
+) {
+	GinkgoHelper()
+	response, err := client.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: id}.Build())
+	Expect(err).NotTo(HaveOccurred())
+	object := response.GetObject()
+	if object.GetStatus().GetState() != privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY {
+		if !object.HasStatus() {
+			object.SetStatus(&privatev1.NetworkClassStatus{})
+		}
+		object.GetStatus().SetState(privatev1.NetworkClassState_NETWORK_CLASS_STATE_READY)
+		object.GetStatus().ClearMessage()
+		_, err = client.Update(ctx, privatev1.NetworkClassesUpdateRequest_builder{
+			Object: object,
+			UpdateMask: &fieldmaskpb.FieldMask{
+				Paths: []string{"status.state", "status.message"},
+			},
+		}.Build())
+		Expect(err).NotTo(HaveOccurred())
+	}
+	if object.GetStatus().GetHub() == "" {
+		setNetworkClassCanonicalHub(ctx, client, id, hubId)
+	}
+	waitForNetworkClassReady(ctx, client, id)
 }
 
 func createCatalogItemNetworkFixture(ctx context.Context, tenant, project string) catalogItemNetworkFixture {
@@ -945,13 +977,14 @@ func createCatalogItemMemberIdentityFixture(ctx context.Context, tenant string) 
 
 const tenantDefaultNetworkingLabel = "osac.openshift.io/default"
 
-// ensureTenantDefaultNetworkingFixture seeds a READY default Subnet + SecurityGroup (and
-// backing VirtualNetwork) for tenant/project when BMI Create omits network_attachments.
+// ensureTenantDefaultNetworkingFixture seeds READY tenant default networking and its
+// DefaultNetworkingReady condition for tenant/project when a workload omits its attachment.
 // Shared catalog items cannot carry tenant-local network defaults, so those Creates rely on
 // this tenant-default path. Idempotent: reuses the newest READY default subnet
 // only when its virtual network has a matching READY default security group.
 func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project string) catalogItemNetworkFixture {
 	GinkgoHelper()
+	classID, _ := getOrCreateTenantDefaultNetworkClassFixture(ctx)
 
 	subnets := privatev1.NewSubnetsClient(tool.InternalView().AdminConn())
 	groups := privatev1.NewSecurityGroupsClient(tool.InternalView().AdminConn())
@@ -984,7 +1017,6 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 	if len(readySubnets) > 0 {
 		subnet := readySubnets[0]
 		vnID := ""
-		classID := ""
 		if ref := subnet.GetSpec().GetVirtualNetwork(); ref != nil {
 			vnID = ref.GetId()
 		}
@@ -995,7 +1027,6 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 				vnID = ""
 			}
 			if vnID != "" {
-				classID = singletonNetworkClassID(ctx, classes)
 				classResponse, classErr := classes.Get(ctx, privatev1.NetworkClassesGetRequest_builder{Id: classID}.Build())
 				if classErr != nil || classResponse.GetObject().GetMetadata().HasDeletionTimestamp() ||
 					classResponse.GetObject().GetFabricManager() == "" {
@@ -1019,6 +1050,7 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 				}
 				if sg.GetSpec().GetVirtualNetwork().GetId() == vnID {
 					scheduleTenantDefaultNetworkingFixtureCleanup(ctx, tenant)
+					Expect(setTenantDefaultNetworkingCondition(ctx, tenant, true)).To(Succeed())
 					return catalogItemNetworkFixture{
 						subnetID: subnet.GetId(), securityGroupID: sg.GetId(),
 						virtualNetworkID: vnID, networkClassID: classID,
@@ -1029,7 +1061,6 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 	}
 
 	cleanupIncompleteTenantDefaultNetworkingFixture(ctx, tenant, project, networks)
-	classID, _ := getOrCreateTenantDefaultNetworkClassFixture(ctx)
 	scheduleTenantDefaultNetworkingFixtureCleanup(ctx, tenant)
 	defaultLabels := map[string]string{tenantDefaultNetworkingLabel: "true"}
 	meta := privatev1.Metadata_builder{
@@ -1232,6 +1263,7 @@ func ensureTenantDefaultNetworkingFixture(ctx context.Context, tenant, project s
 		g.Expect(current.GetObject().GetStatus().GetState()).To(Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY))
 		g.Expect(current.GetObject().GetSpec().GetVirtualNetwork().GetId()).To(Equal(networkID))
 	}, time.Minute, time.Second).Should(Succeed())
+	Expect(setTenantDefaultNetworkingCondition(ctx, tenant, true)).To(Succeed())
 	return catalogItemNetworkFixture{
 		subnetID: subnetID, securityGroupID: groupID,
 		virtualNetworkID: networkID, networkClassID: classID,
@@ -1285,7 +1317,10 @@ func deleteTenantDefaultNetworkingFixture(ctx context.Context, manager defaultne
 	for {
 		err := manager.Delete(ctx, tenant)
 		if !errors.Is(err, defaultnetworking.ErrResourcesDeleting) {
-			return err
+			if err != nil {
+				return err
+			}
+			return setTenantDefaultNetworkingCondition(ctx, tenant, false)
 		}
 		if err := clearTenantDefaultNetworkingFinalizers(ctx, tenant); err != nil {
 			return fmt.Errorf("clear terminating default networking fixture finalizers: %w", err)
@@ -1298,6 +1333,52 @@ func deleteTenantDefaultNetworkingFixture(ctx context.Context, manager defaultne
 		case <-ticker.C:
 		}
 	}
+}
+
+// setTenantDefaultNetworkingCondition mirrors the tenant controller's readiness
+// condition for fixtures that set networking resource states directly.
+func setTenantDefaultNetworkingCondition(ctx context.Context, tenant string, ready bool) error {
+	tenants := privatev1.NewTenantsClient(tool.InternalView().ControllerConn())
+	response, err := tenants.Get(ctx, privatev1.TenantsGetRequest_builder{Id: tenant}.Build())
+	if status.Code(err) == codes.NotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	object := response.GetObject()
+	if !object.HasStatus() {
+		object.SetStatus(&privatev1.TenantStatus{})
+	}
+	conditions := object.GetStatus().GetConditions()
+	updated := make([]*privatev1.TenantCondition, 0, len(conditions)+1)
+	conditionFound := false
+	for _, condition := range conditions {
+		if condition.GetType() == privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY {
+			conditionFound = true
+			if ready {
+				condition.SetStatus(privatev1.ConditionStatus_CONDITION_STATUS_TRUE)
+				updated = append(updated, condition)
+			}
+			continue
+		}
+		updated = append(updated, condition)
+	}
+	if ready && !conditionFound {
+		updated = append(updated, privatev1.TenantCondition_builder{
+			Type:   privatev1.TenantConditionType_TENANT_CONDITION_TYPE_DEFAULT_NETWORKING_READY,
+			Status: privatev1.ConditionStatus_CONDITION_STATUS_TRUE,
+		}.Build())
+	}
+	if !ready && !conditionFound {
+		return nil
+	}
+	object.GetStatus().SetConditions(updated)
+	_, err = tenants.Update(ctx, privatev1.TenantsUpdateRequest_builder{
+		Object:     object,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.conditions"}},
+	}.Build())
+	return err
 }
 
 func clearTenantDefaultNetworkingFinalizers(ctx context.Context, tenant string) error {
