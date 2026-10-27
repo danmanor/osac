@@ -46,8 +46,6 @@
                 annotations:
                   osac.openshift.io/tenant: "{{ tenant_id }}"
               spec:
-                region: integration
-                networkClass: netris
                 ipv4Cidr: 10.231.0.0/16
 
         - name: Set the fixture VirtualNetwork Netris VPC ID
@@ -82,6 +80,10 @@
               spec:
                 virtualNetwork: "{{ vnet_uuid }}"
                 ipv4Cidr: 10.231.1.0/24
+                addressPlan:
+                  overlay: 0
+                  fabric: 16
+                  lbVip: 0
 
         - name: Mark the fixture Subnet ready for attachment move tests
           ansible.builtin.command:
@@ -95,7 +97,10 @@
               - --subresource=status
               - --type=merge
               - --patch
-              - '{"status":{"phase":"Ready"}}'
+              - >-
+                {"status":{"conditions":[{"type":"Ready","status":"True",
+                "reason":"Succeeded","message":"fixture ready",
+                "observedGeneration":1,"lastTransitionTime":"2025-01-01T00:00:00Z"}]}}
           changed_when: true
 
         - name: Verify the fixture Subnet is ready
@@ -110,7 +115,11 @@
           ansible.builtin.assert:
             that:
               - fixture_subnet_read.resources | length == 1
-              - fixture_subnet_read.resources[0].status.phase == 'Ready'
+              - >-
+                fixture_subnet_read.resources[0].status.conditions
+                | selectattr('type', 'equalto', 'Ready')
+                | selectattr('status', 'equalto', 'True')
+                | list | length == 1
 
         - name: Create the allocated ExternalIP used by SNAT and DNAT tests
           kubernetes.core.k8s:

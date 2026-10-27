@@ -25,10 +25,10 @@ User ─► fulfillment-service (API) ─► osac-operator (watches K8s CRs) ─
    SecurityGroup, ComputeInstance, ClusterOrder, etc.) and triggers AAP job
    templates to provision them.
 3. **osac-aap (this repo)** — The Ansible automation that actually creates
-   infrastructure. Networking jobs run the generic playbook
-   `playbook_osac_network_task.yml`, which includes the task file of the
-   manager role the operator names in `osac_job_vars` (network manager
-   contract); other playbooks receive their CR in `osac_job_vars.resource`.
+   infrastructure. Shared networking task dispatch is provided by
+   `playbook_osac_network_task.yml`; it runs a task from the manager role named
+   in `osac_job_vars`. Manager-specific AAP templates will adopt that shared
+   playbook through their owning teams.
 
 ## What it provisions
 
