@@ -22,7 +22,7 @@ import (
 
 var _ = DescribeMigration("Create installation settings", func() {
 	BeforeEach(func(ctx context.Context) {
-		Expect(tool.Migrate(ctx, 136)).To(Succeed())
+		Expect(tool.Migrate(ctx, 139)).To(Succeed())
 	})
 
 	It("stores one row of settings", func(ctx context.Context) {
