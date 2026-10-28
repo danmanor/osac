@@ -24,7 +24,7 @@ import (
 
 var _ = DescribeMigration("Subnet delete guard and SecurityGroup dependencies", func() {
 	BeforeEach(func(ctx context.Context) {
-		Expect(tool.Migrate(ctx, 138)).To(Succeed())
+		Expect(tool.Migrate(ctx, 141)).To(Succeed())
 	})
 
 	It("allows deleting a Subnet while preserving the SecurityGroup guard on its VirtualNetwork", func(ctx context.Context) {

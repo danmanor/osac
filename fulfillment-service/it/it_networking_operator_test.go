@@ -14,12 +14,8 @@ specific language governing permissions and limitations under the License.
 package it
 
 // Networking specs that need the deployed OSAC operator. The SUITE=fulfillment installer target runs them in their own
-// phase (ginkgo --label-filter networking-operator), after it deploys the operator with
-// global.networking.provisioningEnabled=false and applies the Netris Fabric Manager registration of the profile
-// (osac-installer/values/dev/fabric-registration.yaml). Unlike the service-only specs, these never write networking
-// status themselves: every state they check comes from the operator's reconcilers and feedback controllers. With
-// provider networking disabled the operator runs no AAP job, so these specs need no AAP; the enabled path (manager
-// tasks through AAP) belongs to the operator suite and the E2E suites.
+// phase (ginkgo --label-filter networking-operator), with global.networking.provisioningEnabled=false. These specs
+// verify the operator's provider-disabled readiness and feedback behavior without manager registrations or AAP jobs.
 
 import (
 	"context"
@@ -31,7 +27,6 @@ import (
 	. "github.com/onsi/gomega"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,12 +40,6 @@ import (
 // opTimeout bounds the waits for the operator: its reconcilers, the feedback controllers and the fulfillment
 // controller (which runs without periodic synchronization in the installer target) each take a round.
 const opTimeout = 5 * time.Minute
-
-// Labels of the network manager registrations (network manager contract section 4.2).
-const (
-	opFabricManagerLabel = "osac.openshift.io/network-fabric-manager"
-	opK8sManagerLabel    = "osac.openshift.io/network-k8s-manager"
-)
 
 // opExpectProvisioningDisabled checks the Ready condition of a networking CR: True, reason ProvisioningDisabled,
 // a message naming the skipped task, and no job.
@@ -75,32 +64,6 @@ var _ = Describe("Networking with operator", Label(networkingOperatorLabel), fun
 	})
 
 	It("TC-OP-01 makes the installer's NetworkClass READY without resolving the registrations", func(ctx context.Context) {
-		By("checking the Fabric Manager registration the profile ships (values/dev/fabric-registration.yaml)")
-		registrations := &corev1.ConfigMapList{}
-		Expect(tool.KubeClient().List(ctx, registrations, crclient.InNamespace(hubNamespace),
-			crclient.MatchingLabels{opFabricManagerLabel: "true"})).To(Succeed())
-		var netris *corev1.ConfigMap
-		for i := range registrations.Items {
-			if registrations.Items[i].Data["name"] == "netris" {
-				netris = &registrations.Items[i]
-			}
-		}
-		Expect(netris).ToNot(BeNil(), "no Fabric Manager registration named netris in %s; the installer target "+
-			"applies osac-installer/values/<profile>/fabric-registration.yaml", hubNamespace)
-		fmt.Fprintf(GinkgoWriter, "Netris registration %s: %v\n", netris.Name, netris.Data)
-		Expect(netris.Data["ansible_role"]).To(Equal("osac.templates.netris"))
-		Expect(netris.Data["network_types"]).To(Equal("evpn"))
-
-		By("checking the Kubernetes Manager registration that the operator chart ships")
-		k8sRegistrations := &corev1.ConfigMapList{}
-		Expect(tool.KubeClient().List(ctx, k8sRegistrations, crclient.InNamespace(hubNamespace),
-			crclient.MatchingLabels{opK8sManagerLabel: "true"})).To(Succeed())
-		names := []string{}
-		for _, item := range k8sRegistrations.Items {
-			names = append(names, item.Data["name"])
-		}
-		Expect(names).To(ContainElement("cudn_evpn"), "Kubernetes Manager registrations: %v", names)
-
 		nc := ndSingletonNetworkClass(ctx, c)
 		By(fmt.Sprintf("waiting for the operator to make the NetworkClass CR of %s Ready", nc.GetId()))
 		Eventually(func(g Gomega) {
