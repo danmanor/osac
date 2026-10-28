@@ -475,6 +475,13 @@ func (in *ComputeInstanceStatus) DeepCopyInto(out *ComputeInstanceStatus) {
 		in, out := &in.RunningConfigSince, &out.RunningConfigSince
 		*out = (*in).DeepCopy()
 	}
+	if in.ProvisioningJobs != nil {
+		in, out := &in.ProvisioningJobs, &out.ProvisioningJobs
+		*out = make([]JobStatus, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Jobs != nil {
 		in, out := &in.Jobs, &out.Jobs
 		*out = make([]NetworkJobStatus, len(*in))

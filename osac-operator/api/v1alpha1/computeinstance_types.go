@@ -356,6 +356,12 @@ type ComputeInstanceStatus struct {
 	// +kubebuilder:validation:Optional
 	ProvisionConfigVersion string `json:"provisionConfigVersion,omitempty"`
 
+	// ProvisioningJobs tracks the history of provision and deprovision operations
+	// Ordered chronologically, with latest operations at the end
+	// Limited to the last N jobs (configurable via OSAC_MAX_JOB_HISTORY, default 10)
+	// +kubebuilder:validation:Optional
+	ProvisioningJobs []JobStatus `json:"provisioningJobs,omitempty"`
+
 	// Jobs tracks the provision and deprovision jobs (manager none), one entry
 	// per task (network manager contract §4.7 Job tracking).
 	// +kubebuilder:validation:Optional
