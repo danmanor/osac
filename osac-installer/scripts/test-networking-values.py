@@ -461,6 +461,29 @@ class AapSettingsTest(unittest.TestCase):
                     f"{doc['kind']}/{doc['metadata']['name']} has derived NETRIS_ settings",
                 )
 
+    def test_network_fulfillment_netris_settings_are_written_verbatim(self):
+        config = {
+            "NETRIS_CONTROLLER_URL": "https://netris.example.com",
+            "NETRIS_VALIDATE_CERTS": "false",
+        }
+        docs = render(
+            networking(fabricManager="netris"),
+            {
+                "aap": {
+                    "instanceGroups": {
+                        "networkFulfillment": {
+                            "config": config,
+                            "secret": {"NETRIS_PASSWORD": "test-password"},
+                        }
+                    }
+                }
+            },
+        )
+        cm = find(docs, "ConfigMap", "network-fulfillment-ig")
+        self.assertEqual(cm["data"], config)
+        secret = find(docs, "Secret", "network-fulfillment-ig")
+        self.assertEqual(set(secret["data"]), {"NETRIS_PASSWORD"})
+
     def test_setting_names(self):
         result = helm({"aap": {"instanceGroups": {"networkFulfillment": {"config": {"lower_case": "x"}}}}})
         self.assertNotEqual(result.returncode, 0)
