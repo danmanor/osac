@@ -22,7 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
+
 	"strings"
 	"time"
 
@@ -337,30 +337,6 @@ func operatorIdentity() string {
 	serviceAccount := strings.TrimSpace(output)
 	Expect(serviceAccount).NotTo(BeEmpty(), "the operator deployment must name its service account")
 	return fmt.Sprintf("system:serviceaccount:%s:%s", operatorNamespace, serviceAccount)
-}
-
-// installerFile returns the absolute path of a file of the osac-installer
-// component (the suite runs from osac-operator/test/integration).
-func installerFile(parts ...string) string {
-	path, err := filepath.Abs(filepath.Join(append([]string{"..", "..", "..", "osac-installer"}, parts...)...))
-	Expect(err).NotTo(HaveOccurred())
-	return path
-}
-
-// configMapsWithManager lists the registration ConfigMaps in the operator
-// namespace that carry label=true and data.name == name.
-func configMapsWithManager(label, name string) []unstructured.Unstructured {
-	output, err := kubectl("", "get", "configmaps", "-n", operatorNamespace, "-l", label+"=true", "-o", "json")
-	Expect(err).NotTo(HaveOccurred())
-	list := &unstructured.UnstructuredList{}
-	Expect(list.UnmarshalJSON([]byte(output))).To(Succeed())
-	var matches []unstructured.Unstructured
-	for _, item := range list.Items {
-		if value, _, _ := unstructured.NestedString(item.Object, "data", "name"); value == name {
-			matches = append(matches, item)
-		}
-	}
-	return matches
 }
 
 // listNames lists the names of kind in the operator namespace.
