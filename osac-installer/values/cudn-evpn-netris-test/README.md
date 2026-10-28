@@ -11,9 +11,7 @@ The profile provides:
 - VMaaS and BMaaS (Metal3 backend) with `global.networking.provisioningEnabled: true`;
 - `fabricManager: netris` and `k8sManager: cudn_evpn`; the installer's
   NetworkClass step creates the NetworkClass from them;
-- `fabric-registration.yaml`, the Netris Fabric Manager registration
-  (`network_types: evpn`), which `make install-osac` applies after the chart.
-  The installer registers the OSAC `cudn_evpn` Kubernetes Manager itself;
+- manager registrations and implementations supplied by their owning teams;
 - the non-secret Netris settings in `aap.instanceGroups.networkFulfillment.config`.
 
 Before installing, the target OpenShift cluster must already have the Phase 1

@@ -209,10 +209,6 @@ else ifdef PROFILE
 INFRA_VALUES    := values/$(PROFILE)/infra.yaml
 INSTANCE_VALUES := values/$(PROFILE)/instance.yaml
 endif
-# Fabric Manager registration applied after install-osac, from the directory
-# of the profile's base instance values.
-FABRIC_REGISTRATION := $(dir $(INSTANCE_VALUES))fabric-registration.yaml
-
 # Kind cluster create/delete routing. dev-full needs a rootful runtime (KubeVirt
 # chowns /dev/kvm), so it goes through the cross-platform wrapper. Apple Silicon
 # also uses the wrapper for both Kind profiles, keeping image build/load and Kind
@@ -495,12 +491,6 @@ endif
 		$(INSTANCE_HELM_ARGS) \
 		$(EXTRA_HELM_ARGS) $(OSAC_HELM_FORCE_CONFLICTS) "$${remote_cluster_helm_args[@]}" \
 		--wait --timeout 40m
-	@# Fabric Manager registrations are not Helm values; CI and dev profiles
-	@# ship one next to their instance values (immutable ConfigMap).
-	@if [ -f "$(FABRIC_REGISTRATION)" ]; then \
-		kubectl apply -n $(NS) -f "$(FABRIC_REGISTRATION)"; \
-	fi
-
 .PHONY: uninstall-osac
 uninstall-osac: ## Uninstall OSAC instance (PLATFORM= PROFILE= NS= required)
 	helm uninstall osac --namespace $(NS) --ignore-not-found

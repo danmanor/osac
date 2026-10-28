@@ -353,11 +353,8 @@ exercised by this unit suite.
 
 The `it-osac-installer` leg runs `scripts/it-networking-checks.py` after
 `install-osac` and again after the idempotent upgrade. Against the deployed
-Kind release it checks manager registration ConfigMaps (singleton, immutable,
-exact data, name hash), the profile's Fabric registration
-(`values/dev/fabric-registration.yaml`) applied as is, the NetworkClass step
-Job result and, through a read-only copy
-of that Job with its own credentials, the private API NetworkClass
+Kind release it checks the NetworkClass step Job result and, through a
+read-only copy of that Job with its own credentials, the private API NetworkClass
 (`fabric_manager`, `k8s_manager`, `spec.defaults`, east-west capabilities,
 `spec.address_plan` against the rendered step input and the derived plan) and
 its NetworkClass CR (sixteenths, `Ready`), the ValidatingAdmissionPolicy and
