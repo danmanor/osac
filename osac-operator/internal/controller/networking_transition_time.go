@@ -16,11 +16,34 @@ package controller
 import (
 	"context"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	clnt "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// stateTransitionTimeOf returns the time a status change happened. A CR deleted before any
+// controller status write carries no transition time; the deletion started at the deletion
+// timestamp, so that is then the time of the change.
+func stateTransitionTimeOf(at, deleted *metav1.Time) *timestamppb.Timestamp {
+	if at == nil {
+		at = deleted
+	}
+	if at == nil {
+		return nil
+	}
+	return timestamppb.New(at.Time)
+}
+
+// laterTransitionTimeOf returns the later of the two times.
+func laterTransitionTimeOf(a, b *metav1.Time) *timestamppb.Timestamp {
+	at := stateTransitionTimeOf(a, b)
+	if a != nil && b != nil && b.Time.After(a.Time) {
+		at = timestamppb.New(b.Time)
+	}
+	return at
+}
 
 // backfillAttachmentStateTransitionTime stamps a first-observed time on
 // attachments that settled before StateTransitionTime existed (upgrade path),
