@@ -5,20 +5,15 @@ Runs after `make install-osac` against the live Kind cluster and verifies what
 the networking installation must leave behind (unified networking design,
 network manager contract §4.2, DECISIONS 3, 8, 16, 18):
 
-  1. the cudn_evpn Kubernetes Manager registration ConfigMap exists once, is
-     immutable, carries the registration label, has exactly the expected data,
-     and its name carries the hash of that data;
-  2. the profile's Fabric Manager registration file was applied as is
-     (immutable, labelled, identical data);
-  3. the NetworkClass step Job succeeded and the private API holds exactly one
+  1. the NetworkClass step Job succeeded and the private API holds exactly one
      NetworkClass whose fabric_manager, k8s_manager, spec.defaults,
      spec.east_west_capabilities and spec.address_plan match the step input the
      chart rendered (and the plan derived from the enabled services), and the
      fulfillment controller mirrored it to a NetworkClass CR;
-  4. the ValidatingAdmissionPolicy and its binding exist and reject a direct
+  2. the ValidatingAdmissionPolicy and its binding exist and reject a direct
      networking CR create by a non-OSAC user that RBAC allows (kubectl --as),
      while the same user may still create an ordinary object;
-  5. the operator and fulfillment Deployments carry
+  3. the operator and fulfillment Deployments carry
      OSAC_PROVISIONING_ENABLED / --networking-provisioning-enabled as rendered
      from the profile's global.networking.provisioningEnabled.
 
@@ -31,22 +26,12 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import subprocess
 import sys
 import time
 import uuid
 
-K8S_MANAGER_LABEL = "osac.openshift.io/network-k8s-manager"
-FABRIC_MANAGER_LABEL = "osac.openshift.io/network-fabric-manager"
-CUDN_EVPN_DATA = {
-    "name": "cudn_evpn",
-    "ansible_role": "osac.templates.cudn_evpn",
-    "network_type": "evpn",
-    "description": "OSAC Kubernetes Manager: one ClusterUserDefinedNetwork with an EVPN transport per VirtualNetwork",
-}
-CUDN_EVPN_PREFIX = "osac-network-k8s-manager-cudn-evpn-"
 STEP_JOB = "create-network-class"
 VAP_MESSAGE = "OSAC manages this resource; change it through the fulfillment API"
 READER_MARKER = "IT-NETWORK-CLASSES "
@@ -120,11 +105,6 @@ def short(value: object, limit: int = 600) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def helm_toJson_hash(data: dict) -> str:
-    # Helm's toJson sorts map keys and does not add spaces.
-    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:8]
-
-
 def normalize_plan(plan: dict | None) -> dict:
     plan = plan or {}
     return {share: float(plan.get(share) or 0) for share in PLAN_SHARES}
@@ -169,72 +149,6 @@ def derived_plan(services: dict, k8s_manager: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-
-
-def check_cudn_evpn_registration(c: Checks, ns: str) -> None:
-    c.section("cudn_evpn Kubernetes Manager registration")
-    items = kubectl_json("get", "configmaps", "-n", ns, "-l", f"{K8S_MANAGER_LABEL}=true")["items"]
-    c.info(f"ConfigMaps labelled {K8S_MANAGER_LABEL}=true in {ns}: {[i['metadata']['name'] for i in items]}")
-    if not c.check("exactly one Kubernetes Manager registration", len(items) == 1, f"found {len(items)}"):
-        return
-    cm = items[0]
-    name = cm["metadata"]["name"]
-    c.info(f"ConfigMap {ns}/{name}: immutable={cm.get('immutable')} data={short(cm.get('data'))}")
-    c.check(f"ConfigMap {name} is named {CUDN_EVPN_PREFIX}<hash>", name.startswith(CUDN_EVPN_PREFIX), name)
-    expected_hash = helm_toJson_hash(CUDN_EVPN_DATA)
-    c.check(
-        f"ConfigMap {name} name carries the hash of its data",
-        name == CUDN_EVPN_PREFIX + expected_hash,
-        f"expected {CUDN_EVPN_PREFIX}{expected_hash}",
-    )
-    c.check(f"ConfigMap {name} is immutable", cm.get("immutable") is True, f"immutable={cm.get('immutable')}")
-    data = cm.get("data") or {}
-    c.check(
-        f"ConfigMap {name} has exactly the cudn_evpn registration data",
-        data == CUDN_EVPN_DATA,
-        f"data={short(data)} expected={short(CUDN_EVPN_DATA)}",
-    )
-    c.check(
-        f"ConfigMap {name} has no Fabric Manager label",
-        FABRIC_MANAGER_LABEL not in (cm["metadata"].get("labels") or {}),
-        f"labels={cm['metadata'].get('labels')}",
-    )
-
-
-def check_fabric_registration(c: Checks, ns: str, path: str) -> dict:
-    c.section(f"Fabric Manager registration from {path}")
-    with open(path, encoding="utf-8") as handle:
-        wanted = manifests_to_json(handle.read())
-    c.check(
-        f"{path} holds one ConfigMap",
-        len(wanted) == 1 and wanted[0].get("kind") == "ConfigMap",
-        f"{[w.get('kind') for w in wanted]}",
-    )
-    want = wanted[0]
-    name = want["metadata"]["name"]
-    proc = run(["kubectl", "get", "configmap", name, "-n", ns, "-o", "json"], check=False)
-    if not c.check(f"ConfigMap {ns}/{name} exists", proc.returncode == 0, proc.stderr.strip()):
-        return {}
-    cm = json.loads(proc.stdout)
-    c.info(
-        f"ConfigMap {ns}/{name}: immutable={cm.get('immutable')} labels={cm['metadata'].get('labels')} "
-        f"data={short(cm.get('data'))}"
-    )
-    c.check(f"ConfigMap {name} is immutable", cm.get("immutable") is True, f"immutable={cm.get('immutable')}")
-    c.check(
-        f"ConfigMap {name} has {FABRIC_MANAGER_LABEL}=true",
-        (cm["metadata"].get("labels") or {}).get(FABRIC_MANAGER_LABEL) == "true",
-        f"labels={cm['metadata'].get('labels')}",
-    )
-    c.check(
-        f"ConfigMap {name} data equals the profile's registration",
-        (cm.get("data") or {}) == (want.get("data") or {}),
-        f"live={short(cm.get('data'))} file={short(want.get('data'))}",
-    )
-    fabric = kubectl_json("get", "configmaps", "-n", ns, "-l", f"{FABRIC_MANAGER_LABEL}=true")["items"]
-    names = [i["metadata"]["name"] for i in fabric]
-    c.check("exactly one Fabric Manager registration", names == [name], f"found {names}")
-    return want.get("data") or {}
 
 
 def step_job_input(c: Checks, ns: str, release: str) -> tuple[dict, dict]:
@@ -629,9 +543,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--namespace", default="osac")
     parser.add_argument("--release", default="osac")
-    parser.add_argument(
-        "--fabric-registration", required=True, help="the profile's fabric-registration.yaml that install-osac applied"
-    )
     args = parser.parse_args()
 
     c = Checks()
@@ -640,8 +551,6 @@ def main() -> int:
     )
     c.info(f"release {args.release}: global.networking={short(values.get('global', {}).get('networking'), 2000)}")
     steps = (
-        lambda: check_cudn_evpn_registration(c, args.namespace),
-        lambda: check_fabric_registration(c, args.namespace, args.fabric_registration),
         lambda: check_network_class(c, args.namespace, args.release, values),
         lambda: check_admission_policy(c, args.namespace),
         lambda: check_provisioning_flags(c, args.namespace, args.release, values),

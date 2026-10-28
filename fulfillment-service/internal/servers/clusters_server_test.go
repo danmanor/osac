@@ -2165,7 +2165,7 @@ var _ = Describe("Clusters server", func() {
 							Template: publicv1.ClusterTemplateReference_builder{Id: "my_bmit_template"}.Build(),
 							NodeSets: map[string]*publicv1.ClusterNodeSet{
 								"workers": publicv1.ClusterNodeSet_builder{
-									BaremetalInstanceType: publicv1.BareMetalInstanceTypeReference_builder{Id: "bmit_no_fabric", Shared: true}.
+									BaremetalInstanceType: publicv1.BareMetalInstanceTypeReference_builder{Id: "bmit_gpu", Shared: true}.
 										Build(),
 									Size: proto.Int32(3),
 								}.Build(),
@@ -2174,7 +2174,7 @@ var _ = Describe("Clusters server", func() {
 					}.Build(),
 				}.Build())
 				Expect(err).ToNot(HaveOccurred())
-				Expect(response.GetObject().GetSpec().GetNodeSets()["workers"].GetBaremetalInstanceType().GetId()).To(Equal("bmit_no_fabric"))
+				Expect(response.GetObject().GetSpec().GetNodeSets()["workers"].GetBaremetalInstanceType().GetId()).To(Equal("bmit_gpu"))
 			})
 
 			It("Accepts node set with baremetal_instance_type when template has none", func() {
