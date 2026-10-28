@@ -2,10 +2,11 @@
 #
 # This profile is intentionally opt-in. It assumes that the cluster has the
 # Phase 1 IPv4 EVPN/BGP/VTEP prerequisites, an EVPN FRRConfiguration, and a
-# reachable Netris controller. Provider networking is enabled: the NetworkClass
-# uses the Netris Fabric Manager (fabric-registration.yaml, applied after
-# install) and the OSAC cudn_evpn Kubernetes Manager. Site-specific settings
-# and the Netris password come from a private values file (see README.md).
+# reachable Netris controller. Provider networking is enabled, and its
+# NetworkClass selects the Netris Fabric Manager and cudn_evpn Kubernetes
+# Manager. Their registrations and implementations are supplied by their
+# owning teams. Site-specific settings and the Netris password come from a
+# private values file (see README.md).
 
 # --- Service Enablement ---
 global:

@@ -73,31 +73,14 @@ aap:
   group; with a provider Fabric Manager, the provider's image built on
   `aap.bootstrap.image`.
 
-## Fabric Manager registration
+## Manager registration
 
-The admin applies the Fabric Manager registration to the release namespace
-before or after installing; it is never a Helm value (network manager contract
-section 4.2):
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: network-manager-netris
-  labels:
-    osac.openshift.io/network-fabric-manager: "true"
-immutable: true
-data:
-  name: netris
-  ansible_role: osac.templates.netris
-  network_types: evpn              # needed to pair with cudn_evpn
-  # capabilities: eastWestEthernet # needed for supportsEastWestEthernet
-```
-
-The CI and dev profiles ship theirs as `values/<profile>/fabric-registration.yaml`;
-`make install-osac` applies it after the chart. `values/agentless-net-stub.yaml`
-with `values/agentless-net-registration.yaml` selects AgentlessNet on a profile
-without VMaaS.
+Manager registration ConfigMaps and implementations are owned by the
+corresponding manager teams. The installer does not ship or apply
+manager-specific registrations. When `provisioningEnabled` is `true`, install
+the required registrations and provider configuration using the manager's
+documented procedure. With provider networking disabled, the operator does not
+require manager registrations for networking resources to become READY.
 
 ## Checks during a rollout
 
@@ -154,4 +137,5 @@ release's policy. `helm uninstall` removes the policy first;
 | `cudn-evpn-netris-test` | enabled | `netris` | `cudn_evpn` |
 
 With provider networking disabled the profiles need no network manager
-settings; the Netris registration only lets the NetworkClass resolve.
+registrations or provider settings. Manager registrations are required when
+provider networking is enabled.
