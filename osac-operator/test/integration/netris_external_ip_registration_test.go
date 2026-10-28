@@ -108,6 +108,7 @@ func netrisUmbrellaOverrides() []string {
 		"--set", "service.mcp.resources.limits.memory=512Mi",
 		"--set", "operator.networkManagers.fabricManagers.netris.enabled=true",
 		"--set", "global.networking.fabricManager=netris",
+		"--set", "global.networking.k8sManager=cudn_evpn",
 	}
 }
 
