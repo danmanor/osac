@@ -138,7 +138,6 @@ class RemovedKeysTest(RenderFailureCase):
             "operator.controllers.networkingProvisioning": {
                 "operator": {"controllers": {"networkingProvisioning": False}}
             },
-            "operator.networkManagers": {"operator": {"networkManagers": {"enabled": True}}},
             "defaults.enableNatGateway": networking(networkClass={"defaults": {"enableNatGateway": True}}),
             "k8sManager k8s_only": networking(k8sManager="k8s_only"),
         }
@@ -348,26 +347,12 @@ class DefaultsTest(RenderFailureCase):
 
 
 class ManifestsTest(unittest.TestCase):
-    def test_cudn_evpn_registration(self):
-        # The operator subchart renders the one cudn_evpn registration.
-        cms = [
-            d for d in render()
-            if d["kind"] == "ConfigMap"
-            and (d["metadata"].get("labels") or {}).get("osac.openshift.io/network-k8s-manager") == "true"
-        ]
-        self.assertEqual(len(cms), 1, [c["metadata"]["name"] for c in cms])
-        cm = cms[0]
-        self.assertTrue(cm["metadata"]["name"].startswith("osac-network-k8s-manager-cudn-evpn-"))
-        self.assertNotIn("osac.openshift.io/network-fabric-manager", cm["metadata"]["labels"])
-        self.assertIs(cm["immutable"], True)
-        self.assertEqual(cm["data"]["name"], "cudn_evpn")
-        self.assertEqual(cm["data"]["ansible_role"], "osac.templates.cudn_evpn")
-        self.assertEqual(cm["data"]["network_type"], "evpn")
-
-    def test_no_fabric_registration_from_helm(self):
-        for doc in render():
+    def test_disabling_operator_manager_registration_renders_no_managers(self):
+        docs = render({"operator": {"networkManagers": {"enabled": False}}})
+        for doc in docs:
             labels = doc.get("metadata", {}).get("labels") or {}
             self.assertNotIn("osac.openshift.io/network-fabric-manager", labels, doc["metadata"]["name"])
+            self.assertNotIn("osac.openshift.io/network-k8s-manager", labels, doc["metadata"]["name"])
 
     def test_admission_policy(self):
         docs = render()
@@ -503,6 +488,29 @@ class AapSettingsTest(unittest.TestCase):
 
 class SubchartPlumbingTest(unittest.TestCase):
     """Networking installation settings reach the operator, BMF and fulfillment service."""
+
+    def test_generic_manager_registration_is_passed_to_operator_subchart(self):
+        result = helm(
+            networking(fabricManager="test_fabric"),
+            {
+                "operator": {
+                    "networkManagers": {
+                        "fabricManagers": {
+                            "test_fabric": {
+                                "enabled": True,
+                                "description": "Contract test fabric manager",
+                                "capabilities": ["ipv4"],
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+        config_map = find(docs, "ConfigMap", "osac-network-fabric-manager-test-fabric")
+        self.assertEqual(config_map["data"]["name"], "test_fabric")
+        self.assertEqual(config_map["data"]["capabilities"], "ipv4")
 
     @staticmethod
     def deployment_env(docs, name_part: str) -> dict:
