@@ -518,17 +518,17 @@ func clusterOrderStallThresholdsFromEnv() controller.ClusterOrderStallThresholds
 func setupComputeInstanceControllers(
 	mgr mcmanager.Manager,
 	grpcConn grpc.ClientConnInterface,
-	maxJobHistory int,
+	engine *networktask.Engine,
 ) error {
 	localMgr := mgr.GetLocalManager()
 	computeInstanceNamespace := os.Getenv(envComputeInstanceNamespace)
 	tenantNamespace := os.Getenv(envTenantNamespace)
 	networkingNamespace := os.Getenv(envNetworkingNamespace)
 	targetCluster := targetClusterFromManager(mgr)
-	computeInstanceProvider, statusPollInterval, err := createAAPProviderFromEnv("", "")
-	if err != nil {
-		return fmt.Errorf("create provisioning provider: %w", err)
-	}
+	templatePrefix := helpers.GetEnvWithDefault(envAAPTemplatePrefix, "osac")
+	provisionTemplate := helpers.GetEnvWithDefault(envAAPProvisionTemplate, templatePrefix+"-create-compute-instance")
+	deprovisionTemplate := helpers.GetEnvWithDefault(envAAPDeprovisionTemplate, templatePrefix+"-delete-compute-instance")
+	statusPollInterval := helpers.GetEnvWithDefault(envAAPStatusPollInterval, provisioning.DefaultStatusPollInterval)
 	if grpcConn != nil {
 		if err := (controller.NewComputeInstanceFeedbackReconciler(
 			localMgr.GetClient(),
@@ -543,9 +543,10 @@ func setupComputeInstanceControllers(
 		computeInstanceNamespace,
 		tenantNamespace,
 		networkingNamespace,
-		computeInstanceProvider,
+		engine,
+		provisionTemplate,
+		deprovisionTemplate,
 		statusPollInterval,
-		maxJobHistory,
 		targetCluster,
 	)
 	if grpcConn != nil {
@@ -700,7 +701,7 @@ func setupControllers(
 		}
 	}
 	if flags.ComputeInstance {
-		if err := setupComputeInstanceControllers(mgr, grpcConn, maxJobHistory); err != nil {
+		if err := setupComputeInstanceControllers(mgr, grpcConn, engine); err != nil {
 			return fmt.Errorf("computeinstance controllers: %w", err)
 		}
 	}
