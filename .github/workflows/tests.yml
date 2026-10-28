@@ -504,8 +504,8 @@ jobs:
           --set metering.image.tag=it
           --set metering.image.pullPolicy=Never"
 
-      # The rerun of the NetworkClass step must
-      # leave the networking installation exactly as the first install did.
+      # The rerun of the NetworkClass step must leave the networking
+      # installation exactly as the first install did.
       - name: Check networking installation after the upgrade
         if: inputs.kind == 'it-osac-installer'
         run: |
