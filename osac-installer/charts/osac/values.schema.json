@@ -480,6 +480,31 @@
           },
           "additionalProperties": false
         },
+        "networkManagers": {
+          "type": "object",
+          "description": "Generic network manager registrations passed through to the operator subchart; registration content is owned by manager teams.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "capabilitiesSyncInterval": {
+              "type": "string"
+            },
+            "fabricManagers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            },
+            "k8sManagers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "provisioning": {
           "type": "object",
           "description": "Provisioning provider configuration",
