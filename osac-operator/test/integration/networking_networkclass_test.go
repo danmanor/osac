@@ -26,19 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// NetworkClass resolution by the deployed operator from the manager
-// registration ConfigMaps (contract §4.2, TC-REG-01). The cudn_evpn
-// registration is the one the operator chart renders; the Netris registration
-// is the installer's dev profile file; every other registration is created
-// here with names unique to the spec. Every NetworkClass is deleted at the end
-// of its spec, so at most one exists at a time (the networking controllers
-// require exactly one Ready NetworkClass).
-
-const (
-	netrisRegistrationName = "network-manager-netris"
-	cudnEVPNRole           = "osac.templates.cudn_evpn"
-	netrisRole             = "osac.templates.netris"
-)
+// NetworkClass resolution by the deployed operator from manager registration
+// ConfigMaps (contract §4.2, TC-REG-01). Registrations are synthetic and unique
+// to each spec so these checks stay independent of provider-owned values.
 
 // registration describes a manager registration ConfigMap.
 type registration struct {
@@ -165,25 +155,6 @@ func expectNetworkClassReady(
 	return nc
 }
 
-// ensureNetrisRegistration applies the installer's Netris registration (a
-// no-op when `make install-osac` already applied it) and returns it.
-func ensureNetrisRegistration() unstructured.Unstructured {
-	By("applying the installer's Netris Fabric Manager registration (values/dev/fabric-registration.yaml)")
-	output, err := kubectl(
-		"",
-		"apply",
-		"-n",
-		operatorNamespace,
-		"-f",
-		installerFile("values", "dev", "fabric-registration.yaml"),
-	)
-	Expect(err).NotTo(HaveOccurred(), output)
-	matches := configMapsWithManager(fabricManagerLabel, "netris")
-	Expect(matches).To(HaveLen(1), "exactly one Netris registration must exist: %v", matches)
-	Expect(matches[0].GetName()).To(Equal(netrisRegistrationName))
-	return matches[0]
-}
-
 // skipResolutionWhenDisabled skips a resolution spec on an operator deployed
 // with provider networking disabled, which marks the NetworkClass Ready without
 // reading the registrations (unified design, "Provider networking disabled").
@@ -207,26 +178,19 @@ var _ = Describe("NetworkClass resolution "+
 		Expect(listNames("NetworkClass")).To(BeEmpty(), "leftover NetworkClasses would make the networking controllers wait")
 	})
 
-	It("resolves the chart-rendered cudn_evpn and the installed Netris registration and records evpn", func() {
+	It("resolves Fabric and Kubernetes Manager registrations and records evpn", func() {
 		skipResolutionWhenDisabled()
-		By("finding the cudn_evpn registration the operator chart renders")
-		cudn := configMapsWithManager(k8sManagerLabel, "cudn_evpn")
-		Expect(cudn).To(HaveLen(1), "the operator chart renders exactly one cudn_evpn registration")
-		_, _ = kubectl("", "get", "configmap", cudn[0].GetName(), "-n", operatorNamespace, "-o", "yaml")
-		Expect(cudn[0].GetName()).To(HavePrefix("osac-network-k8s-manager-cudn-evpn-"))
-		immutable, _, _ := unstructured.NestedBool(cudn[0].Object, "immutable")
-		Expect(immutable).To(BeTrue(), "registrations are immutable ConfigMaps")
-		data, _, _ := unstructured.NestedStringMap(cudn[0].Object, "data")
-		Expect(data).To(HaveKeyWithValue("ansible_role", cudnEVPNRole))
-		Expect(data).To(HaveKeyWithValue("network_type", "evpn"))
-		Expect(data).NotTo(HaveKey("capabilities"))
-
-		netris := ensureNetrisRegistration()
-		immutable, _, _ = unstructured.NestedBool(netris.Object, "immutable")
-		Expect(immutable).To(BeTrue())
-
-		createNetworkClass(ncName, "netris", "cudn_evpn", false)
-		expectNetworkClassReady(ncName, "netris", netrisRole, "cudn_evpn", cudnEVPNRole, "evpn")
+		createRegistration(fabricRegistration(fabricCM, fabricName, nil))
+		createRegistration(k8sRegistration(k8sCM, k8sName, nil))
+		createNetworkClass(ncName, fabricName, k8sName, false)
+		expectNetworkClassReady(
+			ncName,
+			fabricName,
+			"acme.network.fabric_"+fabricName,
+			k8sName,
+			"osac.templates.k8s_"+k8sName,
+			"evpn",
+		)
 	})
 
 	It("resolves a Fabric Manager alone, accepts an empty key as absent and leaves the network type empty", func() {
@@ -429,13 +393,12 @@ var _ = Describe("NetworkClass resolution "+
 			}}),
 	)
 
-	It("rejects data changes to the installed registrations because they are immutable ConfigMaps", func() {
-		netris := ensureNetrisRegistration()
-		cudn := configMapsWithManager(k8sManagerLabel, "cudn_evpn")
-		Expect(cudn).To(HaveLen(1))
-		for _, cm := range []unstructured.Unstructured{netris, cudn[0]} {
-			By(fmt.Sprintf("changing the ansible_role of %s", cm.GetName()))
-			output, err := kubectl("", "patch", "configmap", cm.GetName(), "-n", operatorNamespace,
+	It("rejects data changes to manager registrations because they are immutable ConfigMaps", func() {
+		createRegistration(fabricRegistration(fabricCM, fabricName, nil))
+		createRegistration(k8sRegistration(k8sCM, k8sName, nil))
+		for _, configMap := range []string{fabricCM, k8sCM} {
+			By(fmt.Sprintf("changing the ansible_role of %s", configMap))
+			output, err := kubectl("", "patch", "configmap", configMap, "-n", operatorNamespace,
 				"--type=merge", "-p", `{"data":{"ansible_role":"acme.other.role"}}`)
 			Expect(err).To(HaveOccurred(), "an immutable registration must not change")
 			Expect(strings.ToLower(output)).To(ContainSubstring("immutable"))
@@ -443,7 +406,7 @@ var _ = Describe("NetworkClass resolution "+
 				"",
 				"get",
 				"configmap",
-				cm.GetName(),
+				configMap,
 				"-n",
 				operatorNamespace,
 				"-o",

@@ -22,7 +22,7 @@ import (
 
 var _ = DescribeMigration("NetworkClass singleton on all rows", func() {
 	BeforeEach(func(ctx context.Context) {
-		Expect(tool.Migrate(ctx, 137)).To(Succeed())
+		Expect(tool.Migrate(ctx, 140)).To(Succeed())
 	})
 
 	insert := func(ctx context.Context, id string) error {
@@ -48,7 +48,7 @@ var _ = DescribeMigration("NetworkClass singleton on all rows", func() {
 
 var _ = DescribeMigration("NetworkClass singleton on a database with an old NetworkClass being deleted", func() {
 	BeforeEach(func(ctx context.Context) {
-		Expect(tool.Migrate(ctx, 136)).To(Succeed())
+		Expect(tool.Migrate(ctx, 139)).To(Succeed())
 	})
 
 	It("fails with an error that tells the operator what to do", func(ctx context.Context) {
@@ -63,7 +63,7 @@ var _ = DescribeMigration("NetworkClass singleton on a database with an old Netw
 		`)
 		Expect(err).ToNot(HaveOccurred())
 
-		err = tool.Migrate(ctx, 137)
+		err = tool.Migrate(ctx, 140)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("2 NetworkClass records exist"))
 		Expect(err.Error()).To(ContainSubstring("finish deleting the old NetworkClass"))

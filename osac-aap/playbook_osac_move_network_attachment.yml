@@ -72,7 +72,12 @@
           - >-
             offboard
             or item.resources | length == 0
-            or item.resources[0].status.phase == 'Ready'
+            or (
+              item.resources[0].status.conditions | default([], true)
+              | selectattr('type', 'equalto', 'Ready')
+              | selectattr('status', 'equalto', 'True')
+              | list | length == 1
+            )
           - >-
             offboard
             or item.resources | length == 0
