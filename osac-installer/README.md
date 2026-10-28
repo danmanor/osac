@@ -346,12 +346,11 @@ cluster availability without requiring KVM or the virtualization install tools.
 
 `PROFILE=cudn-evpn-netris-test` is an explicit OpenShift-only profile with
 provider networking enabled: VMaaS + BMaaS, `fabricManager: netris` and
-`k8sManager: cudn_evpn`. `make install-osac` applies the profile's Netris
-Fabric Manager registration (`values/cudn-evpn-netris-test/fabric-registration.yaml`)
-after the chart; the installer registers `cudn_evpn` itself. It does not
-install the FRR operator, create the Phase 1 EVPN `FRRConfiguration`, or
-create the external EVPN/BGP/VTEP fabric; those prerequisites must be prepared
-before installation.
+`k8sManager: cudn_evpn`. The relevant manager teams provide and install their
+manager implementations and registration ConfigMaps. This profile does not
+install the FRR operator, create the Phase 1 EVPN `FRRConfiguration`, or create
+the external EVPN/BGP/VTEP fabric; those prerequisites must be prepared before
+installation.
 
 The profile includes the non-secret Netris controller, site and tenant
 settings. Supply `excludedIpv4Cidrs`, `CUDN_EVPN_DNS_RESOLVERS`, the remaining
