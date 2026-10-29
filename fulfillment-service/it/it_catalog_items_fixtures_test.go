@@ -1295,6 +1295,12 @@ func cleanupIncompleteTenantDefaultNetworkingFixture(
 
 func scheduleTenantDefaultNetworkingFixtureCleanup(ctx context.Context, tenant string) {
 	GinkgoHelper()
+	// The users tenant is the shared integration-test identity. Its defaults are
+	// a suite baseline maintained by the tenant reconciler; deleting them after a
+	// spec makes reconciliation recreate them while fixture cleanup is waiting.
+	if tenant == usersGroup {
+		return
+	}
 	manager, err := newTestDefaultNetworkingManager()
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func(cleanupCtx context.Context) {

@@ -79,11 +79,12 @@ jobs:
           'vmaas/sanity'
         }}
       test-filter: ${{ inputs.test-filter || '' }}
-      # Run the selected VMaaS tier, VMaaS-specific references, and common
-      # networking references. Netris VMaaS runs only in its manual suite.
+      # These profiles disable provider networking. Provider-backed networking
+      # tests run in manager-enabled profiles; Netris VMaaS runs in its own suite.
       test-marker: >-
         (${{ inputs.test-marker || 'sanity or regression or requires_vmaas or reference_common or reference_networking' }})
         and not requires_netris
+        and not requires_provider_networking
       # osac-installer now lives as a subdirectory of this same monorepo checkout
       # (its Chart.yaml deps resolve fulfillment-service/osac-operator/osac-aap/BMF
       # as ../../../<name> siblings within it), so a PR touching those components

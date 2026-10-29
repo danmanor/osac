@@ -94,6 +94,9 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "requires_caas: test requires the CaaS service to be enabled")
     config.addinivalue_line("markers", "requires_bmaas: test requires the BMaaS service to be enabled")
     config.addinivalue_line("markers", "requires_vmaas: test requires the VMaaS service to be enabled")
+    config.addinivalue_line(
+        "markers", "requires_provider_networking: test requires provider networking provisioning to be enabled"
+    )
     config.addinivalue_line("markers", "requires_netris: test requires the Netris EVPN fabric")
     config.addinivalue_line("markers", "requires_netris_vmaas: test requires Netris VMaaS networking")
     config.addinivalue_line("markers", "requires_netris_bmaas: test requires Netris BMaaS networking")

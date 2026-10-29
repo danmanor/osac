@@ -146,24 +146,34 @@ var _ = Describe("Default networking provisioning", func() {
 			func(objects *osacv1alpha1.SubnetList) int { return len(objects.Items) },
 		))
 
-		By("Waiting for default Subnet to reach PENDING state before overriding")
-		Eventually(func(g Gomega) {
-			resp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(resp.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
-		}, time.Minute, time.Second).Should(Succeed())
+		if ndProviderNetworkingEnabled(ctx) {
+			By("Waiting for default Subnet to reach PENDING state before simulating manager readiness")
+			Eventually(func(g Gomega) {
+				resp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(resp.GetObject().GetStatus().GetState()).To(
+					Equal(privatev1.SubnetState_SUBNET_STATE_PENDING))
+			}, time.Minute, time.Second).Should(Succeed())
 
-		By("Setting default Subnet to READY")
-		subResp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		subObj := subResp.GetObject()
-		subObj.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
-		_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
-			Object:     subObj,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+			By("Simulating the manager making the default Subnet READY")
+			subResp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			subObj := subResp.GetObject()
+			subObj.GetStatus().SetState(privatev1.SubnetState_SUBNET_STATE_READY)
+			_, err = subnetsClient.Update(ctx, privatev1.SubnetsUpdateRequest_builder{
+				Object:     subObj,
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+		} else {
+			By("Waiting for provider-disabled reconciliation to make the default Subnet READY")
+			Eventually(func(g Gomega) {
+				resp, err := subnetsClient.Get(ctx, privatev1.SubnetsGetRequest_builder{Id: subnetId}.Build())
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(resp.GetObject().GetStatus().GetState()).To(
+					Equal(privatev1.SubnetState_SUBNET_STATE_READY))
+			}, time.Minute, time.Second).Should(Succeed())
+		}
 
 		By("Waiting for default SecurityGroup to appear in FS DB")
 		var sgId string
@@ -185,24 +195,34 @@ var _ = Describe("Default networking provisioning", func() {
 			func(objects *osacv1alpha1.SecurityGroupList) int { return len(objects.Items) },
 		))
 
-		By("Waiting for default SecurityGroup to reach PENDING state before overriding")
-		Eventually(func(g Gomega) {
-			resp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
-			g.Expect(err).ToNot(HaveOccurred())
-			g.Expect(resp.GetObject().GetStatus().GetState()).To(
-				Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING))
-		}, time.Minute, time.Second).Should(Succeed())
+		if ndProviderNetworkingEnabled(ctx) {
+			By("Waiting for default SecurityGroup to reach PENDING state before simulating manager readiness")
+			Eventually(func(g Gomega) {
+				resp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(resp.GetObject().GetStatus().GetState()).To(
+					Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_PENDING))
+			}, time.Minute, time.Second).Should(Succeed())
 
-		By("Setting default SecurityGroup to READY")
-		sgResp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
-		Expect(err).ToNot(HaveOccurred())
-		sgObj := sgResp.GetObject()
-		sgObj.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
-		_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
-			Object:     sgObj,
-			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
-		}.Build())
-		Expect(err).ToNot(HaveOccurred())
+			By("Simulating the manager making the default SecurityGroup READY")
+			sgResp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
+			Expect(err).ToNot(HaveOccurred())
+			sgObj := sgResp.GetObject()
+			sgObj.GetStatus().SetState(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY)
+			_, err = securityGroupsClient.Update(ctx, privatev1.SecurityGroupsUpdateRequest_builder{
+				Object:     sgObj,
+				UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"status.state"}},
+			}.Build())
+			Expect(err).ToNot(HaveOccurred())
+		} else {
+			By("Waiting for provider-disabled reconciliation to make the default SecurityGroup READY")
+			Eventually(func(g Gomega) {
+				resp, err := securityGroupsClient.Get(ctx, privatev1.SecurityGroupsGetRequest_builder{Id: sgId}.Build())
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(resp.GetObject().GetStatus().GetState()).To(
+					Equal(privatev1.SecurityGroupState_SECURITY_GROUP_STATE_READY))
+			}, time.Minute, time.Second).Should(Succeed())
+		}
 
 		// With provider networking disabled (the CI deployment) there is no default ExternalIP or NATGateway,
 		// and the condition reports reason ProvisioningDisabled.
