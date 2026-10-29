@@ -443,7 +443,7 @@ var _ = Describe("Private NAT gateways server", func() {
 				Status:   privatev1.ExternalIPPoolStatus_builder{State: privatev1.ExternalIPPoolState_EXTERNAL_IP_POOL_STATE_READY, Total: 2000, Available: 2000}.Build(),
 			}.Build()).Do(ctx)
 			Expect(err).ToNot(HaveOccurred())
-			networkClass := createNetworkClass(new("netris"), nil)
+			_ = createNetworkClass(new("netris"), nil)
 			makeIP := func(tenant, project string, ordinal int) *privatev1.ExternalIP {
 				response, createErr := externalIPDao.Create().SetObject(privatev1.ExternalIP_builder{
 					Metadata: privatev1.Metadata_builder{Tenant: tenant, Project: project, Name: "default-nat"}.Build(),
@@ -471,7 +471,7 @@ var _ = Describe("Private NAT gateways server", func() {
 				foreign := makeIP(tenant, project, ordinal)
 				network, createErr := vnDao.Create().SetObject(privatev1.VirtualNetwork_builder{
 					Metadata: privatev1.Metadata_builder{Tenant: tenant, Project: project, Name: "default"}.Build(),
-					Spec:     privatev1.VirtualNetworkSpec_builder{NetworkClass: privatev1.NetworkClassReference_builder{Id: networkClass.GetId()}.Build()}.Build(),
+					Spec:     privatev1.VirtualNetworkSpec_builder{}.Build(),
 					Status:   privatev1.VirtualNetworkStatus_builder{State: privatev1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY, Hub: "network-hub-a"}.Build(),
 				}.Build()).Do(ctx)
 				Expect(createErr).ToNot(HaveOccurred())

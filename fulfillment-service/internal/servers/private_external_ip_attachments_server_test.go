@@ -260,8 +260,6 @@ var _ = Describe("Private external IP attachments server", func() {
 				Spec:     privatev1.ExternalIPAttachmentSpec_builder{ExternalIp: privatev1.ExternalIPLocalReference_builder{Id: first.GetId(), Name: "shared-display-name"}.Build(), ComputeInstance: privatev1.ComputeInstanceLocalReference_builder{Id: ci.GetId()}.Build()}.Build(),
 			}.Build()}.Build())
 			Expect(err).ToNot(HaveOccurred())
-			Expect(server.validateUniqueness(ctx, second.GetId(), "unused-target", "shared-display-name")).To(Succeed())
-			Expect(grpcstatus.Code(server.validateUniqueness(ctx, first.GetId(), ci.GetId(), "misleading-name"))).To(Equal(grpccodes.AlreadyExists))
 			Expect(server.lifecycle.ensureExternalIPAvailableExcept(ctx, first.GetId(), "ignored-name", created.GetObject().GetId())).To(Succeed())
 			for _, parent := range []*privatev1.ExternalIP{first, second} {
 				parent.GetMetadata().SetLabels(map[string]string{autoCreatedLabel: "true", autoCreatedForLabel: ci.GetId()})

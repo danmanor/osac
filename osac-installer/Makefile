@@ -913,7 +913,7 @@ helm-validate: helm-lint csi-render-test helm-networking-test network-class-step
 
 .PHONY: helm-networking-test
 helm-networking-test: helm-deps ## Test global.networking values, validation, and networking manifests
-	uv run --project .. python scripts/test-networking-values.py
+	python3 scripts/test-networking-values.py
 	python3 scripts/test_it_networking_checks.py
 
 .PHONY: network-class-step-test

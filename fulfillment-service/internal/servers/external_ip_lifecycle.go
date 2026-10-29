@@ -702,8 +702,13 @@ func (l *externalIPLifecycle) deleteAutoCreatedExternalIPs(ctx context.Context, 
 			continue
 		}
 		if l.externalIPAttachmentDao != nil {
+			filter, err := externalIPConsumerFilter(externalIP.GetId(), externalIP.GetMetadata().GetName(), externalIP.GetMetadata())
+			if err != nil {
+				return fmt.Errorf("failed to build ExternalIPAttachment filter for ExternalIP %s: %w",
+					externalIP.GetId(), err)
+			}
 			attachments, err := l.externalIPAttachmentDao.List().
-				SetFilter(externalIPConsumerFilter(externalIP.GetId(), externalIP.GetMetadata().GetName())).
+				SetFilter(filter).
 				SetLimit(1).
 				Do(ctx)
 			if err != nil {
